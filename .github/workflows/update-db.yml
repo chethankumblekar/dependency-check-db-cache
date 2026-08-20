@@ -1,0 +1,64 @@
+name: Update Dependency Check DB
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Download Dependency Check
+
+        run: |
+          wget https://github.com/dependency-check/DependencyCheck/releases/latest/download/dependency-check-release.zip
+
+          unzip dependency-check-release.zip
+
+      - name: Build Database
+
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+        run: |
+          ./dependency-check/bin/dependency-check.sh \
+            --updateonly \
+            --nvdApiKey $NVD_API_KEY \
+            --data ./data
+
+      - name: Zip Database
+
+        run: |
+          zip -r dependency-check-db.zip ./data
+
+      - name: Generate Version
+
+        id: version
+
+        run: |
+          echo "VERSION=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+      - name: Create Release
+
+        uses: softprops/action-gh-release@v2
+
+        with:
+          tag_name: ${{ env.VERSION }}
+          files: dependency-check-db.zip
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
