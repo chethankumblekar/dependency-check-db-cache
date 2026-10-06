@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+checkstead-report/
+.gradle/
+target/
+*.mv.db
+.idea/
+.DS_Store

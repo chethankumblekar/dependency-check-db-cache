@@ -1,0 +1,8 @@
+Checkstead
+Copyright 2026 Chethan K
+
+This product uses data from the NVD API but is not endorsed or certified by the NVD.
+
+Checkstead invokes a released build of OWASP Dependency-Check. Dependency-Check is
+a separate project, licensed under the Apache License, Version 2.0. Checkstead is
+not an OWASP project and does not speak for OWASP or NIST.

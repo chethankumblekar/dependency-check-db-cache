@@ -1,0 +1,25 @@
+name: "Checkstead"
+description: "Scan with the pinned OWASP Dependency-Check and the Checkstead snapshot. No NVD API key."
+inputs:
+  scan:
+    description: "Path to scan, relative to the workspace."
+    required: false
+    default: "."
+  project:
+    description: "Name written on the report. Defaults to the directory name."
+    required: false
+    default: ""
+  output:
+    description: "Directory for the Checkstead report and the Dependency-Check reports."
+    required: false
+    default: "checkstead-report"
+  config:
+    description: "Optional path to checkstead.yml. When omitted, ./checkstead.yml is used if it exists."
+    required: false
+    default: ""
+runs:
+  using: "docker"
+  image: "Dockerfile"
+branding:
+  icon: "shield"
+  color: "gray-dark"

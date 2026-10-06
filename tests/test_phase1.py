@@ -1,0 +1,522 @@
+"""Phase 1 proof: one snapshot per UTC day, and the scan client never calls NVD."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import threading
+import zipfile
+from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import TestCase, mock
+from urllib.parse import urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from checkstead.engine import NVD_NOTICE, pinned_engine  # noqa: E402
+from checkstead.errors import RefusedHost, SnapshotRefused  # noqa: E402
+from checkstead.http import download  # noqa: E402
+from checkstead.scan import build_scan_command, run_scan, scrub_environment  # noqa: E402
+from checkstead.snapshot import parse_manifest, safe_extract, write_manifest  # noqa: E402
+
+PIN = "13.0.0"
+
+
+class FixtureServer:
+    def __init__(self) -> None:
+        self.manifest = b""
+        self.zip_bytes = b""
+        self.paths: list[str] = []
+        self.hosts: list[str] = []
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self._httpd.state = self
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+
+    def _handler(self):
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                state = outer
+                path = urlparse(self.path).path
+                state.paths.append(path)
+                state.hosts.append(self.headers.get("Host", ""))
+                if path == "/manifest.json":
+                    body = state.manifest
+                elif path == "/checkstead-db.zip":
+                    body = state.zip_bytes
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, fmt, *args):
+                return
+
+        return Handler
+
+    @property
+    def manifest_url(self) -> str:
+        host, port = self._httpd.server_address[:2]
+        return f"http://{host}:{port}/manifest.json"
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._thread.join(timeout=5)
+        self._httpd.server_close()
+
+
+def write_zip(path: Path, label: str) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("FIXTURE", f"checkstead test fixture {label}, not an NVD database\n")
+
+
+def manifest_for(zip_path: Path, snapshot_time: str, engine: str = PIN) -> bytes:
+    payload = {
+        "format": 1,
+        "engineVersion": engine,
+        "snapshotTime": snapshot_time,
+        "checksum": hashlib.sha256(zip_path.read_bytes()).hexdigest(),
+        "database": "checkstead-db.zip",
+    }
+    return json.dumps(payload).encode("utf-8")
+
+
+def fake_engine(path: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        "out=\n"
+        "prev=\n"
+        'for arg in "$@"; do\n'
+        '  if [ "$prev" = "--out" ]; then\n'
+        "    out=$arg\n"
+        "  fi\n"
+        "  prev=$arg\n"
+        "done\n"
+        'mkdir -p "$out"\n'
+        "printf '%s\\n' \"$@\" > \"$out/engine-argv.txt\"\n"
+        'if [ -n "${NVD_API_KEY:-}" ]; then\n'
+        "  echo leaked > \"$out/leaked\"\n"
+        "  exit 9\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def run_cli(args: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "checkstead", *args],
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+class Phase1Tests(TestCase):
+    def test_pin_is_the_verified_release(self) -> None:
+        root_pin = (ROOT / "engine.version").read_text(encoding="utf-8").strip()
+        package_pin = (ROOT / "src" / "checkstead" / "engine.version").read_text(encoding="utf-8").strip()
+        self.assertEqual(root_pin, PIN)
+        self.assertEqual(package_pin, PIN)
+        self.assertEqual(pinned_engine(), PIN)
+
+    def test_license_notice_and_readme_are_complete(self) -> None:
+        license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        self.assertGreater(len(license_text.splitlines()), 150)
+        self.assertIn("Apache License", license_text)
+        self.assertIn("Grant of Patent License", license_text)
+        self.assertIn("no-charge", license_text)
+        self.assertIn("royalty-free", license_text)
+        self.assertNotIn("grant*d", license_text)
+        self.assertNotIn("free of*charge", license_text)
+        for name in ("NOTICE", "README.md"):
+            self.assertIn(NVD_NOTICE, (ROOT / name).read_text(encoding="utf-8"))
+        security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("security/advisories/new", security)
+        self.assertIn("chethan.kumblekar@ascertra.com", security)
+
+    def test_reserved_config_is_not_applied_and_scans_share_a_snapshot(self) -> None:
+        root = ROOT / "build" / "tests" / "same-day"
+        if root.exists():
+            subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        scan_path = root / "project"
+        scan_path.mkdir()
+        (scan_path / "README").write_text("sample\n", encoding="utf-8")
+        engine = root / "dependency-check.sh"
+        fake_engine(engine)
+        zip_a = root / "a.zip"
+        zip_b = root / "b.zip"
+        write_zip(zip_a, "morning")
+        write_zip(zip_b, "evening")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        server.manifest = manifest_for(zip_a, "2026-10-06T01:02:03Z")
+        server.zip_bytes = zip_a.read_bytes()
+        config = root / "checkstead.yml"
+        config.write_text(
+            "snapshot: " + server.manifest_url + "\n"
+            "scorePolicy: reserved-score-policy-token\n"
+            "threshold: reserved-threshold-token\n"
+            "privateSuppressions: reserved-suppression-token.xml\n",
+            encoding="utf-8",
+        )
+        cache = root / "cache"
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT / "src")
+        env["CHECKSTEAD_CACHE"] = str(cache)
+        env["CHECKSTEAD_TODAY"] = "2026-10-06"
+        env["NVD_API_KEY"] = "this-must-not-reach-the-engine"
+        env["CHECKSTEAD_ENGINE"] = str(engine)
+        reports = []
+        for name in ("one", "two"):
+            if name == "two":
+                server.manifest = manifest_for(zip_b, "2026-10-06T18:00:00Z")
+                server.zip_bytes = zip_b.read_bytes()
+            out = root / name
+            completed = run_cli(
+                [
+                    "scan",
+                    "--scan",
+                    str(scan_path),
+                    "--config",
+                    str(config),
+                    "--out",
+                    str(out),
+                    "--cache",
+                    str(cache),
+                    "--project",
+                    "sample",
+                ],
+                env,
+                root,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            report = (out / "checkstead.txt").read_text(encoding="utf-8")
+            reports.append(report)
+            self.assertIn("engine: 13.0.0\n", report)
+            self.assertIn("snapshot: 2026-10-06T01:02:03Z\n", report)
+            self.assertIn(NVD_NOTICE, report)
+            command = (out / "checkstead-command.txt").read_text(encoding="utf-8")
+            self.assertIn("--noupdate\n", command)
+            self.assertNotIn("--nvdApiKey", command)
+            self.assertNotIn("services.nvd.nist.gov", command)
+            self.assertNotIn("failOnCVSS", command)
+            self.assertNotIn("reserved-score-policy-token", command)
+            self.assertNotIn("reserved-threshold-token", command)
+            self.assertNotIn("reserved-suppression-token", command)
+            self.assertFalse((out / "leaked").exists())
+            argv = (out / "engine-argv.txt").read_text(encoding="utf-8")
+            self.assertIn("--noupdate\n", argv)
+            self.assertNotIn("nvdApiKey", argv)
+            self.assertNotIn("services.nvd.nist.gov", argv)
+        self.assertEqual(reports[0], reports[1])
+        self.assertEqual(server.paths.count("/manifest.json"), 1)
+        self.assertEqual(server.paths.count("/checkstead-db.zip"), 1)
+        for host in server.hosts:
+            self.assertNotIn("services.nvd.nist.gov", host)
+        for path in server.paths:
+            self.assertNotIn("services.nvd.nist.gov", path)
+
+    def test_dry_run_does_not_start_the_engine(self) -> None:
+        root = ROOT / "build" / "tests" / "dry-run"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        scan_path = root / "project"
+        scan_path.mkdir()
+        engine = root / "dependency-check.sh"
+        engine.write_text("#!/bin/sh\ntouch \"$0.started\"\nexit 0\n", encoding="utf-8")
+        engine.chmod(0o755)
+        blob = root / "db.zip"
+        write_zip(blob, "dry")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        server.manifest = manifest_for(blob, "2026-10-06T01:02:03Z")
+        server.zip_bytes = blob.read_bytes()
+        out = root / "out"
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT / "src")
+        env["CHECKSTEAD_TODAY"] = "2026-10-06"
+        env["NVD_API_KEY"] = "unused"
+        completed = run_cli(
+            [
+                "scan",
+                "--dry-run",
+                "--scan",
+                str(scan_path),
+                "--out",
+                str(out),
+                "--cache",
+                str(root / "cache"),
+                "--engine",
+                str(engine),
+                "--config",
+                str(self._config(root, server.manifest_url)),
+            ],
+            env,
+            root,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("dry run", completed.stdout)
+        self.assertIn("snapshot: 2026-10-06T01:02:03Z", completed.stdout)
+        self.assertFalse((root / "dependency-check.sh.started").exists())
+        for host in server.hosts:
+            self.assertNotIn("services.nvd.nist.gov", host)
+
+    def test_other_engine_is_refused_before_the_zip_or_the_scanner(self) -> None:
+        root = ROOT / "build" / "tests" / "other-engine"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        scan_path = root / "project"
+        scan_path.mkdir()
+        engine = root / "dependency-check.sh"
+        fake_engine(engine)
+        blob = root / "db.zip"
+        write_zip(blob, "old")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        server.manifest = manifest_for(blob, "2026-10-06T01:02:03Z", engine="12.1.8")
+        server.zip_bytes = blob.read_bytes()
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT / "src")
+        env["CHECKSTEAD_TODAY"] = "2026-10-06"
+        completed = run_cli(
+            [
+                "scan",
+                "--scan",
+                str(scan_path),
+                "--out",
+                str(root / "out"),
+                "--cache",
+                str(root / "cache"),
+                "--engine",
+                str(engine),
+                "--config",
+                str(self._config(root, server.manifest_url)),
+            ],
+            env,
+            root,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout)
+        self.assertIn("12.1.8", completed.stderr)
+        self.assertIn(PIN, completed.stderr)
+        self.assertNotIn("/checkstead-db.zip", server.paths)
+        self.assertFalse((root / "out" / "engine-argv.txt").exists())
+
+    def test_next_utc_day_can_take_a_newer_snapshot(self) -> None:
+        root = ROOT / "build" / "tests" / "next-day"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        scan_path = root / "project"
+        scan_path.mkdir()
+        zip_a = root / "a.zip"
+        zip_b = root / "b.zip"
+        write_zip(zip_a, "day-one")
+        write_zip(zip_b, "day-two")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        server.manifest = manifest_for(zip_a, "2026-10-06T01:02:03Z")
+        server.zip_bytes = zip_a.read_bytes()
+        first = run_scan(
+            [scan_path],
+            project="sample",
+            config_snapshot_url=server.manifest_url,
+            out_dir=root / "one",
+            cache_dir=root / "cache",
+            today=date(2026, 10, 6),
+            dry_run=True,
+        )
+        server.manifest = manifest_for(zip_b, "2026-10-07T01:02:03Z")
+        server.zip_bytes = zip_b.read_bytes()
+        second = run_scan(
+            [scan_path],
+            project="sample",
+            config_snapshot_url=server.manifest_url,
+            out_dir=root / "two",
+            cache_dir=root / "cache",
+            today=date(2026, 10, 7),
+            dry_run=True,
+        )
+        self.assertEqual(first.snapshot_time, "2026-10-06T01:02:03Z")
+        self.assertEqual(second.snapshot_time, "2026-10-07T01:02:03Z")
+        for host in server.hosts:
+            self.assertNotIn("services.nvd.nist.gov", host)
+
+    def test_nvd_host_is_refused_without_a_connection(self) -> None:
+        dest = ROOT / "build" / "tests" / "blocked.bin"
+
+        def fail_open(self, *args, **kwargs):
+            raise AssertionError("the client opened a connection")
+
+        with mock.patch("urllib.request.OpenerDirector.open", fail_open):
+            with self.assertRaises(RefusedHost):
+                download("https://services.nvd.nist.gov/rest/json/cves/2.0", dest)
+
+    def test_redirect_to_nvd_is_refused(self) -> None:
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "https://services.nvd.nist.gov/rest/json/cves/2.0")
+                self.end_headers()
+
+            def log_message(self, fmt, *args):
+                return
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        host, port = httpd.server_address[:2]
+        with self.assertRaises(RefusedHost):
+            download(f"http://{host}:{port}/manifest.json", ROOT / "build" / "tests" / "redirect.bin")
+
+    def test_checksum_mismatch_and_zip_slip_are_refused(self) -> None:
+        root = ROOT / "build" / "tests" / "checksum"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        blob = root / "db.zip"
+        write_zip(blob, "bad-sum")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        payload = json.loads(manifest_for(blob, "2026-10-06T01:02:03Z"))
+        payload["checksum"] = "0" * 64
+        server.manifest = json.dumps(payload).encode("utf-8")
+        server.zip_bytes = blob.read_bytes()
+        scan_path = root / "project"
+        scan_path.mkdir()
+        with self.assertRaises(SnapshotRefused):
+            run_scan(
+                [scan_path],
+                project="sample",
+                config_snapshot_url=server.manifest_url,
+                out_dir=root / "out",
+                cache_dir=root / "cache",
+                today=date(2026, 10, 6),
+                dry_run=True,
+            )
+        slipped = root / "slipped.zip"
+        with zipfile.ZipFile(slipped, "w") as archive:
+            archive.writestr("../escape.txt", "nope\n")
+        with self.assertRaises(SnapshotRefused):
+            safe_extract(slipped, root / "data")
+        self.assertFalse((root / "escape.txt").exists())
+
+    def test_manifest_writer_records_the_pin_and_checksum(self) -> None:
+        root = ROOT / "build" / "tests" / "manifest"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        blob = root / "checkstead-db.zip"
+        write_zip(blob, "publish")
+        manifest = write_manifest(blob, root / "manifest.json")
+        self.assertEqual(manifest["engineVersion"], PIN)
+        self.assertEqual(manifest["checksum"], hashlib.sha256(blob.read_bytes()).hexdigest())
+        parsed = parse_manifest((root / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(parsed["engineVersion"], PIN)
+
+    def test_scan_environment_drops_the_api_key(self) -> None:
+        cleaned = scrub_environment({"PATH": "/usr/bin", "NVD_API_KEY": "secret", "NVD_APIKEY": "secret"})
+        self.assertEqual(cleaned, {"PATH": "/usr/bin"})
+        command = build_scan_command(
+            Path("/opt/dependency-check/bin/dependency-check.sh"),
+            Path("/var/cache/checkstead/data"),
+            [Path("/work/project")],
+            "sample",
+            Path("/work/out"),
+        )
+        joined = "\n".join(command)
+        self.assertIn("--noupdate", command)
+        self.assertNotIn("--nvdApiKey", command)
+        self.assertNotIn("--updateonly", command)
+        self.assertNotIn("services.nvd.nist.gov", joined)
+
+    def test_updater_stops_without_a_key_and_keeps_the_days_snapshot(self) -> None:
+        env = os.environ.copy()
+        env["NVD_API_KEY"] = ""
+        missing = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "update-snapshot.sh")],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        self.assertIn("NVD_API_KEY", missing.stderr)
+        self.assertIn("stand-in database", missing.stderr)
+
+        stub = ROOT / "build" / "tests" / "gh-stub"
+        subprocess.run(["rm", "-rf", str(stub)], check=True)
+        stub.mkdir(parents=True)
+        log = stub / "calls.log"
+        for name in ("gh", "curl", "wget"):
+            tool = stub / name
+            tool.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s' {name} >> \"$STUB_LOG\"\n"
+                "printf ' %s' \"$@\" >> \"$STUB_LOG\"\n"
+                "printf '\\n' >> \"$STUB_LOG\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            tool.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(stub) + os.pathsep + env.get("PATH", "")
+        env["NVD_API_KEY"] = "not-a-real-key"
+        env["STUB_LOG"] = str(log)
+        kept = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "update-snapshot.sh")],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(kept.returncode, 0, kept.stderr)
+        self.assertIn("already published", kept.stdout)
+        calls = log.read_text(encoding="utf-8")
+        self.assertIn("gh release view", calls)
+        self.assertNotIn("curl", calls)
+        self.assertNotIn("not-a-real-key", calls)
+
+    def test_publish_wiring_uses_the_secret_and_the_action_calls_scan(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
+        script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
+        action = (ROOT / "action.yml").read_text(encoding="utf-8")
+        gradle = (ROOT / "integrations" / "gradle" / "checkstead.gradle").read_text(encoding="utf-8")
+        entry = (ROOT / "scripts" / "docker-entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn("secrets.NVD_API_KEY", workflow)
+        self.assertIn("--updateonly", script)
+        self.assertIn("--nvdApiKey", script)
+        self.assertNotIn("services.nvd.nist.gov", script)
+        self.assertNotRegex(script, r"NVD_API_KEY=[A-Za-z0-9]")
+        self.assertNotIn("NVD_API_KEY", action)
+        self.assertNotIn("nvdApiKey", action)
+        self.assertIn("checkstead", entry)
+        self.assertIn("scan", gradle)
+        self.assertIn("checkstead", gradle)
+        self.assertNotIn("nvdApiKey", gradle)
+        config = (ROOT / "checkstead.yml").read_text(encoding="utf-8")
+        for key in ("snapshot:", "scorePolicy:", "threshold:", "privateSuppressions:"):
+            self.assertIn(key, config)
+
+    def _config(self, root: Path, url: str) -> Path:
+        path = root / "checkstead.yml"
+        path.write_text(
+            f"snapshot: {url}\nscorePolicy:\nthreshold:\nprivateSuppressions:\n",
+            encoding="utf-8",
+        )
+        return path

@@ -1,0 +1,48 @@
+// Apply from a build that already has checkstead on PATH:
+//   apply from: "integrations/gradle/checkstead.gradle"
+//
+// The task calls `checkstead scan` with this project's coordinates and the
+// files on the runtime classpath. It does not pass an NVD API key.
+
+tasks.register("checksteadScan", Exec) {
+    group = "verification"
+    description = "Scan this project with checkstead. Calls the checkstead command."
+    def reportDir = layout.buildDirectory.dir("checkstead-report")
+    outputs.dir(reportDir)
+    executable = "checkstead"
+    def configFile = layout.projectDirectory.file("checkstead.yml")
+    def classesTask = tasks.findByName("classes")
+    if (classesTask != null) {
+        dependsOn(classesTask)
+    }
+    environment.remove("NVD_API_KEY")
+    environment.remove("NVD_APIKEY")
+    doFirst {
+        def args = [
+            "scan",
+            "--project", "${project.group}:${project.name}:${project.version}",
+            "--out", reportDir.get().asFile.absolutePath,
+        ]
+        if (configFile.asFile.isFile()) {
+            args.add("--config")
+            args.add(configFile.asFile.absolutePath)
+        }
+        def scans = []
+        def runtime = project.configurations.findByName("runtimeClasspath")
+        if (runtime != null) {
+            runtime.files.each { file ->
+                if (file.isFile()) {
+                    scans.add(file.absolutePath)
+                }
+            }
+        }
+        if (scans.isEmpty()) {
+            scans.add(project.projectDir.absolutePath)
+        }
+        scans.each { path ->
+            args.add("--scan")
+            args.add(path)
+        }
+        setArgs(args)
+    }
+}

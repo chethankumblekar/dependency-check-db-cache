@@ -1,0 +1,10 @@
+.git
+.github
+tests
+integrations
+checkstead-report
+**/__pycache__
+**/*.egg-info
+.venv
+dist
+build
