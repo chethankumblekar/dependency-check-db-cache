@@ -22,4 +22,4 @@ checkstead = "checkstead.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-checkstead = ["engine.version"]
+checkstead = ["engine.version", "ui_page.html"]

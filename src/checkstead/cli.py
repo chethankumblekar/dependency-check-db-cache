@@ -41,6 +41,16 @@ def _cmd_version(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from checkstead.ui import default_scans_dir, serve
+
+    scans = Path(args.scans) if args.scans else default_scans_dir()
+    if not scans.is_dir():
+        raise ChecksteadError(f"Scan directory not found: {scans}")
+    serve(scans, args.host, args.port)
+    return 0
+
+
 def _cmd_write_manifest(args: argparse.Namespace) -> int:
     moment = _parse_time(args.time) if args.time else utc_now()
     manifest = write_manifest(Path(args.zip), Path(args.out), moment)
@@ -64,6 +74,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         today=_today(),
         dry_run=args.dry_run,
         engine=Path(args.engine) if args.engine else None,
+        revision=args.revision or None,
     )
     print(f"report: {result.report_path}")
     return 0
@@ -87,12 +98,19 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", default="checkstead-report", help="Report directory.")
     scan.add_argument("--cache", help="Snapshot cache. Defaults to ~/.cache/checkstead.")
     scan.add_argument("--engine", help="Path to dependency-check.sh. Defaults to CHECKSTEAD_ENGINE.")
+    scan.add_argument("--revision", help="Commit or revision to record on the report, when you have one.")
     scan.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve and verify the snapshot, write the report header, and do not start the engine.",
     )
     scan.set_defaults(func=_cmd_scan)
+
+    ui = sub.add_parser("ui", help="Open the scan timeline in a browser.")
+    ui.add_argument("--scans", help="Directory of scan reports. Defaults to ./ui/scans.")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.set_defaults(func=_cmd_ui)
 
     manifest = sub.add_parser("write-manifest", help="Write a snapshot manifest for a database zip.")
     manifest.add_argument("--zip", required=True, help="Path to checkstead-db.zip.")

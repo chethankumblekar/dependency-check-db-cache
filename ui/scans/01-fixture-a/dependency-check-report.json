@@ -1,0 +1,27 @@
+{
+  "projectInfo": {
+    "name": "fixture-a"
+  },
+  "dependencies": [
+    {
+      "fileName": "commons-lang3-3.12.0.jar",
+      "filePath": "/tmp/checkstead-ui-scan/tree-a/commons-lang3-3.12.0.jar",
+      "name": "org.apache.commons:commons-lang3",
+      "version": "3.12.0",
+      "md5": "19fe50567358922bdad277959ea69545",
+      "sha1": "c6842c86792ff03b9f1d1fe2aab8dc23aa6c6f0e",
+      "sha256": "d919d904486c037f8d193412da0c92e22a9fa24230b9d67a57855c5c31c7e94e",
+      "vulnerabilities": []
+    },
+    {
+      "fileName": "guava-31.1-jre.jar",
+      "filePath": "/tmp/checkstead-ui-scan/tree-a/guava-31.1-jre.jar",
+      "name": "com.google.guava:guava",
+      "version": "31.1-jre",
+      "md5": "e37782d974104aa3b0a7bee9927c8042",
+      "sha1": "60458f877d055d0c9114d9e1a2efb737b4bc282c",
+      "sha256": "a42edc9cab792e39fe39bb94f3fca655ed157ff87a8af78e1d6ba5b07c4a00ab",
+      "vulnerabilities": []
+    }
+  ]
+}

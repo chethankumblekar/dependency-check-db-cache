@@ -94,6 +94,7 @@ def run_scan(
     dry_run: bool,
     engine: Path | None = None,
     opener: OpenerDirector | None = None,
+    revision: str | None = None,
 ) -> ScanResult:
     for scan in scans:
         if not scan.exists():
@@ -108,7 +109,12 @@ def run_scan(
     out_dir.mkdir(parents=True, exist_ok=True)
     command = build_scan_command(engine_path, snapshot.data_dir, scans, project_name, out_dir)
     report_path = write_report(
-        out_dir, snapshot.engine_version, snapshot.snapshot_time, snapshot.checksum
+        out_dir,
+        snapshot.engine_version,
+        snapshot.snapshot_time,
+        snapshot.checksum,
+        project_name,
+        revision,
     )
     (out_dir / "checkstead-command.txt").write_text("\n".join(command) + "\n", encoding="utf-8")
     print(f"engine: {snapshot.engine_version}")

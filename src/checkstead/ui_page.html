@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkstead</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5e584f;
+      --line: #d9d1c4;
+      --paper: #f6f3ec;
+      --panel: #fffdf8;
+      --added: #1d6b43;
+      --removed: #8d3b2f;
+      --changed: #8a5a12;
+      --focus: #1c1915;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.45 ui-sans-serif, "Segoe UI", sans-serif;
+    }
+    header, main { max-width: 1100px; margin: 0 auto; }
+    header { padding: 28px 24px 8px; }
+    h1 { font: 600 28px/1.1 Georgia, "Iowan Old Style", serif; margin: 0 0 8px; }
+    .notice { color: var(--muted); max-width: 68ch; margin: 0; }
+    main {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      padding: 20px 24px 48px;
+    }
+    h2 { font: 600 13px/1.2 ui-sans-serif, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+    .timeline { border-right: 1px solid var(--line); padding-right: 20px; }
+    .scan {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      border-left: 3px solid var(--line);
+      padding: 12px 12px 12px 14px;
+      margin: 0 0 8px;
+      color: inherit;
+      cursor: pointer;
+    }
+    .scan[aria-current="true"] { background: var(--panel); border-color: var(--line); border-left-color: var(--ink); }
+    .scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .scan strong { display: block; font-size: 16px; }
+    .scan span { display: block; color: var(--muted); font-size: 13px; }
+    .later { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .empty { color: var(--muted); margin: 0 0 10px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); padding: 20px; }
+    .panel h2 { text-transform: none; letter-spacing: 0; font-size: 22px; font-family: Georgia, serif; }
+    .meta { color: var(--muted); margin-top: 0; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li + li { margin-top: 8px; }
+    .row { border: 1px solid var(--line); padding: 10px 12px; background: #fff; }
+    .tag { font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+    .added .tag { color: var(--added); }
+    .removed .tag { color: var(--removed); }
+    .changed .tag { color: var(--changed); }
+    button.link {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: var(--ink);
+      font: inherit;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .detail { margin-top: 8px; color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    section + section { margin-top: 22px; }
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; }
+      .timeline { border-right: 0; padding-right: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Checkstead</h1>
+    <p class="notice" id="notice"></p>
+  </header>
+  <main>
+    <aside class="timeline">
+      <h2>Scans</h2>
+      <div id="scans"></div>
+      <div class="later">
+        <h2>Later</h2>
+        <p class="empty" id="suppressions">Suppressions. No records.</p>
+        <p class="empty" id="false-positives">False positives. No records.</p>
+      </div>
+    </aside>
+    <article class="panel" id="detail" aria-live="polite"></article>
+  </main>
+  <script>
+    const state = { history: null, selected: null, openKey: null };
+
+    function text(tag, value, className) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      node.textContent = value;
+      return node;
+    }
+
+    function revisionLabel(scan) {
+      if (!scan.revision) return "revision not recorded";
+      return "revision " + scan.revision.slice(0, 12);
+    }
+
+    function renderTimeline() {
+      const root = document.getElementById("scans");
+      root.replaceChildren();
+      state.history.scans.forEach((scan) => {
+        const button = document.createElement("button");
+        button.className = "scan";
+        button.type = "button";
+        button.dataset.scan = scan.id;
+        if (scan.id === state.selected) button.setAttribute("aria-current", "true");
+        button.append(
+          text("strong", scan.project || scan.id),
+          text("span", "snapshot " + scan.snapshot),
+          text("span", "engine " + scan.engine),
+          text("span", revisionLabel(scan))
+        );
+        button.addEventListener("click", () => {
+          state.selected = scan.id;
+          state.openKey = null;
+          render();
+        });
+        root.append(button);
+      });
+      const later = state.history.later || { suppressions: [], falsePositives: [] };
+      document.getElementById("suppressions").textContent = later.suppressions.length
+        ? later.suppressions.length + " suppressions"
+        : "Suppressions. No records.";
+      document.getElementById("false-positives").textContent = later.falsePositives.length
+        ? later.falsePositives.length + " false positives"
+        : "False positives. No records.";
+    }
+
+    function dependencyLine(item) {
+      const version = item.version ? " " + item.version : "";
+      return item.name + version;
+    }
+
+    function addRows(list, items, kind, label) {
+      items.forEach((item) => {
+        const row = document.createElement("li");
+        row.className = "row " + kind;
+        row.append(text("div", label, "tag"), text("div", dependencyLine(item)));
+        list.append(row);
+      });
+    }
+
+    function renderDrift(scan, drift) {
+      const detail = document.getElementById("detail");
+      const before = state.history.scans.find((item) => item.id === drift.before);
+      detail.replaceChildren(
+        text("h2", "Drift"),
+        text("p", (before.project || before.id) + " to " + (scan.project || scan.id), "meta"),
+        text("p", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "meta")
+      );
+
+      const dependencies = document.createElement("section");
+      dependencies.append(text("h2", "Dependencies"));
+      const depList = document.createElement("ul");
+      const buckets = drift.dependencies;
+      if (!buckets.added.length && !buckets.removed.length && !buckets.changed.length) {
+        depList.append(text("li", "No dependency changes.", "empty"));
+      }
+      addRows(depList, buckets.added, "added", "Added");
+      addRows(depList, buckets.removed, "removed", "Removed");
+      buckets.changed.forEach((change) => {
+        const key = change.before.name;
+        const row = document.createElement("li");
+        row.className = "row changed";
+        const button = document.createElement("button");
+        button.className = "link";
+        button.type = "button";
+        button.textContent = dependencyLine(change.before) + " → " + (change.after.version || change.after.fileName);
+        button.addEventListener("click", () => {
+          state.openKey = state.openKey === key ? null : key;
+          render();
+        });
+        row.append(text("div", "Changed", "tag"), button);
+        if (state.openKey === key) {
+          const extra = document.createElement("div");
+          extra.className = "detail";
+          extra.textContent = [
+            change.before.fileName + "  " + (change.before.sha256 || ""),
+            change.after.fileName + "  " + (change.after.sha256 || ""),
+          ].join("\n");
+          row.append(extra);
+        }
+        depList.append(row);
+      });
+      dependencies.append(depList);
+      detail.append(dependencies);
+
+      const findings = document.createElement("section");
+      findings.append(text("h2", "Findings"));
+      const findingList = document.createElement("ul");
+      const found = drift.findings;
+      const findingCount = found.added.length + found.removed.length + found.changed.length;
+      if (!findingCount) {
+        findingList.append(text("li", "No findings in either report.", "empty"));
+      }
+      ["added", "removed"].forEach((kind) => {
+        found[kind].forEach((item) => {
+          const row = document.createElement("li");
+          row.className = "row " + kind;
+          row.append(text("div", kind, "tag"), text("div", item.dependency + " " + item.id));
+          findingList.append(row);
+        });
+      });
+      findings.append(findingList);
+      detail.append(findings);
+
+      const scores = document.createElement("section");
+      scores.append(text("h2", "CVSS and score source"));
+      if (!drift.scores.available) {
+        scores.append(text("p", "No score source in these reports. A phase 1 report does not carry one yet.", "empty"));
+      } else {
+        scores.append(text("p", "Score source is present on at least one finding. Changes are listed with the findings above.", "empty"));
+      }
+      detail.append(scores);
+    }
+
+    function renderScan(scan) {
+      const detail = document.getElementById("detail");
+      detail.replaceChildren(
+        text("h2", scan.project || scan.id),
+        text("p", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "meta"),
+        text("p", "First scan on this timeline. Drift is shown from the next scan.", "empty")
+      );
+      const section = document.createElement("section");
+      section.append(text("h2", "Dependencies"));
+      const list = document.createElement("ul");
+      if (!scan.hasDependencyReport) {
+        list.append(text("li", "This scan has no Dependency-Check dependency report.", "empty"));
+      } else if (!scan.dependencies.length) {
+        list.append(text("li", "The engine report lists no dependencies.", "empty"));
+      } else {
+        scan.dependencies.forEach((item) => {
+          const row = document.createElement("li");
+          row.className = "row";
+          row.textContent = dependencyLine(item);
+          list.append(row);
+        });
+      }
+      section.append(list);
+      detail.append(section);
+    }
+
+    function render() {
+      document.getElementById("notice").textContent = state.history.notice || "";
+      renderTimeline();
+      const scan = state.history.scans.find((item) => item.id === state.selected) || state.history.scans[0];
+      const drift = state.history.drifts.find((item) => item.after === scan.id);
+      if (drift) renderDrift(scan, drift);
+      else renderScan(scan);
+    }
+
+    fetch("/api/history").then((response) => response.json()).then((history) => {
+      state.history = history;
+      state.selected = history.scans.length ? history.scans[history.scans.length - 1].id : null;
+      render();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+engine: 13.0.0
+snapshot: 2026-10-06T01:02:03Z
+checksum: sha256:2013d5f94e0c653dcac37e04faf44acb34ba3988baed9916272536e07e9ee61a
+project: fixture-b
+revision: ede75b82d4d566a18baefd96413c8cb9821dcc6c
+notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.

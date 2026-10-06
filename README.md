@@ -155,6 +155,18 @@ jobs:
 
 The action builds the container and runs `checkstead scan`. It has no API key input. The report is written to `checkstead-report/` in the workspace.
 
+## Timeline
+
+```bash
+python3 -m checkstead ui
+```
+
+Open http://127.0.0.1:8765/. The page reads `ui/scans`. Pass `--scans` to point it at another directory of scan reports.
+
+The two reports already in `ui/scans` are a pair of fixture scans on the same snapshot (`2026-10-06T01:02:03Z`, engine 13.0.0). Dependency-Check 13.0.0 identified the jars in evidence-collection mode: guava 31.1-jre and commons-lang3 3.12.0, then guava 32.1.3-jre and gson 2.10.1. Those jars are the published Maven Central artifacts. Finding analysis did not run, because that needs the NVD snapshot and this checkout does not contain one. The findings list and the score-source field are empty. Suppressions and false positives are empty on purpose.
+
+A scan records a revision when you pass `--revision`. The sample reports use the commits of the fixture trees.
+
 ## Develop
 
 ```bash
