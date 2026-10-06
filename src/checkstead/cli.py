@@ -42,12 +42,13 @@ def _cmd_version(_args: argparse.Namespace) -> int:
 
 
 def _cmd_ui(args: argparse.Namespace) -> int:
-    from checkstead.ui import default_scans_dir, serve
+    from checkstead.ui import default_data_dir, default_scans_dir, serve
 
     scans = Path(args.scans) if args.scans else default_scans_dir()
     if not scans.is_dir():
         raise ChecksteadError(f"Scan directory not found: {scans}")
-    serve(scans, args.host, args.port)
+    data = Path(args.data) if args.data else default_data_dir()
+    serve(scans, args.host, args.port, data)
     return 0
 
 
@@ -108,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = sub.add_parser("ui", help="Open the scan timeline in a browser.")
     ui.add_argument("--scans", help="Directory of scan reports. Defaults to ./ui/scans.")
+    ui.add_argument("--data", help="Directory for users and sessions. Defaults to CHECKSTEAD_DATA or ~/.local/share/checkstead.")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8765)
     ui.set_defaults(func=_cmd_ui)

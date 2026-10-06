@@ -3,7 +3,7 @@
 # A direct `docker run` can pass checkstead arguments instead.
 set -euo pipefail
 
-if [[ "${1:-}" == "scan" || "${1:-}" == "version" || "${1:-}" == "write-manifest" ]]; then
+if [[ "${1:-}" == "scan" || "${1:-}" == "version" || "${1:-}" == "write-manifest" || "${1:-}" == "ui" ]]; then
   exec checkstead "$@"
 fi
 

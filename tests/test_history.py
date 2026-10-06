@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest import TestCase
@@ -100,15 +101,33 @@ class HistoryTests(TestCase):
         self.assertEqual(loaded.findings[0].score_source_present, False)
 
     def test_ui_serves_the_timeline(self) -> None:
-        server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0)
+        from checkstead.accounts import AccountStore
+        from checkstead.identity import Identity
+
+        data = ROOT / "build" / "tests" / "ui-session"
+        if data.exists():
+            import shutil
+            shutil.rmtree(data)
+        token, _user = AccountStore(data).sign_in(Identity("github", "7", "octocat", "The Octocat"))
+        server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
         host, port = server.server_address[:2]
         page = urllib.request.urlopen(f"http://{host}:{port}/").read().decode()
         self.assertIn("Checkstead", page)
         self.assertIn("Suppressions", page)
-        payload = json.load(urllib.request.urlopen(f"http://{host}:{port}/api/history"))
+        self.assertIn("Administration", page)
+        denied = urllib.request.Request(f"http://{host}:{port}/api/history")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(denied)
+        self.assertEqual(caught.exception.code, 401)
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/history",
+            headers={"Cookie": f"checkstead_session={token}"},
+        )
+        payload = json.load(urllib.request.urlopen(request))
         changed = payload["drifts"][0]["dependencies"]["changed"]
         self.assertEqual(changed[0]["before"]["version"], "31.1-jre")
         self.assertEqual(changed[0]["after"]["version"], "32.1.3-jre")

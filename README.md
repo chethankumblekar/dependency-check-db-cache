@@ -167,6 +167,40 @@ The two reports already in `ui/scans` are a pair of fixture scans on the same sn
 
 A scan records a revision when you pass `--revision`. The sample reports use the commits of the fixture trees.
 
+## Server
+
+The timeline is a server you can run on a laptop or deploy as a container. People sign in with a GitHub personal access token or an Azure DevOps personal access token. The server asks that host who the token belongs to, then discards the token. It does not keep a copy.
+
+On a laptop, from this checkout:
+
+```bash
+PYTHONPATH=src python3 -m checkstead ui
+```
+
+Open http://127.0.0.1:8765/. Accounts are stored under `~/.local/share/checkstead`, or in the directory you pass with `--data`.
+
+The container is the same server, listening on every interface so it can be deployed on a host you choose:
+
+```bash
+docker build -f Dockerfile.server -t checkstead-server .
+docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead checkstead-server
+```
+
+The scan image can start it too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server.
+
+Create a token for the host you use:
+
+| Host | What to create | What the server asks |
+| --- | --- | --- |
+| GitHub | A personal access token that can read your user. A classic token needs the `read:user` scope. | `https://api.github.com/user` |
+| Azure DevOps | A personal access token for the organization, and the organization name on the sign-in form. | `https://dev.azure.com/{organization}/_apis/connectionData` |
+
+The first person to sign in becomes the administrator. After that, Administration is where that person adds logins and chooses who is a user and who is an administrator. Someone who has not been added cannot sign in. The last administrator cannot be removed.
+
+GitLab and other Git hosts are not connected. Adding one is a new identity provider beside GitHub and Azure DevOps. The server does not pretend they are available.
+
+Put the server behind TLS when it is not on your own machine, and set `CHECKSTEAD_COOKIE_SECURE=1` so the session cookie is marked Secure. Do not bake a token into the image or the repository.
+
 ## Develop
 
 ```bash

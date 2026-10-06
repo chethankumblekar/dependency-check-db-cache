@@ -1,0 +1,18 @@
+FROM python:3.12-slim-bookworm
+
+RUN useradd --system --create-home --home-dir /var/lib/checkstead checkstead
+
+COPY pyproject.toml README.md /opt/checkstead-src/
+COPY src /opt/checkstead-src/src
+COPY ui/scans /opt/checkstead/scans
+COPY scripts/server-entrypoint.sh /usr/local/bin/checkstead-server
+
+RUN pip install --no-cache-dir /opt/checkstead-src \
+    && chmod 0755 /usr/local/bin/checkstead-server \
+    && mkdir -p /var/lib/checkstead \
+    && chown -R checkstead:checkstead /var/lib/checkstead
+
+ENV CHECKSTEAD_DATA=/var/lib/checkstead
+EXPOSE 8765
+VOLUME /var/lib/checkstead
+ENTRYPOINT ["/usr/local/bin/checkstead-server"]

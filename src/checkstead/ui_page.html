@@ -18,6 +18,7 @@
       --focus: #1c1915;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       color: var(--ink);
@@ -75,6 +76,25 @@
     }
     .detail { margin-top: 8px; color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
     section + section { margin-top: 22px; }
+    .bar { display: flex; gap: 16px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+    .actions { display: flex; gap: 12px; align-items: center; }
+    .actions button, form button {
+      background: var(--ink);
+      color: var(--panel);
+      border: 0;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .actions button.quiet, form button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    form { display: grid; gap: 12px; max-width: 420px; }
+    label { display: grid; gap: 4px; font-size: 14px; }
+    input, select { font: inherit; padding: 8px; border: 1px solid var(--line); background: #fff; color: inherit; }
+    .error { color: var(--removed); margin: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    td button { margin-right: 8px; }
+    #gate, #admin { max-width: 1100px; margin: 0 auto; padding: 8px 24px 48px; }
     @media (max-width: 800px) {
       main { grid-template-columns: 1fr; }
       .timeline { border-right: 0; padding-right: 0; }
@@ -83,10 +103,63 @@
 </head>
 <body>
   <header>
-    <h1>Checkstead</h1>
+    <div class="bar">
+      <h1>Checkstead</h1>
+      <div class="actions">
+        <span id="who" class="notice" hidden></span>
+        <button type="button" id="show-timeline" class="quiet" hidden>Timeline</button>
+        <button type="button" id="show-admin" class="quiet" hidden>Administration</button>
+        <button type="button" id="sign-out" class="quiet" hidden>Sign out</button>
+      </div>
+    </div>
     <p class="notice" id="notice"></p>
   </header>
-  <main>
+  <section id="gate">
+    <form id="sign-in">
+      <p class="notice">Sign in with a GitHub or Azure DevOps personal access token. The token is used once to read who you are, and it is not stored. The first person to sign in is the administrator.</p>
+      <label>Provider
+        <select id="provider" name="provider"></select>
+      </label>
+      <label id="organization-field" hidden>Organization
+        <input id="organization" name="organization" autocomplete="organization" placeholder="your-organization">
+      </label>
+      <label>Token
+        <input id="token" name="token" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Sign in</button>
+      <p id="sign-in-error" class="error" hidden></p>
+      <p id="later" class="empty"></p>
+    </form>
+  </section>
+  <section id="admin" hidden>
+    <div class="panel">
+      <h2>Users and administrators</h2>
+      <p class="notice">Add the login from GitHub or Azure DevOps. That person signs in with their own token. GitLab is not connected yet.</p>
+      <form id="add-user">
+        <label>Provider
+          <select id="add-provider" name="provider"></select>
+        </label>
+        <label>Login
+          <input id="add-login" name="login" autocomplete="off" required>
+        </label>
+        <label>Role
+          <select id="add-role" name="role">
+            <option value="user">User</option>
+            <option value="admin">Administrator</option>
+          </select>
+        </label>
+        <button type="submit">Add</button>
+        <p id="add-error" class="error" hidden></p>
+      </form>
+      <table>
+        <thead>
+          <tr><th>Login</th><th>Name</th><th>Provider</th><th>Role</th><th></th></tr>
+        </thead>
+        <tbody id="users"></tbody>
+      </table>
+    </div>
+  </section>
+  <main hidden>
     <aside class="timeline">
       <h2>Scans</h2>
       <div id="scans"></div>
@@ -267,10 +340,212 @@
       else renderScan(scan);
     }
 
-    fetch("/api/history").then((response) => response.json()).then((history) => {
+    const session = { user: null, providers: [] };
+
+    function show(id, visible) {
+      document.getElementById(id).hidden = !visible;
+    }
+
+    function showError(id, message) {
+      const node = document.getElementById(id);
+      node.hidden = !message;
+      node.textContent = message || "";
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401 && path !== "/api/session") {
+        session.user = null;
+        showSignedOut();
+      }
+      if (!response.ok) throw new Error(payload.error || "Request failed.");
+      return payload;
+    }
+
+    function fillProviders(select) {
+      select.replaceChildren();
+      session.providers.forEach((provider) => {
+        const option = document.createElement("option");
+        option.value = provider.key;
+        option.textContent = provider.label;
+        select.append(option);
+      });
+    }
+
+    function selectedProvider() {
+      const key = document.getElementById("provider").value;
+      return session.providers.find((provider) => provider.key === key);
+    }
+
+    function showSignedOut() {
+      show("gate", true);
+      show("admin", false);
+      show("who", false);
+      show("show-timeline", false);
+      show("show-admin", false);
+      show("sign-out", false);
+      document.querySelector("main").hidden = true;
+    }
+
+    function showApp() {
+      const user = session.user;
+      show("gate", false);
+      const who = document.getElementById("who");
+      who.hidden = false;
+      who.textContent = user.login + (user.role === "admin" ? " · administrator" : " · user");
+      show("sign-out", true);
+      show("show-admin", user.role === "admin");
+      show("show-timeline", true);
+      showTimeline();
+    }
+
+    function showTimeline() {
+      show("admin", false);
+      document.querySelector("main").hidden = false;
+    }
+
+    async function loadHistory() {
+      const history = await api("/api/history");
       state.history = history;
-      state.selected = history.scans.length ? history.scans[history.scans.length - 1].id : null;
+      if (!state.selected) {
+        state.selected = history.scans.length ? history.scans[history.scans.length - 1].id : null;
+      }
       render();
+    }
+
+    async function loadUsers() {
+      const payload = await api("/api/admin/users");
+      const body = document.getElementById("users");
+      body.replaceChildren();
+      payload.users.forEach((user) => {
+        const row = document.createElement("tr");
+        ["login", "displayName", "provider", "role"].forEach((key) => {
+          row.append(text("td", user[key] || ""));
+        });
+        const actions = document.createElement("td");
+        const role = document.createElement("button");
+        role.type = "button";
+        role.className = "quiet";
+        role.textContent = user.role === "admin" ? "Make user" : "Make administrator";
+        role.addEventListener("click", async () => {
+          showError("add-error", "");
+          try {
+            await api("/api/admin/users/" + user.id, {
+              method: "PATCH",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({role: user.role === "admin" ? "user" : "admin"}),
+            });
+            await loadUsers();
+          } catch (error) {
+            showError("add-error", error.message);
+          }
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "quiet";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", async () => {
+          showError("add-error", "");
+          try {
+            await api("/api/admin/users/" + user.id, {method: "DELETE"});
+            await loadUsers();
+          } catch (error) {
+            showError("add-error", error.message);
+          }
+        });
+        actions.append(role, remove);
+        row.append(actions);
+        body.append(row);
+      });
+    }
+
+    document.getElementById("provider").addEventListener("change", () => {
+      const provider = selectedProvider();
+      document.getElementById("organization-field").hidden = !(provider && provider.organization);
+    });
+
+    document.getElementById("sign-in").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showError("sign-in-error", "");
+      const provider = document.getElementById("provider").value;
+      const body = {
+        provider: provider,
+        token: document.getElementById("token").value,
+      };
+      if (selectedProvider() && selectedProvider().organization) {
+        body.organization = document.getElementById("organization").value;
+      }
+      try {
+        const payload = await api("/api/session", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        document.getElementById("token").value = "";
+        session.user = payload.user;
+        showApp();
+        await loadHistory();
+      } catch (error) {
+        showError("sign-in-error", error.message);
+      }
+    });
+
+    document.getElementById("sign-out").addEventListener("click", async () => {
+      await api("/api/session", {method: "DELETE"});
+      session.user = null;
+      showSignedOut();
+    });
+
+    document.getElementById("show-timeline").addEventListener("click", () => {
+      showTimeline();
+    });
+
+    document.getElementById("show-admin").addEventListener("click", async () => {
+      document.querySelector("main").hidden = true;
+      show("admin", true);
+      fillProviders(document.getElementById("add-provider"));
+      try {
+        await loadUsers();
+      } catch (error) {
+        showError("add-error", error.message);
+      }
+    });
+
+    document.getElementById("add-user").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showError("add-error", "");
+      try {
+        await api("/api/admin/users", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            provider: document.getElementById("add-provider").value,
+            login: document.getElementById("add-login").value,
+            role: document.getElementById("add-role").value,
+          }),
+        });
+        document.getElementById("add-login").value = "";
+        await loadUsers();
+      } catch (error) {
+        showError("add-error", error.message);
+      }
+    });
+
+    fetch("/api/providers").then((response) => response.json()).then(async (payload) => {
+      session.providers = payload.providers || [];
+      fillProviders(document.getElementById("provider"));
+      document.getElementById("later").textContent = payload.later || "";
+      document.getElementById("organization-field").hidden = true;
+      const response = await fetch("/api/session");
+      if (!response.ok) {
+        showSignedOut();
+        return;
+      }
+      const current = await response.json();
+      session.user = current.user;
+      showApp();
+      await loadHistory();
     });
   </script>
 </body>
