@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir /opt/checkstead-src \
     && chown -R checkstead:checkstead /var/lib/checkstead
 
 ENV CHECKSTEAD_DATA=/var/lib/checkstead
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8765
 VOLUME /var/lib/checkstead
 ENTRYPOINT ["/usr/local/bin/checkstead-server"]
