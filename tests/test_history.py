@@ -119,6 +119,9 @@ class HistoryTests(TestCase):
         self.assertIn("Checkstead", page)
         self.assertIn("Suppressions", page)
         self.assertIn("Administration", page)
+        self.assertIn('id="i-github"', page)
+        self.assertIn('id="i-azure-devops"', page)
+        self.assertIn('id="i-clock"', page)
         denied = urllib.request.Request(f"http://{host}:{port}/api/history")
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(denied)
