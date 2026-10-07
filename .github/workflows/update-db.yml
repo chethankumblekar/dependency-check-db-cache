@@ -1,0 +1,105 @@
+name: Update Dependency Check DB
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Verify Java
+        run: |
+          java -version
+
+      - name: Download Dependency Check
+        run: |
+
+          VERSION="12.1.8"
+
+          wget https://github.com/dependency-check/DependencyCheck/releases/download/v${VERSION}/dependency-check-${VERSION}-release.zip
+
+          unzip dependency-check-${VERSION}-release.zip
+
+          ls -la
+
+      - name: Create Data Folder
+        run: |
+          mkdir -p ./data
+
+      - name: Update NVD Database
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+        run: |
+
+          DC_DIR=$(find . -maxdepth 1 -type d -name "dependency-check*" | head -1)
+
+          echo "Dependency Check Folder:"
+          echo "$DC_DIR"
+
+          chmod +x "$DC_DIR/bin/dependency-check.sh"
+
+          "$DC_DIR/bin/dependency-check.sh" \
+            --updateonly \
+            --nvdApiKey "$NVD_API_KEY" \
+            --data "./data" \
+            --log "./dependency-check.log"
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-logs
+          path: |
+            dependency-check.log
+
+      - name: Package Database
+
+        run: |
+
+          cd data
+
+          zip -r ../dependency-check-db.zip .
+
+      - name: Generate Release Tag
+
+        run: |
+          echo "RELEASE_TAG=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+      - name: Create Release
+
+        uses: softprops/action-gh-release@v2
+
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Dependency Check DB ${{ env.RELEASE_TAG }}
+          files: dependency-check-db.zip
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Database Artifact
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: dependency-check-db
+          path: dependency-check-db.zip
