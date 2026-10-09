@@ -98,7 +98,27 @@ docker build -t checkstead .
 docker run --rm -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-The image publishes to `ghcr.io/chethankumblekar/checkstead` when the [Publish image](.github/workflows/image.yml) workflow runs. The tag is the engine pin, plus `latest`.
+[CI](.github/workflows/ci.yml) runs on every push and every pull request. It lints, builds the Python package, and runs the unit tests and the Maven plugin tests. After those pass, it builds both images. A pull request does not push them. A push publishes them to GitHub Container Registry.
+
+| Image | What it is |
+| --- | --- |
+| `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead` | Scanner. The pinned engine and the `checkstead` command. |
+| `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server` | Timeline server. |
+
+| Tag | When it is published |
+| --- | --- |
+| `sha-<commit>` | Every push. The commit is the full git SHA, so this tag stays on that build. |
+| `<branch>` | Pushes to that branch. The default branch tag is `main`. |
+| `latest` | Pushes to the default branch. |
+| `engine-13.0.0` | Pushes to the default branch, scanner image only. The number is the pin in `engine.version`. |
+| `0.1.0`, `0.1`, and `v0.1.0` | A git tag named `v0.1.0`. |
+
+```bash
+docker pull ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+docker pull ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
+```
+
+The first publish creates the packages. If a pull is denied, open the package on GitHub and set its visibility to public.
 
 ## Maven
 
@@ -186,6 +206,13 @@ docker build -f Dockerfile.server -t checkstead-server .
 docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead checkstead-server
 ```
 
+The published server image is the same container:
+
+```bash
+docker pull ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
+docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
+```
+
 The scan image can start it too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server.
 
 Single sign-on needs an app registration. Leave the variables unset and the buttons stay on the page, marked not configured, and a personal access token still works.
@@ -217,10 +244,10 @@ Put the server behind TLS when it is not on your own machine, and set `CHECKSTEA
 ## Develop
 
 ```bash
-python3 -m unittest discover -s tests -v
-mvn -B -f integrations/maven/pom.xml test
+python3 -m pip install ruff==0.14.2 build==1.3.0
+bash scripts/self-test.sh
 ```
 
-The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded.
+That is the same lint, package build, unit tests, and Maven plugin tests that CI runs before it publishes images. The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded.
 
 Contributions are Apache-2.0 and use the Developer Certificate of Origin. See [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability in Checkstead through [SECURITY.md](SECURITY.md).

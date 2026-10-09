@@ -12,7 +12,7 @@ from checkstead.commit import lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
-from checkstead.snapshot import Snapshot, resolve_snapshot, safe_extract
+from checkstead.snapshot import resolve_snapshot, safe_extract
 
 # Removed from the engine process so a key in the parent environment cannot be used.
 _KEY_ENV_NAMES = ("NVD_API_KEY", "NVD_APIKEY")
