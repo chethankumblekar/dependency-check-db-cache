@@ -4,7 +4,7 @@ Maintainer: Chethan K ([@chethankumblekar](https://github.com/chethankumblekar))
 
 Report a vulnerability in Checkstead privately:
 
-https://github.com/chethankumblekar/checkstead/security/advisories/new
+https://github.com/chethankumblekar/dependency-check-db-cache/security/advisories/new
 
 You can also email chethan.kumblekar@ascertra.com. Please do not open a public
 issue for an unpublished vulnerability in this project.

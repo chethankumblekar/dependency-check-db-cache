@@ -2,9 +2,133 @@
 
 Checkstead runs [OWASP Dependency-Check](https://owasp.org/projects/dependency-check) once, the same way, for every build. One updater publishes a database snapshot. Scans use that snapshot. A scan does not use an NVD API key and does not call `services.nvd.nist.gov`.
 
+[![CI](https://github.com/chethankumblekar/dependency-check-db-cache/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chethankumblekar/dependency-check-db-cache/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Dependency-Check](https://img.shields.io/badge/Dependency--Check-13.0.0-blue.svg)](https://github.com/dependency-check/DependencyCheck/releases/tag/v13.0.0)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 
 Checkstead is not an OWASP project and does not speak for OWASP or NIST.
+
+| | |
+| --- | --- |
+| Name | Checkstead |
+| Repository | [chethankumblekar/dependency-check-db-cache](https://github.com/chethankumblekar/dependency-check-db-cache) |
+| Maintainer | Chethan K ([@chethankumblekar](https://github.com/chethankumblekar)) |
+| License | [Apache-2.0](LICENSE) |
+| Engine | OWASP Dependency-Check 13.0.0 |
+| Version | 0.1.0 |
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [What this release does](#what-this-release-does)
+- [Pinned engine](#pinned-engine)
+- [Scan](#scan)
+- [What a scan still contacts](#what-a-scan-still-contacts)
+- [The updater secret](#the-updater-secret)
+- [Container images](#container-images)
+- [Maven](#maven)
+- [Gradle](#gradle)
+- [GitHub Action](#github-action)
+- [Timeline](#timeline)
+- [Server](#server)
+- [Develop](#develop)
+- [License and security](#license-and-security)
+
+## Screenshots
+
+The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the findings list and the score source are empty on purpose.
+
+Sign in with GitHub, with a Microsoft Entra work or school account, or with a personal access token. GitLab is not connected.
+
+![Sign-in page with GitHub, Microsoft, and a personal access token](docs/screenshots/sign-in.png)
+
+The timeline names the snapshot, the engine, the revision, and the person git recorded for that revision. The drift between the two fixture scans is guava 31.1-jre to 32.1.3-jre. commons-lang3 left, and gson arrived.
+
+![Timeline and the guava drift, committed by Cursor Agent](docs/screenshots/drift.png)
+
+The first person to sign in is the administrator. Administration is where that person adds later accounts.
+
+![Administration, with GitHub and Microsoft Entra accounts](docs/screenshots/administration.png)
+
+## Architecture
+
+A scan and the timeline server are separate. The scan never holds an NVD API key. The updater is the only job that talks to `services.nvd.nist.gov`.
+
+```mermaid
+flowchart TB
+  subgraph daily [Once a day]
+    secret[Repository secret NVD_API_KEY]
+    updater[Update database snapshot]
+    nvd[services.nvd.nist.gov]
+    release["GitHub release db-YYYY-MM-DD"]
+    secret --> updater
+    updater --> nvd
+    updater --> release
+  end
+
+  subgraph build [Every build]
+    maven[Maven goal]
+    gradle[Gradle task]
+    action[GitHub Action]
+    cli[checkstead scan]
+    scanner[Scanner image]
+    engine["Dependency-Check 13.0.0 with --noupdate"]
+    maven --> cli
+    gradle --> cli
+    action --> scanner
+    scanner --> engine
+    cli --> engine
+    release --> engine
+  end
+
+  engine --> report[checkstead-report]
+
+  subgraph portal [Timeline server]
+    reports[Directories of scan reports]
+    ui[Web UI]
+    accounts[Account store]
+    github[GitHub OAuth or token]
+    entra[Microsoft Entra]
+    azure[Azure DevOps token]
+    report --> reports --> ui
+    github --> accounts
+    entra --> accounts
+    azure --> accounts
+    accounts --> ui
+  end
+```
+
+Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints, builds, and tests. After those pass, it publishes the scanner image and the server image. A pull request builds the images and does not push them.
+
+| Path | Role |
+| --- | --- |
+| `src/checkstead` | Scan client, account store, and timeline server |
+| `engine.version` | The Dependency-Check pin |
+| `checkstead.yml` | Snapshot URL, plus fields reserved for later |
+| `Dockerfile` | Scanner image |
+| `Dockerfile.server` | Timeline server image |
+| `action.yml` | GitHub Action that runs the scanner image |
+| `integrations/maven` | Maven goal that calls `checkstead scan` |
+| `integrations/gradle` | Gradle task that calls `checkstead scan` |
+| `ui/scans` | The two fixture scans shown above |
+| `.github/workflows/ci.yml` | Lint, test, build, and image publish |
+| `.github/workflows/update-snapshot.yml` | Daily snapshot |
+
+## What this release does
+
+| In this release | Later |
+| --- | --- |
+| Pinned scan, checksummed snapshot, `--noupdate` | Score policy and a fail threshold |
+| CLI, scanner image, Maven, Gradle, GitHub Action | Private suppression file |
+| Timeline of scans and the drift between them | Suppression and false-positive records |
+| Git author on a scan when that commit is in the tree | |
+| Server accounts: GitHub, Microsoft Entra, Azure DevOps | GitLab and other Git hosts |
+
+`scorePolicy`, `threshold`, and `privateSuppressions` are read and not applied. The timeline leaves an empty place for suppressions and false positives. It does not invent those records.
 
 ## Pinned engine
 
@@ -34,7 +158,13 @@ threshold:
 privateSuppressions:
 ```
 
-`snapshot` is the manifest URL. Point it at the public manifest, or at a manifest your own updater published. `scorePolicy`, `threshold`, and `privateSuppressions` are reserved for later. This release reads them and does not apply them.
+`snapshot` is the manifest URL. The copy in this repository still names `github.com/chethankumblekar/checkstead`, and that repository was not created. Point `snapshot` at a manifest the updater in this repository has published:
+
+```text
+https://github.com/chethankumblekar/dependency-check-db-cache/releases/download/db-YYYY-MM-DD/manifest.json
+```
+
+`scorePolicy`, `threshold`, and `privateSuppressions` are reserved for later. This release reads them and does not apply them.
 
 ```bash
 checkstead scan --scan . --project my-service
@@ -48,6 +178,8 @@ snapshot: 2026-10-06T01:00:00Z
 checksum: sha256:…
 notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.
 ```
+
+Pass `--revision` when the scan should name a git commit. If that commit is in the tree you scanned, the report also names the author git recorded.
 
 The same directory receives Dependency-Check's HTML and JSON reports. The command is the pinned `dependency-check.sh` with that snapshot's data directory and `--noupdate`. It does not receive `--nvdApiKey`.
 
@@ -89,16 +221,18 @@ Until the secret is set, [Update database snapshot](.github/workflows/update-sna
 
 A second run on the same UTC day leaves that release in place and does not call NVD again. The workflow allows three hours. The first database load is large.
 
-## Container
+## Container images
 
-The image contains the pinned engine and the `checkstead` command. It does not contain a database.
+The scanner image contains the pinned engine and the `checkstead` command. It does not contain a database. The server image is the timeline only.
+
+You can build them from this checkout:
 
 ```bash
 docker build -t checkstead .
 docker run --rm -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-[CI](.github/workflows/ci.yml) runs on every push and every pull request. It lints, builds the Python package, and runs the unit tests and the Maven plugin tests. After those pass, it builds both images. A pull request does not push them. A push publishes them to GitHub Container Registry.
+[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass.
 
 | Image | What it is |
 | --- | --- |
@@ -159,6 +293,8 @@ From another repository, copy `integrations/gradle/checkstead.gradle` or apply t
 
 ## GitHub Action
 
+`action.yml` in this repository builds the scanner image and runs `checkstead scan`. It has no API key input. The report is written to `checkstead-report/` in the workspace.
+
 ```yaml
 name: Scan
 on: [push]
@@ -167,13 +303,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: chethankumblekar/checkstead@v0.1.0
+      - uses: chethankumblekar/dependency-check-db-cache@main
         with:
           scan: .
           project: my-service
 ```
 
-The action builds the container and runs `checkstead scan`. It has no API key input. The report is written to `checkstead-report/` in the workspace.
+Pin a commit SHA when the scan should stay on one build. `@main` follows this repository.
 
 ## Timeline
 
@@ -250,4 +386,10 @@ bash scripts/self-test.sh
 
 That is the same lint, package build, unit tests, and Maven plugin tests that CI runs before it publishes images. The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded.
 
-Contributions are Apache-2.0 and use the Developer Certificate of Origin. See [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability in Checkstead through [SECURITY.md](SECURITY.md).
+## License and security
+
+Checkstead is [Apache-2.0](LICENSE). Contributions use the Developer Certificate of Origin. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Maintainer: Chethan K ([@chethankumblekar](https://github.com/chethankumblekar)). Report a vulnerability through [SECURITY.md](SECURITY.md). You can email chethan.kumblekar@ascertra.com, or open a private advisory:
+
+https://github.com/chethankumblekar/dependency-check-db-cache/security/advisories/new
