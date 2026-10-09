@@ -8,13 +8,23 @@ from __future__ import annotations
 
 import json
 import os
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from checkstead.accounts import SESSION_DAYS, AccountError, AccountStore
 from checkstead.history import history_payload, load_history
 from checkstead.identity import AuthError, identify, list_providers
+from checkstead.sso import (
+    STATE_COOKIE,
+    authorize_url,
+    exchange,
+    new_state,
+    public_base,
+    sso_status,
+    state_cookie,
+)
 
 PAGE = Path(__file__).resolve().with_name("ui_page.html")
 COOKIE = "checkstead_session"
@@ -35,14 +45,18 @@ def default_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "checkstead"
 
 
-def _cookie(header: str | None) -> str | None:
+def _cookie_named(header: str | None, name: str) -> str | None:
     if not header:
         return None
     for part in header.split(";"):
-        name, separator, value = part.strip().partition("=")
-        if separator and name == COOKIE and value:
+        key, separator, value = part.strip().partition("=")
+        if separator and key == name and value:
             return value
     return None
+
+
+def _cookie(header: str | None) -> str | None:
+    return _cookie_named(header, COOKIE)
 
 
 def _session_cookie(token: str, max_age: int) -> str:
@@ -70,12 +84,23 @@ def bind_server(
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            path = self.path.split("?", 1)[0]
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
             if path in {"/", "/index.html"}:
                 self._send(200, "text/html; charset=utf-8", PAGE.read_bytes())
                 return
             if path == "/api/providers":
                 self._json(200, list_providers())
+                return
+            if path == "/api/sso":
+                self._json(200, sso_status())
+                return
+            if path in {"/api/sso/github/start", "/api/sso/entra/start"}:
+                self._sso_start(path.split("/")[3])
+                return
+            if path in {"/api/sso/github/callback", "/api/sso/entra/callback"}:
+                self._sso_callback(path.split("/")[3], query)
                 return
             if path == "/api/session":
                 user = store.user_for_session(_cookie(self.headers.get("Cookie")))
@@ -168,6 +193,46 @@ def bind_server(
                 self._json(exc.status, {"error": str(exc)})
                 return
             self._json(200, {"removed": user_id})
+
+        def _sso_start(self, kind: str) -> None:
+            host = self.headers.get("Host", "")
+            try:
+                state = new_state()
+                location = authorize_url(kind, public_base(host), state)
+            except AuthError as exc:
+                self._page(404, str(exc))
+                return
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Set-Cookie", state_cookie(state))
+            self.end_headers()
+
+        def _sso_callback(self, kind: str, query: dict[str, list[str]]) -> None:
+            code = (query.get("code") or [""])[0]
+            state = (query.get("state") or [""])[0]
+            saved = _cookie_named(self.headers.get("Cookie"), STATE_COOKIE)
+            if not code or not state or state != saved:
+                self._page(400, "Sign-in could not be confirmed. Start again.")
+                return
+            try:
+                identity = exchange(kind, code, public_base(self.headers.get("Host", "")))
+                token, _user = store.sign_in(identity)
+            except (AuthError, AccountError) as exc:
+                self._page(getattr(exc, "status", 401), str(exc))
+                return
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", _session_cookie(token, SESSION_DAYS * 24 * 3600))
+            self.send_header("Set-Cookie", f"{STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+            self.end_headers()
+
+        def _page(self, status: int, message: str) -> None:
+            body = (
+                "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
+                f"<title>Checkstead</title><p>{escape(message)}</p>"
+                "<p><a href=\"/\">Back to sign in</a></p></html>"
+            ).encode("utf-8")
+            self._send(status, "text/html; charset=utf-8", body)
 
         def _user_id(self) -> int | None:
             path = unquote(self.path.split("?", 1)[0])

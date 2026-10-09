@@ -41,6 +41,8 @@ class HistoryTests(TestCase):
         self.assertEqual(scans[0].engine, "13.0.0")
         self.assertTrue(scans[0].revision)
         self.assertNotEqual(scans[0].revision, scans[1].revision)
+        self.assertEqual(scans[0].author, "Cursor Agent")
+        self.assertEqual(scans[1].author, "Cursor Agent")
         drift = diff_scans(scans[0], scans[1])
         self.assertEqual([item.name for item in drift.dependencies_added], ["com.google.code.gson:gson"])
         self.assertEqual(

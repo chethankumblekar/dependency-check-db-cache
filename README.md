@@ -165,11 +165,11 @@ Open http://127.0.0.1:8765/. The page reads `ui/scans`. Pass `--scans` to point 
 
 The two reports already in `ui/scans` are a pair of fixture scans on the same snapshot (`2026-10-06T01:02:03Z`, engine 13.0.0). Dependency-Check 13.0.0 identified the jars in evidence-collection mode: guava 31.1-jre and commons-lang3 3.12.0, then guava 32.1.3-jre and gson 2.10.1. Those jars are the published Maven Central artifacts. Finding analysis did not run, because that needs the NVD snapshot and this checkout does not contain one. The findings list and the score-source field are empty. Suppressions and false positives are empty on purpose.
 
-A scan records a revision when you pass `--revision`. The sample reports use the commits of the fixture trees.
+A scan records a revision when you pass `--revision`. When that revision is a commit in the tree you scanned, the report also names the person git recorded as the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
 
 ## Server
 
-The timeline is a server you can run on a laptop or deploy as a container. People sign in with a GitHub personal access token or an Azure DevOps personal access token. The server asks that host who the token belongs to, then discards the token. It does not keep a copy.
+The timeline is a server you can run on a laptop or deploy as a container. People can sign in with GitHub, with a Microsoft Entra work or school account, or with a GitHub or Azure DevOps personal access token. The server asks that host who the person is, then discards the token. It does not keep a copy.
 
 On a laptop, from this checkout:
 
@@ -187,6 +187,19 @@ docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead checkstead-s
 ```
 
 The scan image can start it too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server.
+
+Single sign-on needs an app registration. Leave the variables unset and the buttons stay on the page, marked not configured, and a personal access token still works.
+
+| Variable | What it is |
+| --- | --- |
+| `CHECKSTEAD_GITHUB_CLIENT_ID` | GitHub OAuth app client id |
+| `CHECKSTEAD_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
+| `CHECKSTEAD_GITHUB_ORG` | Optional. When set, only members of this GitHub organization can use the GitHub button. |
+| `CHECKSTEAD_ENTRA_CLIENT_ID` | Entra app registration client id |
+| `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Entra app registration client secret |
+| `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
+
+The redirect URLs are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. On a laptop without TLS they are `http://127.0.0.1:8765/...`. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
 
 Create a token for the host you use:
 

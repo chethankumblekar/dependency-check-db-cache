@@ -57,7 +57,11 @@ class ServerTests(TestCase):
 
     def test_sign_in_then_add_a_user(self) -> None:
         providers = self.request("/api/providers")[1]
-        self.assertEqual([item["key"] for item in providers["providers"]], ["github", "azure-devops"])
+        self.assertEqual(
+            [item["key"] for item in providers["providers"]],
+            ["github", "azure-devops", "entra"],
+        )
+        self.assertTrue(providers["providers"][2]["sso"])
         self.assertNotIn("gitlab", [item["key"] for item in providers["providers"]])
         self.assertIn("GitLab", providers["later"])
 

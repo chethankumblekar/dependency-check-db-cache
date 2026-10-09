@@ -11,6 +11,8 @@ def render_report(
     checksum: str,
     project: str | None = None,
     revision: str | None = None,
+    author: str | None = None,
+    author_email: str | None = None,
 ) -> str:
     lines = [
         f"engine: {engine_version}",
@@ -21,6 +23,10 @@ def render_report(
         lines.append(f"project: {project}")
     if revision:
         lines.append(f"revision: {revision}")
+    if author:
+        lines.append(f"author: {author}")
+    if author_email:
+        lines.append(f"author-email: {author_email}")
     lines.append(f"notice: {NVD_NOTICE}")
     return "\n".join(lines) + "\n"
 
@@ -32,11 +38,21 @@ def write_report(
     checksum: str,
     project: str | None = None,
     revision: str | None = None,
+    author: str | None = None,
+    author_email: str | None = None,
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "checkstead.txt"
     path.write_text(
-        render_report(engine_version, snapshot_time, checksum, project, revision),
+        render_report(
+            engine_version,
+            snapshot_time,
+            checksum,
+            project,
+            revision,
+            author,
+            author_email,
+        ),
         encoding="utf-8",
     )
     return path

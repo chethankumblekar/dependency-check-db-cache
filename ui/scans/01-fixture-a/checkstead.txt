@@ -3,4 +3,6 @@ snapshot: 2026-10-06T01:02:03Z
 checksum: sha256:2013d5f94e0c653dcac37e04faf44acb34ba3988baed9916272536e07e9ee61a
 project: fixture-a
 revision: 8af3a9b4547eda6c8c36b39416e4772ce3f6cd7d
+author: Cursor Agent
+author-email: cursoragent@cursor.com
 notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.

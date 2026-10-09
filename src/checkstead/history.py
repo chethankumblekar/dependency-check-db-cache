@@ -40,6 +40,8 @@ class Scan:
     snapshot: str
     checksum: str
     revision: str | None
+    author: str | None
+    author_email: str | None
     notice: str
     dependencies: list[Dependency]
     findings: list[Finding]
@@ -154,6 +156,8 @@ def load_scan(directory: Path) -> Scan:
         snapshot=header.get("snapshot", ""),
         checksum=header.get("checksum", ""),
         revision=header.get("revision") or None,
+        author=header.get("author") or None,
+        author_email=header.get("author-email") or None,
         notice=header.get("notice", NVD_NOTICE),
         dependencies=dependencies,
         findings=findings,
@@ -243,6 +247,8 @@ def history_payload(scans: list[Scan]) -> dict:
                 "snapshot": scan.snapshot,
                 "checksum": scan.checksum,
                 "revision": scan.revision,
+                "author": scan.author,
+                "authorEmail": scan.author_email,
                 "hasDependencyReport": scan.has_dependency_report,
                 "hasScoreSource": scan.has_score_source,
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],

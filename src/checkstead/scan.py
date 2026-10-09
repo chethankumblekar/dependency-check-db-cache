@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from urllib.request import OpenerDirector
 
+from checkstead.commit import lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
@@ -106,6 +107,12 @@ def run_scan(
         )
     engine_path = resolve_engine(engine)
     project_name = project or scans[0].name
+    author = None
+    author_email = None
+    if revision:
+        found = lookup_commit(revision, scans[0])
+        if found:
+            author, author_email = found
     out_dir.mkdir(parents=True, exist_ok=True)
     command = build_scan_command(engine_path, snapshot.data_dir, scans, project_name, out_dir)
     report_path = write_report(
@@ -115,6 +122,8 @@ def run_scan(
         snapshot.checksum,
         project_name,
         revision,
+        author,
+        author_email,
     )
     (out_dir / "checkstead-command.txt").write_text("\n".join(command) + "\n", encoding="utf-8")
     print(f"engine: {snapshot.engine_version}")

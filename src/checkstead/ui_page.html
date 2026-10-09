@@ -42,6 +42,13 @@
     .with-icon, .meta-line, .tag, .empty, .error, #who { display: flex; align-items: center; gap: 6px; }
     .scan .meta-line { display: flex; }
     .meta-line > span, .empty > span, .error > span, #who > span { min-width: 0; }
+    .sso { display: grid; gap: 8px; max-width: 420px; margin: 0 0 18px; }
+    a.sso-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      width: fit-content; padding: 8px 12px; border: 1px solid var(--line);
+      background: var(--panel); color: inherit; text-decoration: none;
+    }
+    a.sso-link.disabled { opacity: 0.55; cursor: not-allowed; }
     .choice { display: flex; align-items: center; gap: 8px; }
     .choice select { flex: 1; }
     .timeline { border-right: 1px solid var(--line); padding-right: 20px; }
@@ -128,6 +135,7 @@
     <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8 13 3.6v4.2c0 3.2-2.1 5.4-5 6.4-2.9-1-5-3.2-5-6.4V3.6Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
     <symbol id="i-person" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.4 13.2c.6-2.4 2.3-3.6 4.6-3.6s4 1.2 4.6 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3.2 4.5h9.6M6.2 4.5V3h3.6v1.5M4.8 4.5l.5 8.2h5.4l.5-8.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-microsoft" viewBox="0 0 16 16"><path fill="currentColor" d="M1 1h6.5v6.5H1zm7.5 0H15v6.5H8.5zM1 8.5h6.5V15H1zm7.5 0H15V15H8.5z"/></symbol>
     <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
     <symbol id="i-azure-devops" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3.2h4.4L8 8 5.4 12.8H1L3.8 8 1 3.2zm14 0L12.2 8 15 12.8h-4.4L8 8l2.6-4.8H15z"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 16 16"><path d="M2 8s2.2-3.5 6-3.5S14 8 14 8s-2.2 3.5-6 3.5S2 8 2 8z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 13 13 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
@@ -145,8 +153,13 @@
     <p class="notice" id="notice"></p>
   </header>
   <section id="gate">
+    <div class="sso">
+      <a class="sso-link" id="sso-github" href="/api/sso/github/start"><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Sign in with GitHub</a>
+      <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
+      <p class="empty" id="sso-note"></p>
+    </div>
     <form id="sign-in">
-      <p class="notice">Sign in with a GitHub or Azure DevOps personal access token. The token is used once to read who you are, and it is not stored. The first person to sign in is the administrator.</p>
+      <p class="notice">Or use a GitHub or Azure DevOps personal access token. The token is used once to read who you are, and it is not stored. The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
       <label>Provider
         <span class="choice"><span id="provider-mark"></span><select id="provider" name="provider"></select></span>
       </label>
@@ -164,7 +177,7 @@
   <section id="admin" hidden>
     <div class="panel">
       <h2><svg class="icon" aria-hidden="true"><use href="#i-people"></use></svg>Users and administrators</h2>
-      <p class="notice">Add the login from GitHub or Azure DevOps. That person signs in with their own token. GitLab is not connected yet.</p>
+      <p class="notice">Add the login from GitHub, Azure DevOps, or Microsoft Entra. That person signs in with their own account. GitLab is not connected yet.</p>
       <form id="add-user">
         <label>Provider
           <span class="choice"><span id="add-provider-mark"></span><select id="add-provider" name="provider"></select></span>
@@ -230,12 +243,18 @@
       return node;
     }
 
-    const providerIcons = { github: "github", "azure-devops": "azure-devops" };
+    const providerIcons = { github: "github", "azure-devops": "azure-devops", entra: "microsoft" };
     const driftIcons = { added: "plus", removed: "minus", changed: "diff" };
 
     function revisionLabel(scan) {
       if (!scan.revision) return "revision not recorded";
       return "revision " + scan.revision.slice(0, 12);
+    }
+
+    function committerLabel(scan) {
+      if (scan.author) return "committed by " + scan.author;
+      if (scan.revision) return "committer not recorded";
+      return "";
     }
 
     function renderTimeline() {
@@ -253,6 +272,8 @@
           withIcon("package", "engine " + scan.engine, "span", "meta-line"),
           withIcon("commit", revisionLabel(scan), "span", "meta-line")
         );
+        const committer = committerLabel(scan);
+        if (committer) button.append(withIcon("person", committer, "span", "meta-line"));
         button.addEventListener("click", () => {
           state.selected = scan.id;
           state.openKey = null;
@@ -297,6 +318,8 @@
         text("p", (before.project || before.id) + " to " + (scan.project || scan.id), "meta"),
         withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line")
       );
+      const committer = committerLabel(scan);
+      if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
 
       const dependencies = document.createElement("section");
       dependencies.append(withIcon("package", "Dependencies", "h2"));
@@ -370,6 +393,8 @@
         withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line"),
         text("p", "First scan on this timeline. Drift is shown from the next scan.", "empty")
       );
+      const committer = committerLabel(scan);
+      if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
       const section = document.createElement("section");
       section.append(withIcon("package", "Dependencies", "h2"));
       const list = document.createElement("ul");
@@ -426,9 +451,9 @@
       return payload;
     }
 
-    function fillProviders(select) {
+    function fillProviders(select, includeSso) {
       select.replaceChildren();
-      session.providers.forEach((provider) => {
+      session.providers.filter((provider) => includeSso || !provider.sso).forEach((provider) => {
         const option = document.createElement("option");
         option.value = provider.key;
         option.textContent = provider.label;
@@ -582,7 +607,7 @@
     document.getElementById("show-admin").addEventListener("click", async () => {
       document.querySelector("main").hidden = true;
       show("admin", true);
-      fillProviders(document.getElementById("add-provider"));
+      fillProviders(document.getElementById("add-provider"), true);
       markFor(document.getElementById("add-provider"), "add-provider-mark");
       try {
         await loadUsers();
@@ -611,9 +636,37 @@
       }
     });
 
+    function bindSso(link, enabled) {
+      if (enabled) {
+        link.classList.remove("disabled");
+        link.removeAttribute("aria-disabled");
+        return;
+      }
+      link.classList.add("disabled");
+      link.setAttribute("aria-disabled", "true");
+      link.addEventListener("click", (event) => event.preventDefault());
+    }
+
+    fetch("/api/sso").then((response) => response.json()).then((payload) => {
+      const github = payload.github || {};
+      const entra = payload.entra || {};
+      bindSso(document.getElementById("sso-github"), !!github.enabled);
+      bindSso(document.getElementById("sso-entra"), !!entra.enabled);
+      const note = document.getElementById("sso-note");
+      if (!github.enabled && !entra.enabled) {
+        note.textContent = "GitHub and Microsoft sign-in need an app registration on this server. A personal access token still works.";
+      } else if (!github.enabled) {
+        note.textContent = "GitHub sign-in is not configured. Set CHECKSTEAD_GITHUB_CLIENT_ID and CHECKSTEAD_GITHUB_CLIENT_SECRET.";
+      } else if (!entra.enabled) {
+        note.textContent = "Microsoft Entra sign-in is not configured. Set CHECKSTEAD_ENTRA_CLIENT_ID and CHECKSTEAD_ENTRA_CLIENT_SECRET. The default tenant is organizations, which is work and school accounts.";
+      } else {
+        note.textContent = "";
+      }
+    });
+
     fetch("/api/providers").then((response) => response.json()).then(async (payload) => {
       session.providers = payload.providers || [];
-      fillProviders(document.getElementById("provider"));
+      fillProviders(document.getElementById("provider"), false);
       markFor(document.getElementById("provider"), "provider-mark");
       document.getElementById("later").textContent = payload.later || "";
       document.getElementById("organization-field").hidden = true;

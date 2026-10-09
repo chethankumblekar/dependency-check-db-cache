@@ -19,7 +19,9 @@ from typing import Callable
 from checkstead.errors import ChecksteadError
 from checkstead.http import USER_AGENT, build_opener, ensure_allowed
 
-_LOGIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_LOGIN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}(@[A-Za-z0-9][A-Za-z0-9.-]{0,253})?$"
+)
 _ORG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$")
 
 
@@ -130,16 +132,28 @@ def identify_azure(token: str, organization: str | None, fetch: Fetch) -> Identi
     return Identity("azure-devops", str(subject), login.strip(), display_name[:200])
 
 
+def identify_entra(token: str, organization: str | None, fetch: Fetch) -> Identity:
+    raise AuthError("Microsoft Entra uses Sign in with Microsoft, not a pasted token.")
+
+
 PROVIDERS: dict[str, dict] = {
     "github": {
         "label": "GitHub",
         "organization": False,
+        "sso": False,
         "identify": identify_github,
     },
     "azure-devops": {
         "label": "Azure DevOps",
         "organization": True,
+        "sso": False,
         "identify": identify_azure,
+    },
+    "entra": {
+        "label": "Microsoft Entra",
+        "organization": False,
+        "sso": True,
+        "identify": identify_entra,
     },
 }
 
@@ -147,7 +161,12 @@ PROVIDERS: dict[str, dict] = {
 def list_providers() -> dict:
     return {
         "providers": [
-            {"key": key, "label": spec["label"], "organization": spec["organization"]}
+            {
+                "key": key,
+                "label": spec["label"],
+                "organization": spec["organization"],
+                "sso": spec["sso"],
+            }
             for key, spec in PROVIDERS.items()
         ],
         "later": "GitLab and other Git hosts are not connected yet.",
