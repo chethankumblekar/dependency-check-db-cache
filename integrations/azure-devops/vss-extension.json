@@ -1,0 +1,57 @@
+{
+  "manifestVersion": 1,
+  "id": "checkstead",
+  "name": "Checkstead",
+  "version": "0.1.0",
+  "publisher": "chethankumblekar",
+  "description": "Scan with the pinned OWASP Dependency-Check and the Checkstead snapshot. No NVD API key.",
+  "categories": ["Azure Pipelines"],
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "tags": ["security", "dependencies", "checkstead"],
+  "icons": {
+    "default": "images/icon.png"
+  },
+  "content": {
+    "details": {
+      "path": "overview.md"
+    }
+  },
+  "links": {
+    "support": {
+      "uri": "https://github.com/chethankumblekar/dependency-check-db-cache/issues"
+    },
+    "repository": {
+      "uri": "https://github.com/chethankumblekar/dependency-check-db-cache"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "uri": "https://github.com/chethankumblekar/dependency-check-db-cache"
+  },
+  "files": [
+    {
+      "path": "task"
+    },
+    {
+      "path": "images",
+      "addressable": true
+    },
+    {
+      "path": "overview.md"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "checkstead-scan",
+      "type": "ms.vss-distributed-task.task",
+      "targets": ["ms.vss-distributed-task.tasks"],
+      "properties": {
+        "name": "task"
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check the release contract
+        run: python3 -m unittest tests.test_release -v
+
+      - name: GitHub release
+        env:
+          TAG: ${{ github.ref_name }}
+          PYTHONPATH: src
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -c 'import os; from checkstead.release import release_notes; open(os.environ["RUNNER_TEMP"] + "/notes.md", "w", encoding="utf-8").write(release_notes(os.environ["TAG"]))'
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --title "Checkstead $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+      - name: Move the major and minor tags
+        run: bash ./scripts/move-release-tags.sh "${{ github.ref_name }}"
+
+      - name: Package the Azure DevOps extension
+        env:
+          TAG: ${{ github.ref_name }}
+          AZURE_MARKETPLACE_PUBLISHER: ${{ vars.AZURE_MARKETPLACE_PUBLISHER }}
+        run: |
+          args=(--tag "$TAG" --dest build/azure-extension --vsix build/checkstead.vsix)
+          if [ -n "$AZURE_MARKETPLACE_PUBLISHER" ]; then
+            args+=(--publisher "$AZURE_MARKETPLACE_PUBLISHER")
+          fi
+          python3 scripts/package-azure-extension.py "${args[@]}"
+
+      - name: Attach the extension to the release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" build/checkstead.vsix --clobber
+
+      - name: Publish to the Azure DevOps Marketplace
+        env:
+          AZURE_MARKETPLACE_TOKEN: ${{ secrets.AZURE_MARKETPLACE_TOKEN }}
+          AZURE_MARKETPLACE_PUBLISHER: ${{ vars.AZURE_MARKETPLACE_PUBLISHER }}
+        run: bash ./scripts/publish-azure-extension.sh build/checkstead.vsix

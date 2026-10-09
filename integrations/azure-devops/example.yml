@@ -1,0 +1,13 @@
+# Example only. Azure DevOps does not run this file unless you point a pipeline at it.
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: ChecksteadScan@0
+    inputs:
+      scan: .
+      project: $(Build.Repository.Name)
+      output: checkstead-report

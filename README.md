@@ -33,6 +33,8 @@ Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 - [Maven](#maven)
 - [Gradle](#gradle)
 - [GitHub Action](#github-action)
+- [Azure DevOps](#azure-devops)
+- [Release](#release)
 - [Timeline](#timeline)
 - [Server](#server)
 - [Develop](#develop)
@@ -112,6 +114,7 @@ Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints
 | `Dockerfile` | Scanner image |
 | `Dockerfile.server` | Timeline server image |
 | `action.yml` | GitHub Action that runs the scanner image |
+| `integrations/azure-devops` | Azure DevOps extension and pipeline task |
 | `integrations/maven` | Maven goal that calls `checkstead scan` |
 | `integrations/gradle` | Gradle task that calls `checkstead scan` |
 | `ui/scans` | The two fixture scans shown above |
@@ -309,7 +312,37 @@ jobs:
           project: my-service
 ```
 
-Pin a commit SHA when the scan should stay on one build. `@main` follows this repository.
+Pin a commit SHA when the scan should stay on one build. `@main` follows this repository. After a version tag, `v0` follows the newest 0.x release. See [Release](#release).
+
+## Azure DevOps
+
+The extension in [`integrations/azure-devops`](integrations/azure-devops) adds the pipeline task `ChecksteadScan`. It runs the same scanner image. It does not take an NVD API key. The agent needs Docker.
+
+```yaml
+- task: ChecksteadScan@0
+  inputs:
+    scan: .
+    project: $(Build.Repository.Name)
+```
+
+A full example is [`integrations/azure-devops/example.yml`](integrations/azure-devops/example.yml). The task is published from a version tag. Until that publish exists, the task name above is not in an organization yet.
+
+## Release
+
+Push a tag `v0.1.0`. [Release](.github/workflows/release.yml) runs on tags that look like `v1.2.3`.
+
+It creates the GitHub release, moves the floating tags `v0` and `v0.1` to that commit, and attaches the Azure DevOps extension package. CI on the same tag publishes the scanner image `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:0.1.0`.
+
+GitHub Marketplace has no API for its listing checkbox. On the first release, edit it, select **Publish this Action to the GitHub Marketplace**, and set the primary category to **Security**. The account needs the Marketplace Developer Agreement and two-factor authentication. Later tags stay on that listing.
+
+Azure DevOps Marketplace publish needs two repository settings:
+
+| Name | Kind | What to put there |
+| --- | --- | --- |
+| `AZURE_MARKETPLACE_TOKEN` | Secret | A personal access token with Marketplace (publish) scope. |
+| `AZURE_MARKETPLACE_PUBLISHER` | Variable | The publisher id from [the Marketplace publisher hub](https://marketplace.visualstudio.com/manage). |
+
+Create the publisher before the first tag. Without the token, the workflow still attaches the VSIX to the GitHub release and skips the Marketplace upload. The first upload is private to the publisher. Share it, or make it public, from that hub.
 
 ## Timeline
 
