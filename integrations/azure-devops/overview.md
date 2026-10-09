@@ -17,6 +17,6 @@ The task runs the Checkstead scanner image on a Linux agent that has Docker. It 
     project: $(Build.Repository.Name)
 ```
 
-The first marketplace upload is private to the publisher. Share it with an organization, or make it public, from the Visual Studio Marketplace publisher hub.
+The extension is public. An organization that already uses Azure Pipelines installs it from the Visual Studio Marketplace. The publisher does not need an Azure DevOps organization.
 
 The task does not take an NVD API key. Set `NVD_API_KEY` only on the Checkstead repository that publishes the snapshot.

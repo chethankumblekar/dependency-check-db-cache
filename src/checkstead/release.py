@@ -72,7 +72,13 @@ def release_notes(tag: str) -> str:
             "## Azure DevOps Marketplace",
             "",
             "The extension package is attached to this release. "
-            f"After it is published, a pipeline uses `ChecksteadScan@{parts[0]}`.",
+            "The manifest is public, so other organizations can install it. "
+            "The publisher does not need an Azure DevOps organization.",
+            "",
+            "Upload the VSIX at https://marketplace.visualstudio.com/manage "
+            "with New extension, then Azure DevOps. "
+            "Microsoft lists it for everyone when the publisher is verified. "
+            f"A pipeline then uses `ChecksteadScan@{parts[0]}`.",
             "",
             "```yaml",
             f"- task: ChecksteadScan@{parts[0]}",

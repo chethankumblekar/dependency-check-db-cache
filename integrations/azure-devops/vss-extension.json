@@ -4,6 +4,7 @@
   "name": "Checkstead",
   "version": "0.1.0",
   "publisher": "chethankumblekar",
+  "public": true,
   "description": "Scan with the pinned OWASP Dependency-Check and the Checkstead snapshot. No NVD API key.",
   "categories": ["Azure Pipelines"],
   "targets": [

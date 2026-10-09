@@ -49,6 +49,9 @@ class ReleaseTests(TestCase):
         self.assertIn("Publish this Action to the GitHub Marketplace", notes)
         self.assertIn("Security", notes)
         self.assertIn("ChecksteadScan@1", notes)
+        self.assertIn("The manifest is public", notes)
+        self.assertIn("does not need an Azure DevOps organization", notes)
+        self.assertIn("https://marketplace.visualstudio.com/manage", notes)
         self.assertIn("does not take an NVD API key", notes)
         self.assertIn(
             "This product uses data from the NVD API but is not endorsed or certified by the NVD.",
@@ -88,6 +91,7 @@ class ReleaseTests(TestCase):
         index = (dest / "task" / "index.js").read_text(encoding="utf-8")
         self.assertEqual(manifest["version"], "0.2.0")
         self.assertEqual(manifest["publisher"], "example-publisher")
+        self.assertIs(manifest["public"], True)
         self.assertEqual(task["version"], {"Major": 0, "Minor": 2, "Patch": 0})
         image = "ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:0.2.0"
         self.assertEqual(
@@ -115,6 +119,7 @@ class ReleaseTests(TestCase):
         self.assertIn("icon: \"shield\"", action)
         self.assertNotIn("nvdApiKey", action)
         self.assertEqual(manifest["contributions"][0]["type"], "ms.vss-distributed-task.task")
+        self.assertIs(manifest["public"], True)
         icon = (ROOT / "integrations" / "azure-devops" / "images" / "icon.png").read_bytes()
         self.assertEqual(icon[12:16], b"IHDR")
         width, height = struct.unpack(">II", icon[16:24])
@@ -129,3 +134,4 @@ class ReleaseTests(TestCase):
         )
         self.assertEqual(skipped.returncode, 0, skipped.stderr)
         self.assertIn("Marketplace publish was skipped", skipped.stdout)
+        self.assertIn("You do not need an Azure DevOps organization.", skipped.stdout)

@@ -9,9 +9,11 @@ publisher=${AZURE_MARKETPLACE_PUBLISHER:-}
 if [[ -z "$token" ]]; then
   echo "AZURE_MARKETPLACE_TOKEN is not set."
   echo "The VSIX is attached to the GitHub release. Marketplace publish was skipped."
-  echo "Create a publisher at https://marketplace.visualstudio.com/manage"
-  echo "Then set AZURE_MARKETPLACE_TOKEN to a PAT with Marketplace (publish) scope,"
-  echo "and AZURE_MARKETPLACE_PUBLISHER to that publisher id."
+  echo "You do not need an Azure DevOps organization."
+  echo "Upload the VSIX at https://marketplace.visualstudio.com/manage :"
+  echo "create a publisher, then New extension, Azure DevOps."
+  echo "The package is public. Other organizations install it themselves."
+  echo "A token is only for this automatic upload."
   exit 0
 fi
 
