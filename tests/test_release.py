@@ -49,10 +49,9 @@ class ReleaseTests(TestCase):
         self.assertIn("Publish this Action to the GitHub Marketplace", notes)
         self.assertIn("Security", notes)
         self.assertIn("ChecksteadScan@1", notes)
-        self.assertIn("The manifest is public", notes)
-        self.assertIn("does not need an Azure DevOps organization", notes)
-        self.assertIn("https://marketplace.visualstudio.com/manage", notes)
+        self.assertIn("The release pipeline publishes this public extension", notes)
         self.assertIn("does not take an NVD API key", notes)
+        self.assertNotIn("Upload the VSIX", notes)
         self.assertIn(
             "This product uses data from the NVD API but is not endorsed or certified by the NVD.",
             notes,
@@ -112,6 +111,7 @@ class ReleaseTests(TestCase):
         self.assertIn("scripts/move-release-tags.sh", workflow)
         self.assertIn("scripts/package-azure-extension.py", workflow)
         self.assertIn("scripts/publish-azure-extension.sh", workflow)
+        self.assertIn("Publish to the Azure DevOps Marketplace", workflow)
         self.assertIn("secrets.AZURE_MARKETPLACE_TOKEN", workflow)
         self.assertIn("vars.AZURE_MARKETPLACE_PUBLISHER", workflow)
         self.assertNotIn("nvdApiKey", workflow)
@@ -125,13 +125,14 @@ class ReleaseTests(TestCase):
         width, height = struct.unpack(">II", icon[16:24])
         self.assertGreaterEqual(width, 128)
         self.assertGreaterEqual(height, 128)
-        skipped = subprocess.run(
+        missing = subprocess.run(
             ["bash", str(ROOT / "scripts" / "publish-azure-extension.sh"), "missing.vsix"],
             check=False,
             text=True,
             capture_output=True,
             env={"PATH": "/usr/bin:/bin"},
         )
-        self.assertEqual(skipped.returncode, 0, skipped.stderr)
-        self.assertIn("Marketplace publish was skipped", skipped.stdout)
-        self.assertIn("You do not need an Azure DevOps organization.", skipped.stdout)
+        self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        self.assertIn("The release pipeline publishes this extension.", missing.stderr)
+        self.assertIn("AZURE_MARKETPLACE_TOKEN", missing.stderr)
+        self.assertIn("AZURE_MARKETPLACE_PUBLISHER", missing.stderr)

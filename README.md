@@ -325,30 +325,28 @@ The extension in [`integrations/azure-devops`](integrations/azure-devops) adds t
     project: $(Build.Repository.Name)
 ```
 
-A full example is [`integrations/azure-devops/example.yml`](integrations/azure-devops/example.yml). GitHub builds use the Action above and do not install this extension. An Azure Pipelines organization installs the public extension, then uses the task. You do not need an organization of your own for other people to do that.
+A full example is [`integrations/azure-devops/example.yml`](integrations/azure-devops/example.yml). GitHub builds use the Action above. The [Release](#release) workflow publishes this extension, and an Azure Pipelines organization installs that public listing before it uses the task.
 
 ## Release
 
 Push a tag `v0.1.0`. [Release](.github/workflows/release.yml) runs on tags that look like `v1.2.3`.
 
-It creates the GitHub release, moves the floating tags `v0` and `v0.1` to that commit, and attaches the Azure DevOps extension package. CI on the same tag publishes the scanner image `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:0.1.0`.
+It creates the GitHub release, moves the floating tags `v0` and `v0.1` to that commit, attaches the Azure DevOps extension package, and publishes that package to the Azure DevOps Marketplace. CI on the same tag publishes the scanner image `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:0.1.0`.
 
 GitHub Marketplace has no API for its listing checkbox. On the first release, edit it, select **Publish this Action to the GitHub Marketplace**, and set the primary category to **Security**. The account needs the Marketplace Developer Agreement and two-factor authentication. Later tags stay on that listing.
 
-Other people install the Azure Pipelines task from the Marketplace. You do not create an Azure DevOps organization, and you do not run a pipeline.
-
-1. Sign in at [the Marketplace publisher hub](https://marketplace.visualstudio.com/manage) with a Microsoft account and create a publisher. Save the publisher id.
-2. Set the repository variable `AZURE_MARKETPLACE_PUBLISHER` to that id before the first tag. The release stamps it into the VSIX. The manifest already has `"public": true`.
-3. Push the version tag. The workflow attaches `checkstead.vsix` to the GitHub release.
-4. On the publisher page, choose **New extension**, then **Azure DevOps**, and upload that VSIX. Microsoft lists a public extension when the publisher is verified. On the publisher **Details** tab, verify a domain you control if the page asks for that. Microsoft may also review the listing. Verification is a domain record. It is not an Azure DevOps organization.
-5. Someone else's organization opens the listing and chooses **Get it free**. Their pipeline uses `ChecksteadScan@0`. The agent pulls the scanner image, so the GHCR package has to be public. See [Container images](#container-images).
-
-A personal access token is only the optional automatic upload. Leave it unset and upload the VSIX in the browser. The workflow still attaches the package to the GitHub release.
+The Release workflow publishes the extension. Set both of these on the repository before the first tag. The manifest already has `"public": true`.
 
 | Name | Kind | What to put there |
 | --- | --- | --- |
-| `AZURE_MARKETPLACE_TOKEN` | Secret, optional | A personal access token with Marketplace (Publish). Organization: All accessible organizations. Creating one at [the token page](https://dev.azure.com/_usersSettings/tokens) can offer a free organization. You can ignore that offer. |
-| `AZURE_MARKETPLACE_PUBLISHER` | Variable | The publisher id from the hub above. |
+| `AZURE_MARKETPLACE_TOKEN` | Secret | A personal access token with Marketplace (Publish). Organization: All accessible organizations. Create it at [the token page](https://dev.azure.com/_usersSettings/tokens). |
+| `AZURE_MARKETPLACE_PUBLISHER` | Variable | The publisher id from [the Marketplace publisher hub](https://marketplace.visualstudio.com/manage). Create that publisher with a Microsoft account. |
+
+The token page can offer to create an organization so the token has a home. The Release workflow on GitHub is what publishes. Teams that already use Azure Pipelines open the listing and choose **Get it free**, then use `ChecksteadScan@0`. Their agent pulls the scanner image, so the GHCR package has to be public. See [Container images](#container-images).
+
+Microsoft lists a public extension when the publisher is verified. On the publisher **Details** tab, verify a domain you control if the page asks for that. Microsoft may also review the listing.
+
+If the secret or the variable is missing, the publish step fails.
 
 ## Timeline
 

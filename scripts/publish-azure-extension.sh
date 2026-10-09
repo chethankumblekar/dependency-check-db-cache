@@ -1,24 +1,16 @@
 #!/usr/bin/env bash
-# Publish a stamped VSIX when the marketplace token is set. Otherwise leave the package on the GitHub release.
+# The release pipeline publishes the stamped VSIX. Both settings are required.
 set -euo pipefail
 
 vsix=${1:?usage: publish-azure-extension.sh path/to/checkstead.vsix}
 token=${AZURE_MARKETPLACE_TOKEN:-}
 publisher=${AZURE_MARKETPLACE_PUBLISHER:-}
 
-if [[ -z "$token" ]]; then
-  echo "AZURE_MARKETPLACE_TOKEN is not set."
-  echo "The VSIX is attached to the GitHub release. Marketplace publish was skipped."
-  echo "You do not need an Azure DevOps organization."
-  echo "Upload the VSIX at https://marketplace.visualstudio.com/manage :"
-  echo "create a publisher, then New extension, Azure DevOps."
-  echo "The package is public. Other organizations install it themselves."
-  echo "A token is only for this automatic upload."
-  exit 0
-fi
-
-if [[ -z "$publisher" ]]; then
-  echo "AZURE_MARKETPLACE_PUBLISHER is not set." >&2
+if [[ -z "$token" || -z "$publisher" ]]; then
+  echo "The release pipeline publishes this extension." >&2
+  echo "Set the secret AZURE_MARKETPLACE_TOKEN and the variable AZURE_MARKETPLACE_PUBLISHER." >&2
+  echo "The token is a Marketplace (Publish) personal access token." >&2
+  echo "The variable is the publisher id from https://marketplace.visualstudio.com/manage." >&2
   exit 1
 fi
 
