@@ -92,12 +92,30 @@ def command_environment(source: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def yarn_runs(env: dict[str, str] | None = None) -> bool:
+    """True when `yarn --version` exits 0."""
+    current = env if env is not None else dict(os.environ)
+    yarn = shutil.which("yarn", path=current.get("PATH"))
+    if not yarn or not os.access(yarn, os.X_OK):
+        return False
+    completed = subprocess.run(
+        [yarn, "--version"],
+        env=current,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 def build_scan_command(
     engine: Path,
     data_dir: Path,
     scans: list[Path],
     project: str,
     out_dir: Path,
+    env: dict[str, str] | None = None,
 ) -> list[str]:
     """The Dependency-Check invocation. No API key, no update, no score policy."""
     if not scans:
@@ -118,6 +136,8 @@ def build_scan_command(
         "JSON",
         "--prettyPrint",
     ]
+    if not yarn_runs(env):
+        command.append("--disableYarnAudit")
     for scan in scans:
         command.extend(["--scan", str(scan)])
     return command
@@ -160,7 +180,14 @@ def run_scan(
         if found:
             author, author_email = found
     out_dir.mkdir(parents=True, exist_ok=True)
-    command = build_scan_command(engine_path, snapshot.data_dir, scans, project_name, out_dir)
+    command = build_scan_command(
+        engine_path,
+        snapshot.data_dir,
+        scans,
+        project_name,
+        out_dir,
+        dict(os.environ),
+    )
     report_path = write_report(
         out_dir,
         snapshot.engine_version,

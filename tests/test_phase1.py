@@ -479,6 +479,49 @@ class Phase1Tests(TestCase):
         self.assertNotIn("--updateonly", command)
         self.assertNotIn("services.nvd.nist.gov", joined)
 
+    def test_yarn_audit_is_disabled_only_when_yarn_does_not_run(self) -> None:
+        root = ROOT / "build" / "tests" / "yarn-audit"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        engine = Path("/opt/dependency-check/bin/dependency-check.sh")
+        data = Path("/var/cache/checkstead/data")
+        scan = Path("/work/project")
+        out = Path("/work/out")
+
+        def command_with(path: Path) -> list[str]:
+            with mock.patch.dict(os.environ, {"PATH": str(path)}, clear=False):
+                return build_scan_command(engine, data, [scan], "sample", out, dict(os.environ))
+
+        missing = root / "missing"
+        missing.mkdir()
+        without = command_with(missing)
+        self.assertIn("--disableYarnAudit", without)
+        self.assertNotIn("nvdApiKey", without)
+        self.assertNotIn("--disableNodeAudit", without)
+
+        inert = root / "inert"
+        inert.mkdir()
+        yarn = inert / "yarn"
+        yarn.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        yarn.chmod(0o644)
+        self.assertIn("--disableYarnAudit", command_with(inert))
+
+        failing = root / "failing"
+        broken = failing / "yarn"
+        broken.parent.mkdir()
+        broken.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        broken.chmod(0o755)
+        self.assertIn("--disableYarnAudit", command_with(failing))
+
+        working = root / "working"
+        ok = working / "yarn"
+        ok.parent.mkdir()
+        ok.write_text("#!/bin/sh\necho 1.22.22\n", encoding="utf-8")
+        ok.chmod(0o755)
+        enabled = command_with(working)
+        self.assertNotIn("--disableYarnAudit", enabled)
+        self.assertIn("--noupdate", enabled)
+
     def test_updater_stops_without_a_key_and_keeps_the_days_snapshot(self) -> None:
         env = os.environ.copy()
         env["NVD_API_KEY"] = ""
