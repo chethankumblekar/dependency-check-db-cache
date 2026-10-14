@@ -239,7 +239,16 @@ fi
 if [[ -x "$ROOT/venv/bin/checkstead" ]] && "$ROOT/venv/bin/checkstead" version >/dev/null 2>&1; then
   echo "checkstead already installed."
 else
-  "$python" -m venv "$ROOT/venv"
+  rm -rf "$ROOT/venv"
+  if "$python" -c 'import ensurepip' >/dev/null 2>&1; then
+    "$python" -m venv "$ROOT/venv"
+  else
+    "$python" -m venv --without-pip "$ROOT/venv"
+    pip_tmp=$(mktemp -d)
+    curl -fsSL -o "$pip_tmp/get-pip.py" https://bootstrap.pypa.io/get-pip.py
+    "$ROOT/venv/bin/python" "$pip_tmp/get-pip.py"
+    rm -rf "$pip_tmp"
+  fi
   "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check "$PACKAGE_URL"
   echo "Installed checkstead under $ROOT/venv"
 fi

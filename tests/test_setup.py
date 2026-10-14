@@ -119,6 +119,8 @@ class SetupTests(TestCase):
         self.assertNotIn("services.nvd.nist.gov", recorded)
         script = SETUP.read_text(encoding="utf-8")
         self.assertNotIn("sudo", script)
+        self.assertIn("--without-pip", script)
+        self.assertIn("https://bootstrap.pypa.io/get-pip.py", script)
         self.assertNotIn("services.nvd.nist.gov", script)
         self.assertNotIn("--updateonly", script)
         self.assertNotIn("nvdApiKey", script)
