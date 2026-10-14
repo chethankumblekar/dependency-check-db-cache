@@ -513,6 +513,13 @@ class Phase1Tests(TestCase):
         broken.chmod(0o755)
         self.assertIn("--disableYarnAudit", command_with(failing))
 
+        blank = root / "blank"
+        empty = blank / "yarn"
+        empty.parent.mkdir()
+        empty.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        empty.chmod(0o755)
+        self.assertIn("--disableYarnAudit", command_with(blank))
+
         working = root / "working"
         ok = working / "yarn"
         ok.parent.mkdir()

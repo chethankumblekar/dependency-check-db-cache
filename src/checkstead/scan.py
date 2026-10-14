@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -93,7 +94,10 @@ def command_environment(source: dict[str, str]) -> dict[str, str]:
 
 
 def yarn_runs(env: dict[str, str] | None = None) -> bool:
-    """True when `yarn --version` exits 0."""
+    """True when `yarn --version` exits 0 and prints a version.
+
+    Dependency-Check exits 14 after writing the reports when this check fails.
+    """
     current = env if env is not None else dict(os.environ)
     yarn = shutil.which("yarn", path=current.get("PATH"))
     if not yarn or not os.access(yarn, os.X_OK):
@@ -101,12 +105,15 @@ def yarn_runs(env: dict[str, str] | None = None) -> bool:
     completed = subprocess.run(
         [yarn, "--version"],
         env=current,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         timeout=15,
         check=False,
+        text=True,
     )
-    return completed.returncode == 0
+    if completed.returncode != 0:
+        return False
+    return bool(re.search(r"\d+\.\d+", completed.stdout or ""))
 
 
 def build_scan_command(

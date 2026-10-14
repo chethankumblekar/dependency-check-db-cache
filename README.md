@@ -17,6 +17,8 @@ Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
 ```
 
+Run that command again when a finished scan still exits 14. Python, Java, and the engine stay in place.
+
 ## Run
 
 Open a new terminal.

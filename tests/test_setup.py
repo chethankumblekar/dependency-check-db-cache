@@ -128,6 +128,8 @@ class SetupTests(TestCase):
         self.assertNotIn("--updateonly", script)
         self.assertNotIn("nvdApiKey", script)
         self.assertNotIn("java_home", script)
+        self.assertIn("--disableYarnAudit", script)
+        self.assertIn("dependency-check.upstream.sh", script)
 
     def test_a_java_stub_is_replaced_by_the_home_jdk(self) -> None:
         root = ROOT / "build" / "tests" / "setup-java-stub"
@@ -265,6 +267,60 @@ class SetupTests(TestCase):
         message = str(caught.exception)
         self.assertIn(SETUP_COMMAND, message)
         self.assertNotIn("exited 1", message)
+
+    def test_engine_skips_yarn_audit_when_yarn_does_not_print_a_version(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-yarn-wrapper"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        self._ready_home(home, bindir)
+        env = self._env(home, bindir)
+        completed = subprocess.run(
+            ["bash", str(SETUP)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        bindir_engine = home / "checkstead" / "dependency-check" / "bin"
+        upstream = bindir_engine / "dependency-check.upstream.sh"
+        wrapper = bindir_engine / "dependency-check.sh"
+        log = root / "argv.txt"
+        _write(
+            upstream,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ENGINE_ARGV\"\necho 'Dependency-Check Core version 13.0.0'\n",
+        )
+        self.assertIn("checkstead setup: yarn audit", wrapper.read_text(encoding="utf-8"))
+
+        def run_wrapper(path: str, *args: str) -> subprocess.CompletedProcess[str]:
+            run_env = env.copy()
+            run_env["PATH"] = path + os.pathsep + "/usr/bin:/bin"
+            run_env["ENGINE_ARGV"] = str(log)
+            return subprocess.run(
+                [str(wrapper), *args],
+                env=run_env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        missing = root / "no-yarn"
+        missing.mkdir()
+        without = run_wrapper(str(missing), "--noupdate", "--scan", ".")
+        self.assertEqual(without.returncode, 0, without.stdout + without.stderr)
+        self.assertIn("--disableYarnAudit", log.read_text(encoding="utf-8"))
+
+        yarn_bin = root / "with-yarn"
+        _write(yarn_bin / "yarn", "#!/bin/sh\necho 1.22.22\n")
+        with_yarn = run_wrapper(str(yarn_bin), "--noupdate", "--scan", ".")
+        self.assertEqual(with_yarn.returncode, 0, with_yarn.stdout + with_yarn.stderr)
+        self.assertNotIn("--disableYarnAudit", log.read_text(encoding="utf-8"))
+
+        version = run_wrapper(str(missing), "--version")
+        self.assertEqual(version.returncode, 0, version.stdout + version.stderr)
+        self.assertNotIn("--disableYarnAudit", log.read_text(encoding="utf-8"))
+        self.assertIn("13.0.0", version.stdout)
 
     def test_readme_leads_with_the_setup_and_scan_commands(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

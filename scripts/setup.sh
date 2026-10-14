@@ -149,6 +149,42 @@ install_engine() {
   echo "Installed Dependency-Check ${PIN} under $ROOT/dependency-check"
 }
 
+ensure_engine_wrapper() {
+  local bin upstream
+  bin="$ROOT/dependency-check/bin/dependency-check.sh"
+  upstream="$ROOT/dependency-check/bin/dependency-check.upstream.sh"
+  if [[ ! -f "$bin" && ! -f "$upstream" ]]; then
+    return 0
+  fi
+  if [[ -f "$bin" ]] && ! grep -q "checkstead setup: yarn audit" "$bin"; then
+    mv "$bin" "$upstream"
+  fi
+  if [[ -f "$upstream" ]]; then
+    chmod +x "$upstream"
+  fi
+  cat > "$bin" <<'EOF'
+#!/bin/sh
+# checkstead setup: yarn audit
+# A missing yarn makes Dependency-Check exit 14 after the reports are written.
+upstream=$(CDPATH= cd "$(dirname "$0")" && pwd)/dependency-check.upstream.sh
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-v" ]; then
+  exec "$upstream" "$@"
+fi
+for arg in "$@"; do
+  if [ "$arg" = "--disableYarnAudit" ]; then
+    exec "$upstream" "$@"
+  fi
+done
+version=$(yarn --version 2>/dev/null || true)
+version=$(printf '%s' "$version" | tr -d '[:space:]')
+if [ -z "$version" ]; then
+  exec "$upstream" --disableYarnAudit "$@"
+fi
+exec "$upstream" "$@"
+EOF
+  chmod +x "$bin"
+}
+
 read_pin() {
   local reported
   if [[ -x "$ROOT/venv/bin/checkstead" ]]; then
@@ -254,21 +290,40 @@ else
   install_engine
 fi
 
-if [[ -x "$ROOT/venv/bin/checkstead" ]] && "$ROOT/venv/bin/checkstead" version >/dev/null 2>&1; then
+ensure_engine_wrapper
+
+checkstead_current() {
+  local scan
+  [[ -x "$ROOT/venv/bin/checkstead" ]] || return 1
+  "$ROOT/venv/bin/checkstead" version >/dev/null 2>&1 || return 1
+  scan=$(find "$ROOT/venv" -path '*/checkstead/scan.py' -print -quit 2>/dev/null || true)
+  if [[ -n "$scan" ]] && ! grep -q -- '--disableYarnAudit' "$scan"; then
+    return 1
+  fi
+  return 0
+}
+
+install_checkstead_package() {
+  if [[ ! -x "$ROOT/venv/bin/python" ]]; then
+    rm -rf "$ROOT/venv"
+    if "$python" -c 'import ensurepip' >/dev/null 2>&1; then
+      "$python" -m venv "$ROOT/venv"
+    else
+      "$python" -m venv --without-pip "$ROOT/venv"
+      pip_tmp=$(mktemp -d)
+      curl -fsSL -o "$pip_tmp/get-pip.py" https://bootstrap.pypa.io/get-pip.py
+      "$ROOT/venv/bin/python" "$pip_tmp/get-pip.py"
+      rm -rf "$pip_tmp"
+    fi
+  fi
+  "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check --upgrade "$PACKAGE_URL"
+  echo "Installed checkstead under $ROOT/venv"
+}
+
+if checkstead_current; then
   echo "checkstead already installed."
 else
-  rm -rf "$ROOT/venv"
-  if "$python" -c 'import ensurepip' >/dev/null 2>&1; then
-    "$python" -m venv "$ROOT/venv"
-  else
-    "$python" -m venv --without-pip "$ROOT/venv"
-    pip_tmp=$(mktemp -d)
-    curl -fsSL -o "$pip_tmp/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-    "$ROOT/venv/bin/python" "$pip_tmp/get-pip.py"
-    rm -rf "$pip_tmp"
-  fi
-  "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check "$PACKAGE_URL"
-  echo "Installed checkstead under $ROOT/venv"
+  install_checkstead_package
 fi
 
 ensure_command
