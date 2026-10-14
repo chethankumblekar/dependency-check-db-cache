@@ -152,13 +152,14 @@ Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints
 
 | In this release | Later |
 | --- | --- |
-| Pinned scan, checksummed snapshot, `--noupdate` | Score policy and a fail threshold |
-| CLI, scanner image, Maven, Gradle, GitHub Action | Private suppression file |
+| Pinned scan, checksummed snapshot, `--noupdate` | Public suppression rules confirmed by more than one user |
+| Named score policy, threshold, KEV flag, and a no-score line | |
+| Private suppression file, kept local | |
 | Timeline of scans and the drift between them | Suppression and false-positive records |
 | Git author on a scan when that commit is in the tree | |
 | Server accounts: GitHub, Microsoft Entra, Azure DevOps | GitLab and other Git hosts |
 
-`scorePolicy`, `threshold`, and `privateSuppressions` are read and not applied. The timeline leaves an empty place for suppressions and false positives. It does not invent those records.
+`scorePolicy` chooses the one score a finding is judged on. `threshold` fails the build when that score is at or above the number. An empty threshold does not fail on score. `failOnKev` fails on a CISA KEV finding even when the score is below the threshold. `failUnscored` fails when a finding has no score. `privateSuppressions` is a local file passed to the engine. A URL is refused, and the file is not published. The timeline does not invent suppression or false-positive records.
 
 ## Pinned engine
 
@@ -172,18 +173,22 @@ A snapshot manifest names the engine that built it. If that version is not the p
 
 From a checkout, the same script is `bash scripts/setup.sh`. `checkstead version` prints `13.0.0`.
 
-Put [`checkstead.yml`](checkstead.yml) in the project you scan, or use the copy in this repository. The file is four keys:
+Put [`checkstead.yml`](checkstead.yml) in the project you scan, or use the copy in this repository.
 
 ```yaml
 snapshot: https://github.com/chethankumblekar/dependency-check-db-cache/releases/latest/download/manifest.json
-scorePolicy:
-threshold:
+scorePolicy: prefer-newest
+threshold: 7
+failOnKev: false
+failUnscored: false
 privateSuppressions:
 ```
 
 `snapshot` is the manifest URL. `releases/latest` on this repository is the Checkstead snapshot, the release that contains `manifest.json`. The daily updater publishes `db-YYYY-MM-DD` and marks that release latest.
 
-`scorePolicy`, `threshold`, and `privateSuppressions` are reserved for later. This release reads them and does not apply them.
+`prefer-newest` uses an NVD score when the report has one. Otherwise it uses a CNA score, and otherwise another analyzer in the report. The newer CVSS version from that source is the one that counts. `highest` uses the largest base score from any source. The report names the version, the score, the vector, and the source. A KEV finding stays in the report when its score is below the threshold. A finding with no score is a `no score` line, not a pass that hides a missing NVD record.
+
+`privateSuppressions` is a company file on disk. Expired rules and CVE rules that matched nothing are listed in `checkstead.txt`. Checkstead does not ship a confirmed public rule. Upstream hosted suppressions stay the ones in the snapshot.
 
 ```bash
 checkstead scan --scan . --project my-service
@@ -196,6 +201,8 @@ engine: 13.0.0
 snapshot: 2026-10-06T01:00:00Z
 checksum: sha256:…
 notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.
+score-policy: prefer-newest
+threshold: 7
 ```
 
 Pass `--revision` when the scan should name a git commit. If that commit is in the tree you scanned, the report also names the author git recorded.

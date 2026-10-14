@@ -76,6 +76,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         engine=Path(args.engine) if args.engine else None,
         revision=args.revision or None,
+        score_policy=config.score_policy,
+        threshold=config.threshold,
+        fail_on_kev=config.fail_on_kev,
+        fail_unscored=config.fail_unscored,
+        private_suppressions=config.private_suppressions,
     )
     print(f"report: {result.report_path}")
     return 0

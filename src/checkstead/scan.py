@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -13,7 +14,14 @@ from checkstead.commit import lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
+from checkstead.score import POLICY_FAILURE, evaluate_report
 from checkstead.snapshot import resolve_snapshot, safe_extract
+from checkstead.suppressions import (
+    public_suppression_file,
+    resolve_private_suppressions,
+    seen_identifiers,
+    suppression_report,
+)
 
 # Removed from the engine process so a key in the parent environment cannot be used.
 _KEY_ENV_NAMES = ("NVD_API_KEY", "NVD_APIKEY")
@@ -116,6 +124,24 @@ def yarn_runs(env: dict[str, str] | None = None) -> bool:
     return bool(re.search(r"\d+\.\d+", completed.stdout or ""))
 
 
+def policy_lines(
+    policy: str,
+    threshold: float | None,
+    fail_on_kev: bool,
+    fail_unscored: bool,
+    private_suppressions: Path | None,
+) -> list[str]:
+    threshold_text = "none" if threshold is None else f"{threshold:g}"
+    private_text = str(private_suppressions) if private_suppressions else "none"
+    return [
+        f"score-policy: {policy}",
+        f"threshold: {threshold_text}",
+        f"fail-on-kev: {'true' if fail_on_kev else 'false'}",
+        f"fail-unscored: {'true' if fail_unscored else 'false'}",
+        f"private-suppressions: {private_text}",
+    ]
+
+
 def build_scan_command(
     engine: Path,
     data_dir: Path,
@@ -123,8 +149,9 @@ def build_scan_command(
     project: str,
     out_dir: Path,
     env: dict[str, str] | None = None,
+    suppressions: list[Path] | None = None,
 ) -> list[str]:
-    """The Dependency-Check invocation. No API key, no update, no score policy."""
+    """The Dependency-Check invocation. No API key and no update."""
     if not scans:
         raise ChecksteadError("Pass at least one path to scan.")
     command = [
@@ -145,9 +172,65 @@ def build_scan_command(
     ]
     if not yarn_runs(env):
         command.append("--disableYarnAudit")
+    for suppression in suppressions or []:
+        command.extend(["--suppression", str(suppression)])
     for scan in scans:
         command.extend(["--scan", str(scan)])
     return command
+
+
+def _write_scored_report(
+    out_dir: Path,
+    engine_version: str,
+    snapshot_time: str,
+    checksum: str,
+    project: str | None,
+    revision: str | None,
+    author: str | None,
+    author_email: str | None,
+    score_policy: str,
+    threshold: float | None,
+    fail_on_kev: bool,
+    fail_unscored: bool,
+    private: Path | None,
+    today: date,
+) -> None:
+    extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
+    engine_report = out_dir / "dependency-check-report.json"
+    payload: dict = {}
+    if engine_report.is_file():
+        try:
+            loaded = json.loads(engine_report.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ChecksteadError(
+                f"Dependency-Check JSON report is not readable: {engine_report}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise ChecksteadError(f"Dependency-Check JSON report is not an object: {engine_report}")
+        payload = loaded
+    scored = evaluate_report(
+        payload,
+        policy=score_policy,
+        threshold=threshold,
+        fail_on_kev=fail_on_kev,
+        fail_unscored=fail_unscored,
+    )
+    extra.extend(scored.lines)
+    if private is not None:
+        extra.extend(suppression_report(private, today, seen_identifiers(payload)))
+    write_report(
+        out_dir,
+        engine_version,
+        snapshot_time,
+        checksum,
+        project,
+        revision,
+        author,
+        author_email,
+        extra,
+    )
+    if scored.failures:
+        raise ChecksteadError("\n".join(scored.failures), exit_code=POLICY_FAILURE)
 
 
 def default_cache_dir() -> Path:
@@ -169,6 +252,11 @@ def run_scan(
     engine: Path | None = None,
     opener: OpenerDirector | None = None,
     revision: str | None = None,
+    score_policy: str = "prefer-newest",
+    threshold: float | None = None,
+    fail_on_kev: bool = False,
+    fail_unscored: bool = False,
+    private_suppressions: str = "",
 ) -> ScanResult:
     for scan in scans:
         if not scan.exists():
@@ -187,6 +275,13 @@ def run_scan(
         if found:
             author, author_email = found
     out_dir.mkdir(parents=True, exist_ok=True)
+    private = resolve_private_suppressions(private_suppressions, Path.cwd())
+    suppressions: list[Path] = []
+    public = public_suppression_file()
+    if public is not None:
+        suppressions.append(public)
+    if private is not None:
+        suppressions.append(private)
     command = build_scan_command(
         engine_path,
         snapshot.data_dir,
@@ -194,7 +289,9 @@ def run_scan(
         project_name,
         out_dir,
         dict(os.environ),
+        suppressions,
     )
+    header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
     report_path = write_report(
         out_dir,
         snapshot.engine_version,
@@ -204,6 +301,7 @@ def run_scan(
         revision,
         author,
         author_email,
+        header + ["findings: none"],
     )
     (out_dir / "checkstead-command.txt").write_text("\n".join(command) + "\n", encoding="utf-8")
     print(f"engine: {snapshot.engine_version}")
@@ -233,6 +331,22 @@ def run_scan(
             f"Dependency-Check exited {completed.returncode}.",
             exit_code=completed.returncode,
         )
+    _write_scored_report(
+        out_dir,
+        snapshot.engine_version,
+        snapshot.snapshot_time,
+        snapshot.checksum,
+        project_name,
+        revision,
+        author,
+        author_email,
+        score_policy,
+        threshold,
+        fail_on_kev,
+        fail_unscored,
+        private,
+        today,
+    )
     return ScanResult(
         engine_version=snapshot.engine_version,
         snapshot_time=snapshot.snapshot_time,

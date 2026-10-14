@@ -166,12 +166,23 @@ class Phase1Tests(TestCase):
         self.addCleanup(server.close)
         server.manifest = manifest_for(zip_a, "2026-10-06T01:02:03Z")
         server.zip_bytes = zip_a.read_bytes()
+        rules = root / "rules.xml"
+        rules.write_text(
+            "<?xml version=\"1.0\"?>\n"
+            "<suppressions>\n"
+            "  <suppress until=\"2026-01-01\">\n"
+            "    <notes>Expired before the scan day.</notes>\n"
+            "    <cve>CVE-2020-0001</cve>\n"
+            "  </suppress>\n"
+            "</suppressions>\n",
+            encoding="utf-8",
+        )
         config = root / "checkstead.yml"
         config.write_text(
             "snapshot: " + server.manifest_url + "\n"
-            "scorePolicy: reserved-score-policy-token\n"
-            "threshold: reserved-threshold-token\n"
-            "privateSuppressions: reserved-suppression-token.xml\n",
+            "scorePolicy: prefer-newest\n"
+            "threshold: 9\n"
+            "privateSuppressions: rules.xml\n",
             encoding="utf-8",
         )
         cache = root / "cache"
@@ -210,14 +221,18 @@ class Phase1Tests(TestCase):
             self.assertIn("engine: 13.0.0\n", report)
             self.assertIn("snapshot: 2026-10-06T01:02:03Z\n", report)
             self.assertIn(NVD_NOTICE, report)
+            self.assertIn("score-policy: prefer-newest\n", report)
+            self.assertIn("suppression-expired: CVE-2020-0001 until 2026-01-01\n", report)
+            self.assertIn("suppression-unused: CVE-2020-0001\n", report)
             command = (out / "checkstead-command.txt").read_text(encoding="utf-8")
             self.assertIn("--noupdate\n", command)
+            self.assertIn("--suppression\n", command)
+            self.assertIn("rules.xml", command)
             self.assertNotIn("--nvdApiKey", command)
             self.assertNotIn("services.nvd.nist.gov", command)
             self.assertNotIn("failOnCVSS", command)
-            self.assertNotIn("reserved-score-policy-token", command)
-            self.assertNotIn("reserved-threshold-token", command)
-            self.assertNotIn("reserved-suppression-token", command)
+            self.assertNotIn("http://", command)
+            self.assertNotIn("https://", command)
             self.assertFalse((out / "leaked").exists())
             argv = (out / "engine-argv.txt").read_text(encoding="utf-8")
             self.assertIn("--noupdate\n", argv)

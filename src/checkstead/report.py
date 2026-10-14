@@ -13,6 +13,7 @@ def render_report(
     revision: str | None = None,
     author: str | None = None,
     author_email: str | None = None,
+    extra: list[str] | None = None,
 ) -> str:
     lines = [
         f"engine: {engine_version}",
@@ -28,6 +29,8 @@ def render_report(
     if author_email:
         lines.append(f"author-email: {author_email}")
     lines.append(f"notice: {NVD_NOTICE}")
+    if extra:
+        lines.extend(extra)
     return "\n".join(lines) + "\n"
 
 
@@ -40,6 +43,7 @@ def write_report(
     revision: str | None = None,
     author: str | None = None,
     author_email: str | None = None,
+    extra: list[str] | None = None,
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "checkstead.txt"
@@ -52,6 +56,7 @@ def write_report(
             revision,
             author,
             author_email,
+            extra,
         ),
         encoding="utf-8",
     )

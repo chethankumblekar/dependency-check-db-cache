@@ -11,4 +11,4 @@ the project license.
 Defects and ideas are public issues. A private suppression file is not a
 contribution. Do not open a pull request that publishes one.
 
-Score policy and shared suppression rules are not part of this release.
+A public suppression rule needs a reason a stranger can verify, an owner, and an end date. Do not add one without that confirmation.

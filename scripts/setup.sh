@@ -297,10 +297,15 @@ checkstead_current() {
   [[ -x "$ROOT/venv/bin/checkstead" ]] || return 1
   "$ROOT/venv/bin/checkstead" version >/dev/null 2>&1 || return 1
   scan=$(find "$ROOT/venv" -path '*/checkstead/scan.py' -print -quit 2>/dev/null || true)
-  if [[ -n "$scan" ]] && ! grep -q -- '--disableYarnAudit' "$scan"; then
+  if [[ -z "$scan" ]]; then
+    return 0
+  fi
+  if ! grep -q -- '--disableYarnAudit' "$scan"; then
     return 1
   fi
-  return 0
+  local score
+  score=$(find "$ROOT/venv" -path '*/checkstead/score.py' -print -quit 2>/dev/null || true)
+  [[ -n "$score" ]]
 }
 
 install_checkstead_package() {
