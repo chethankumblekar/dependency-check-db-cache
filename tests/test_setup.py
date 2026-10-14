@@ -7,13 +7,16 @@ import stat
 import subprocess
 import sys
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
-from unittest import TestCase
+from unittest import TestCase, mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checkstead.scan import command_environment, resolve_engine  # noqa: E402
+from checkstead.errors import ChecksteadError  # noqa: E402
+from checkstead.scan import SETUP_COMMAND, command_environment, resolve_engine, run_scan  # noqa: E402
+from checkstead.snapshot import Snapshot  # noqa: E402
 
 SETUP = ROOT / "scripts" / "setup.sh"
 
@@ -190,3 +193,75 @@ class SetupTests(TestCase):
         _write(present / "java", "#!/bin/sh\nexit 0\n")
         kept = command_environment({"HOME": str(home), "PATH": str(present)})
         self.assertNotIn("JAVA_HOME", kept)
+
+    def test_console_script_sets_java_home_before_dependency_check(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-launcher"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        jdk_java = home / "checkstead" / "jdk" / "bin" / "java"
+        _write(jdk_java, "#!/bin/sh\nexit 0\n")
+        stub = root / "stub"
+        _write(stub / "java", "#!/bin/sh\necho 'Unable to locate a Java Runtime.' >&2\nexit 1\n")
+        engine = root / "dependency-check.sh"
+        _write(engine, "#!/bin/sh\nexit 0\n")
+        project = root / "project"
+        project.mkdir()
+        (project / "README.txt").write_text("sample\n", encoding="utf-8")
+        snapshot = Snapshot(
+            engine_version="13.0.0",
+            snapshot_time="2026-10-13T07:13:06Z",
+            checksum="abc",
+            database_path=root / "db.zip",
+            data_dir=root / "data",
+            manifest_path=root / "manifest.json",
+        )
+        captured: dict[str, object] = {}
+        real_run = subprocess.run
+
+        def fake_run(command, *args, **kwargs):
+            program = command[0] if command else ""
+            if str(program).endswith("/java") or str(program) == "java":
+                return real_run(command, *args, **kwargs)
+            captured["command"] = command
+            captured["env"] = kwargs.get("env")
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.dict(
+            os.environ,
+            {"HOME": str(home), "PATH": str(stub), "NVD_API_KEY": "secret"},
+        ):
+            os.environ.pop("JAVA_HOME", None)
+            os.environ.pop("CHECKSTEAD_ENGINE", None)
+            with mock.patch("checkstead.scan.resolve_snapshot", return_value=snapshot), mock.patch(
+                "checkstead.scan.safe_extract"
+            ), mock.patch("checkstead.scan.subprocess.run", side_effect=fake_run):
+                run_scan(
+                    [project],
+                    project="genesis",
+                    config_snapshot_url="https://example.invalid/manifest.json",
+                    out_dir=root / "out",
+                    cache_dir=root / "cache",
+                    today=date(2026, 10, 14),
+                    dry_run=False,
+                    engine=engine,
+                )
+        child = captured["env"]
+        self.assertEqual(child["JAVA_HOME"], str(home / "checkstead" / "jdk"))
+        self.assertEqual(child["PATH"].split(os.pathsep)[0], str(jdk_java.parent))
+        self.assertNotIn("NVD_API_KEY", child)
+        command = captured["command"]
+        self.assertIn("--noupdate", command)
+        self.assertNotIn("nvdApiKey", command)
+
+    def test_missing_jdk_names_the_setup_command(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-no-jdk"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        home.mkdir(parents=True)
+        stub = root / "stub"
+        _write(stub / "java", "#!/bin/sh\nexit 1\n")
+        with self.assertRaises(ChecksteadError) as caught:
+            command_environment({"HOME": str(home), "PATH": str(stub)})
+        message = str(caught.exception)
+        self.assertIn(SETUP_COMMAND, message)
+        self.assertNotIn("exited 1", message)

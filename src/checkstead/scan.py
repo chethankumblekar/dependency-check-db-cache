@@ -71,14 +71,22 @@ def java_ready(env: dict[str, str] | None = None) -> bool:
     return completed.returncode == 0
 
 
+SETUP_COMMAND = (
+    "curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash"
+)
+
+
 def command_environment(source: dict[str, str]) -> dict[str, str]:
-    """Use a working java. A JDK installed under $HOME/checkstead fills in when it is not."""
+    """Environment for dependency-check.sh. A failing java uses $HOME/checkstead/jdk."""
     env = scrub_environment(source)
     if java_ready(env):
         return env
     java = home_root(env) / "jdk" / "bin" / "java"
     if not java.is_file():
-        return env
+        raise ChecksteadError(
+            "Java is not available. "
+            f"Run {SETUP_COMMAND}"
+        )
     env["JAVA_HOME"] = str(java.parent.parent)
     env["PATH"] = str(java.parent) + os.pathsep + env.get("PATH", "")
     return env
