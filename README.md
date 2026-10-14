@@ -45,10 +45,40 @@ checkstead scan --scan . --project my-service
 | Engine | OWASP Dependency-Check 13.0.0 |
 | Version | 0.1.0 |
 
+## GitHub organization
+
+One command installs anything Checkstead still needs, then starts the local server. Python, Java, and Dependency-Check that are already present stay in place.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/local.sh | bash
+```
+
+The server listens on http://127.0.0.1:8765/. Open http://127.0.0.1:8765/github.
+
+github.com is the default. For GitHub Enterprise Server, set the API base before that command:
+
+```bash
+export CHECKSTEAD_GITHUB_API=https://github.example.com/api/v3
+```
+
+The website address is taken from that API URL. `https://api.github.com` uses `https://github.com`. A GitHub Enterprise Server API at `https://<host>/api/v3` uses `https://<host>`. Set `CHECKSTEAD_GITHUB_OAUTH` only when the website host differs from the host in the API URL.
+
+An organization owner connects GitHub from that page:
+
+1. Run the command above from the directory that contains `checkstead.yml` when that file sets the score policy.
+2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
+3. Open http://127.0.0.1:8765/github.
+4. Enter the organization login and create the GitHub App. The browser opens GitHub so the organization owner can confirm the app. The app asks to read repository contents and metadata.
+5. Install the app on that organization when GitHub asks. Checkstead accepts an installation on an organization.
+6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot.
+
+With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with no score threshold and no private suppression file.
+
 ## Contents
 
 - [Setup](#setup)
 - [Run](#run)
+- [GitHub organization](#github-organization)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [What this release does](#what-this-release-does)
@@ -415,6 +445,7 @@ Single sign-on needs an app registration. Leave the variables unset and the butt
 
 | Variable | What it is |
 | --- | --- |
+| `CHECKSTEAD_GITHUB_API` | GitHub API base URL. Defaults to `https://api.github.com`. For GitHub Enterprise Server set `https://<host>/api/v3`. |
 | `CHECKSTEAD_GITHUB_CLIENT_ID` | GitHub OAuth app client id |
 | `CHECKSTEAD_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
 | `CHECKSTEAD_GITHUB_ORG` | Optional. When set, only members of this GitHub organization can use the GitHub button. |

@@ -44,11 +44,19 @@ def build_opener() -> urllib.request.OpenerDirector:
     )
 
 
-def download(url: str, dest: Path, opener: urllib.request.OpenerDirector | None = None) -> str:
+def download(
+    url: str,
+    dest: Path,
+    opener: urllib.request.OpenerDirector | None = None,
+    headers: dict[str, str] | None = None,
+) -> str:
     """Stream a URL to disk and return the SHA-256 hex digest. Never calls the NVD API."""
     ensure_allowed(url)
     opener = opener or build_opener()
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    request_headers = {"User-Agent": USER_AGENT}
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(url, headers=request_headers)
     digest = hashlib.sha256()
     dest.parent.mkdir(parents=True, exist_ok=True)
     temporary = dest.with_suffix(dest.suffix + ".partial")

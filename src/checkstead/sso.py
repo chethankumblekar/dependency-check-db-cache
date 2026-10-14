@@ -17,7 +17,7 @@ import urllib.request
 
 from checkstead.errors import ChecksteadError
 from checkstead.http import USER_AGENT, build_opener, ensure_allowed
-from checkstead.identity import AuthError, Identity, github_api_base
+from checkstead.identity import AuthError, Identity, github_api_base, github_web_base
 
 STATE_COOKIE = "checkstead_sso"
 _TENANT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$")
@@ -87,7 +87,7 @@ def authorize_url(kind: str, base: str, state: str) -> str:
     if kind == "github":
         if not github_enabled():
             raise AuthError("GitHub sign-in is not configured on this server.")
-        root = _env("CHECKSTEAD_GITHUB_OAUTH") or "https://github.com"
+        root = github_web_base()
         query = urllib.parse.urlencode(
             {
                 "client_id": _env("CHECKSTEAD_GITHUB_CLIENT_ID"),
@@ -177,7 +177,7 @@ def exchange(kind: str, code: str, base: str) -> Identity:
     if kind == "github":
         if not github_enabled():
             raise AuthError("GitHub sign-in is not configured on this server.")
-        root = _env("CHECKSTEAD_GITHUB_OAUTH") or "https://github.com"
+        root = github_web_base()
         status, body = _request(
             f"{root.rstrip('/')}/login/oauth/access_token",
             {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},

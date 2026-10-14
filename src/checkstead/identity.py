@@ -12,6 +12,7 @@ import json
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable
@@ -59,6 +60,29 @@ def _secret(token: str) -> str:
 
 def github_api_base() -> str:
     return os.environ.get("CHECKSTEAD_GITHUB_API", "https://api.github.com").rstrip("/")
+
+
+def github_web_base() -> str:
+    """Website for the API in CHECKSTEAD_GITHUB_API.
+
+    https://api.github.com is https://github.com. A GitHub Enterprise Server
+    API such as https://host/api/v3 is https://host. CHECKSTEAD_GITHUB_OAUTH
+    replaces that website when the API host is not the website.
+    """
+    override = os.environ.get("CHECKSTEAD_GITHUB_OAUTH", "").strip()
+    if override:
+        return override.rstrip("/")
+    api = github_api_base()
+    parsed = urllib.parse.urlparse(api)
+    host = (parsed.hostname or "").lower()
+    if host == "api.github.com":
+        return "https://github.com"
+    path = parsed.path.rstrip("/")
+    for suffix in ("/api/v3", "/api"):
+        if path == suffix or path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return f"{parsed.scheme}://{parsed.netloc}{path}".rstrip("/")
 
 
 def azure_api_base() -> str:

@@ -303,9 +303,10 @@ checkstead_current() {
   if ! grep -q -- '--disableYarnAudit' "$scan"; then
     return 1
   fi
-  local score
+  local score github
   score=$(find "$ROOT/venv" -path '*/checkstead/score.py' -print -quit 2>/dev/null || true)
-  [[ -n "$score" ]]
+  github=$(find "$ROOT/venv" -path '*/checkstead/github_app.py' -print -quit 2>/dev/null || true)
+  [[ -n "$score" && -n "$github" ]]
 }
 
 install_checkstead_package() {
@@ -337,4 +338,8 @@ if [[ "$bundled_jdk" -eq 1 ]]; then
   ensure_jdk_shell
 fi
 
-echo "Open a new terminal, then run: checkstead scan --scan . --project my-service"
+if [[ "${CHECKSTEAD_LOCAL:-}" == "1" ]]; then
+  echo "Checkstead is ready."
+else
+  echo "Open a new terminal, then run: checkstead scan --scan . --project my-service"
+fi

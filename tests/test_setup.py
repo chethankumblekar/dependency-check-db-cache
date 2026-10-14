@@ -97,6 +97,32 @@ class SetupTests(TestCase):
         self.assertEqual(profile.count("checkstead setup: user install on PATH"), 1)
         self.assertEqual((home / ".zshrc").read_text(encoding="utf-8").count(profile.strip().splitlines()[-1]), 1)
 
+    def test_local_setup_leaves_an_existing_install(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-local"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        self._ready_home(home, bindir)
+        env = self._env(home, bindir)
+        env["CHECKSTEAD_LOCAL"] = "1"
+        completed = subprocess.run(
+            ["bash", str(SETUP)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        for line in (
+            "Python 3.11+ already present.",
+            "java already runs.",
+            "Dependency-Check 13.0.0 already present.",
+            "checkstead already installed.",
+            "Checkstead is ready.",
+        ):
+            self.assertIn(line, completed.stdout)
+        self.assertNotIn("Open a new terminal", completed.stdout)
+
     def test_a_missing_engine_requests_the_pinned_zip_and_not_nvd(self) -> None:
         root = ROOT / "build" / "tests" / "setup-engine"
         subprocess.run(["rm", "-rf", str(root)], check=True)
