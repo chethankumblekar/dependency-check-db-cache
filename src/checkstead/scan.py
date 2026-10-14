@@ -34,16 +34,65 @@ def scrub_environment(source: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in source.items() if key.upper() not in blocked}
 
 
+def home_root(env: dict[str, str] | None = None) -> Path:
+    source = env if env is not None else os.environ
+    return Path(source.get("HOME") or str(Path.home())) / "checkstead"
+
+
 def resolve_engine(explicit: Path | None = None) -> Path:
     if explicit is not None:
         return explicit
     env = os.environ.get("CHECKSTEAD_ENGINE")
     if env:
         return Path(env)
+    bundled = home_root() / "dependency-check" / "bin" / "dependency-check.sh"
+    if bundled.is_file():
+        return bundled
     found = shutil.which("dependency-check.sh") or shutil.which("dependency-check")
     if found:
         return Path(found)
     return Path("/opt/dependency-check/bin/dependency-check.sh")
+
+
+def java_ready(env: dict[str, str] | None = None) -> bool:
+    """True when java runs. The macOS /usr/bin/java stub is not a JDK."""
+    current = env if env is not None else dict(os.environ)
+    java = shutil.which("java", path=current.get("PATH"))
+    if not java:
+        return False
+    locator = "/usr/libexec/java_home"
+    if java == "/usr/bin/java" and os.path.isfile(locator) and os.access(locator, os.X_OK):
+        completed = subprocess.run(
+            [locator],
+            env=current,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        return completed.returncode == 0
+    completed = subprocess.run(
+        [java, "-version"],
+        env=current,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def command_environment(source: dict[str, str]) -> dict[str, str]:
+    """Use a working java. A JDK installed under $HOME/checkstead fills in when it is not."""
+    env = scrub_environment(source)
+    if java_ready(env):
+        return env
+    java = home_root(env) / "jdk" / "bin" / "java"
+    if not java.is_file():
+        return env
+    env["JAVA_HOME"] = str(java.parent.parent)
+    env["PATH"] = str(java.parent) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def build_scan_command(
@@ -147,7 +196,7 @@ def run_scan(
     if not os.access(engine_path, os.X_OK):
         raise ChecksteadError(f"Dependency-Check is not executable: {engine_path}")
     safe_extract(snapshot.database_path, snapshot.data_dir)
-    completed = subprocess.run(command, env=scrub_environment(dict(os.environ)), check=False)
+    completed = subprocess.run(command, env=command_environment(dict(os.environ)), check=False)
     if completed.returncode != 0:
         raise ChecksteadError(
             f"Dependency-Check exited {completed.returncode}.",

@@ -141,7 +141,21 @@ A snapshot manifest names the engine that built it. If that version is not the p
 
 ## Scan
 
-Install the command from a checkout. A virtual environment keeps it off the system Python:
+On a Mac, one command installs only what is missing, without sudo, under `$HOME/checkstead`: Python 3.11+ when no such interpreter runs, a JDK when `java` does not run, the pinned Dependency-Check zip when that binary is missing, and the checkstead virtualenv (certifi included). A later terminal finds that engine with no extra export. A second run skips each of those when it is already present.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
+```
+
+Open a new terminal, then:
+
+```bash
+checkstead scan --scan . --project my-service
+```
+
+The first scan downloads the published snapshot. Setup does not call the NVD and does not ship a database.
+
+From a checkout, the same script is `bash scripts/setup.sh`. To install into a virtualenv yourself:
 
 ```bash
 python3 -m venv .venv
