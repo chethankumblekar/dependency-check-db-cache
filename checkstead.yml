@@ -1,5 +1,5 @@
 # Public snapshot manifest. A company updater replaces this URL.
-snapshot: https://github.com/chethankumblekar/checkstead/releases/latest/download/manifest.json
+snapshot: https://github.com/chethankumblekar/dependency-check-db-cache/releases/latest/download/manifest.json
 
 # Reserved. The scanner does not read these yet.
 scorePolicy:

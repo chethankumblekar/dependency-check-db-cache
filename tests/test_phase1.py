@@ -548,6 +548,18 @@ class Phase1Tests(TestCase):
         config = (ROOT / "checkstead.yml").read_text(encoding="utf-8")
         for key in ("snapshot:", "scorePolicy:", "threshold:", "privateSuppressions:"):
             self.assertIn(key, config)
+        snapshot = (
+            "https://github.com/chethankumblekar/dependency-check-db-cache"
+            "/releases/latest/download/manifest.json"
+        )
+        self.assertIn(f"snapshot: {snapshot}", config)
+        self.assertNotIn("github.com/chethankumblekar/checkstead/", config)
+        defaults = (ROOT / "src" / "checkstead" / "config.py").read_text(encoding="utf-8")
+        self.assertIn(snapshot, defaults)
+        self.assertNotIn("github.com/chethankumblekar/checkstead/", defaults)
+        self.assertIn("\n  --latest \\\n", script)
+        cache = (ROOT / ".github" / "workflows" / "update-db.yml").read_text(encoding="utf-8")
+        self.assertIn('make_latest: "false"', cache)
 
     def _config(self, root: Path, url: str) -> Path:
         path = root / "checkstead.yml"

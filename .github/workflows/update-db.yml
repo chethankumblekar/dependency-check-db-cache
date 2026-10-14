@@ -91,6 +91,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Dependency Check DB ${{ env.RELEASE_TAG }}
+          make_latest: "false"
           files: dependency-check-db.zip
 
         env:

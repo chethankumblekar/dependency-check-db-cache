@@ -81,6 +81,7 @@ This product uses data from the NVD API but is not endorsed or certified by the 
 EOF
 
 gh release create "$TAG" \
+  --latest \
   --title "Database snapshot ${SNAPSHOT_TIME}" \
   --notes-file "${WORK}/notes.md" \
   "${WORK}/manifest.json" \

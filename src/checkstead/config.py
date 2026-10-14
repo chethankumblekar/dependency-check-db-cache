@@ -6,7 +6,7 @@ from pathlib import Path
 from checkstead.errors import ChecksteadError
 
 DEFAULT_SNAPSHOT_URL = (
-    "https://github.com/chethankumblekar/checkstead/releases/latest/download/manifest.json"
+    "https://github.com/chethankumblekar/dependency-check-db-cache/releases/latest/download/manifest.json"
 )
 IMAGE_CONFIG = Path("/etc/checkstead/checkstead.yml")
 RESERVED_KEYS = ("scorePolicy", "threshold", "privateSuppressions")

@@ -155,17 +155,13 @@ checkstead version
 Put [`checkstead.yml`](checkstead.yml) in the project you scan, or use the copy in this repository. The file is four keys:
 
 ```yaml
-snapshot: https://github.com/chethankumblekar/checkstead/releases/latest/download/manifest.json
+snapshot: https://github.com/chethankumblekar/dependency-check-db-cache/releases/latest/download/manifest.json
 scorePolicy:
 threshold:
 privateSuppressions:
 ```
 
-`snapshot` is the manifest URL. The copy in this repository still names `github.com/chethankumblekar/checkstead`, and that repository was not created. Point `snapshot` at a manifest the updater in this repository has published:
-
-```text
-https://github.com/chethankumblekar/dependency-check-db-cache/releases/download/db-YYYY-MM-DD/manifest.json
-```
+`snapshot` is the manifest URL. `releases/latest` on this repository is the Checkstead snapshot, the release that contains `manifest.json`. The daily updater publishes `db-YYYY-MM-DD` and marks that release latest.
 
 `scorePolicy`, `threshold`, and `privateSuppressions` are reserved for later. This release reads them and does not apply them.
 
@@ -188,7 +184,7 @@ The same directory receives Dependency-Check's HTML and JSON reports. The comman
 
 The first scan of a UTC day downloads the manifest and the database zip, checks the engine version and the SHA-256 checksum, and caches them under `~/.cache/checkstead/<UTC date>/`. A later scan that day uses the cache, so both scans name the same snapshot even if the published manifest changes. Set `CHECKSTEAD_CACHE` to put that cache somewhere else.
 
-There is no snapshot until the updater below has published one. A 404 from the public URL means that step has not happened. This project does not ship a made-up database.
+The public URL above is that latest manifest. This project does not ship a made-up database.
 
 ## What a scan still contacts
 
@@ -216,7 +212,7 @@ Add one repository secret:
 
 Do not copy a key out of another repository. Do not put this secret in a scan, a `checkstead.yml`, or an application repository.
 
-Until the secret is set, [Update database snapshot](.github/workflows/update-snapshot.yml) fails on purpose and publishes nothing. After it is set, run that workflow once, or wait for the schedule at 01:00 UTC. The job installs Dependency-Check 13.0.0, refuses the binary if it does not report that version, runs `--updateonly` with the key, and publishes a GitHub release tagged `db-YYYY-MM-DD`. The release contains:
+Until the secret is set, [Update database snapshot](.github/workflows/update-snapshot.yml) fails on purpose and publishes nothing. After it is set, run that workflow once, or wait for the schedule at 01:00 UTC. The job installs Dependency-Check 13.0.0, refuses the binary if it does not report that version, runs `--updateonly` with the key, and publishes a GitHub release tagged `db-YYYY-MM-DD`, marked latest. The release contains:
 
 - `manifest.json` — engine version, UTC timestamp, SHA-256 checksum
 - `checkstead-db.zip` — the data directory
