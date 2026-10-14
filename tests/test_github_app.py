@@ -286,6 +286,7 @@ class GitHubAppTests(TestCase):
         script = (ROOT / "scripts" / "local.sh").read_text(encoding="utf-8")
         self.assertIn("setup.sh", script)
         self.assertIn("CHECKSTEAD_LOCAL=1", script)
+        self.assertIn("import checkstead.github_app", script)
         self.assertIn(
             '"$HOME/checkstead/bin/checkstead" ui --host 127.0.0.1 --port 8765',
             script,

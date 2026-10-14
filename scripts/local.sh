@@ -18,5 +18,11 @@ else
   curl -fsSL "$setup_url" | bash
 fi
 
+python="$HOME/checkstead/venv/bin/python"
+package_url="https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
+if [[ -x "$python" ]] && ! "$python" -c 'import checkstead.github_app' >/dev/null 2>&1; then
+  "$python" -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir "$package_url"
+fi
+
 mkdir -p "$HOME/checkstead/scans"
 exec "$HOME/checkstead/bin/checkstead" ui --host 127.0.0.1 --port 8765 --scans "$HOME/checkstead/scans"
