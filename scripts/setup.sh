@@ -9,6 +9,7 @@ PACKAGE_URL="https://github.com/chethankumblekar/dependency-check-db-cache/archi
 PIN_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/engine.version"
 PATH_MARKER="# checkstead setup: user install on PATH"
 PATH_LINE='export PATH="$HOME/checkstead/bin:$PATH"'
+JDK_MARKER="# checkstead setup: bundled JDK"
 
 python_ok() {
   local bin=$1
@@ -33,13 +34,7 @@ select_python() {
 }
 
 java_runs() {
-  local resolved
-  resolved=$(command -v java 2>/dev/null || true)
-  [[ -n "$resolved" ]] || return 1
-  if [[ "$resolved" == "/usr/bin/java" && -x /usr/libexec/java_home ]]; then
-    /usr/libexec/java_home >/dev/null 2>&1
-    return
-  fi
+  # /usr/bin/java on macOS is a stub. It is present, prints a dialog, and exits 1.
   java -version >/dev/null 2>&1
 }
 
@@ -176,11 +171,15 @@ read_pin() {
 
 ensure_command() {
   mkdir -p "$ROOT/bin"
-  if [[ -x "$ROOT/bin/checkstead" ]]; then
-    return 0
-  fi
   cat > "$ROOT/bin/checkstead" <<'EOF'
 #!/bin/sh
+# The macOS java stub exits 1. Prefer the JDK installed under $HOME/checkstead.
+if ! java -version >/dev/null 2>&1; then
+  if [ -x "$HOME/checkstead/jdk/bin/java" ]; then
+    export JAVA_HOME="$HOME/checkstead/jdk"
+    export PATH="$JAVA_HOME/bin:$PATH"
+  fi
+fi
 exec "$HOME/checkstead/venv/bin/checkstead" "$@"
 EOF
   chmod +x "$ROOT/bin/checkstead"
@@ -202,6 +201,22 @@ ensure_path() {
   fi
 }
 
+ensure_jdk_shell() {
+  local profile changed=0
+  for profile in "$HOME/.zprofile" "$HOME/.zshrc"; do
+    if [[ -f "$profile" ]] && grep -F "$JDK_MARKER" "$profile" >/dev/null 2>&1; then
+      continue
+    fi
+    printf '\n%s\nexport JAVA_HOME="$HOME/checkstead/jdk"\nexport PATH="$JAVA_HOME/bin:$PATH"\n' "$JDK_MARKER" >> "$profile"
+    changed=1
+  done
+  if [[ "$changed" -eq 0 ]]; then
+    echo "JAVA_HOME already prefers \$HOME/checkstead/jdk."
+  else
+    echo "Put \$HOME/checkstead/jdk/bin ahead of /usr/bin."
+  fi
+}
+
 mkdir -p "$ROOT"
 
 if python=$(select_python); then
@@ -211,14 +226,17 @@ else
   python="$ROOT/python/bin/python3"
 fi
 
+bundled_jdk=0
 if java_runs; then
   echo "java already runs."
 elif [[ -x "$ROOT/jdk/bin/java" ]]; then
   echo "JDK already installed."
-  export JAVA_HOME="$ROOT/jdk"
-  export PATH="$JAVA_HOME/bin:$PATH"
+  bundled_jdk=1
 else
   install_jdk
+  bundled_jdk=1
+fi
+if [[ "$bundled_jdk" -eq 1 ]]; then
   export JAVA_HOME="$ROOT/jdk"
   export PATH="$JAVA_HOME/bin:$PATH"
 fi
@@ -255,5 +273,8 @@ fi
 
 ensure_command
 ensure_path
+if [[ "$bundled_jdk" -eq 1 ]]; then
+  ensure_jdk_shell
+fi
 
 echo "Open a new terminal, then run: checkstead scan --scan . --project my-service"

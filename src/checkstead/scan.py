@@ -55,22 +55,11 @@ def resolve_engine(explicit: Path | None = None) -> Path:
 
 
 def java_ready(env: dict[str, str] | None = None) -> bool:
-    """True when java runs. The macOS /usr/bin/java stub is not a JDK."""
+    """True when `java -version` exits 0. The macOS /usr/bin/java stub does not."""
     current = env if env is not None else dict(os.environ)
     java = shutil.which("java", path=current.get("PATH"))
     if not java:
         return False
-    locator = "/usr/libexec/java_home"
-    if java == "/usr/bin/java" and os.path.isfile(locator) and os.access(locator, os.X_OK):
-        completed = subprocess.run(
-            [locator],
-            env=current,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=False,
-        )
-        return completed.returncode == 0
     completed = subprocess.run(
         [java, "-version"],
         env=current,

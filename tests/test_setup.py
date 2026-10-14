@@ -124,6 +124,47 @@ class SetupTests(TestCase):
         self.assertNotIn("services.nvd.nist.gov", script)
         self.assertNotIn("--updateonly", script)
         self.assertNotIn("nvdApiKey", script)
+        self.assertNotIn("java_home", script)
+
+    def test_a_java_stub_is_replaced_by_the_home_jdk(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-java-stub"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        log = root / "curl.log"
+        self._ready_home(home, bindir)
+        _write(
+            bindir / "java",
+            "#!/bin/sh\necho 'Unable to locate a Java Runtime.' >&2\nexit 1\n",
+        )
+        _write(home / "checkstead" / "jdk" / "bin" / "java", "#!/bin/sh\nexit 0\n")
+        env = self._env(home, bindir)
+        env["SETUP_CURL_LOG"] = str(log)
+        completed = subprocess.run(
+            ["bash", str(SETUP)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("JDK already installed.", completed.stdout)
+        self.assertNotIn("java already runs.", completed.stdout)
+        self.assertFalse(log.exists())
+        profile = (home / ".zprofile").read_text(encoding="utf-8")
+        jdk_at = profile.index('export JAVA_HOME="$HOME/checkstead/jdk"')
+        path_at = profile.index('export PATH="$JAVA_HOME/bin:$PATH"')
+        self.assertLess(jdk_at, path_at)
+        wrapper = (home / "checkstead" / "bin" / "checkstead").read_text(encoding="utf-8")
+        self.assertIn('export JAVA_HOME="$HOME/checkstead/jdk"', wrapper)
+        self.assertIn('export PATH="$JAVA_HOME/bin:$PATH"', wrapper)
+        stub = root / "stub-java"
+        _write(stub / "java", "#!/bin/sh\nexit 1\n")
+        forced = command_environment(
+            {"HOME": str(home), "PATH": str(stub) + os.pathsep + "/usr/bin"}
+        )
+        self.assertEqual(forced["JAVA_HOME"], str(home / "checkstead" / "jdk"))
+        self.assertEqual(forced["PATH"].split(os.pathsep)[0], str(home / "checkstead" / "jdk" / "bin"))
 
     def test_later_session_finds_the_home_engine_and_jdk(self) -> None:
         root = ROOT / "build" / "tests" / "setup-resolve"
