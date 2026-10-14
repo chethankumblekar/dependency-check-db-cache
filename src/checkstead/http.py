@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import ssl
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
+
+import certifi
 
 from checkstead import __version__
 from checkstead.errors import RefusedHost
@@ -33,7 +36,12 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def build_opener() -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(_GuardedRedirectHandler)
+    """Trust the certifi CA bundle. python.org macOS builds ship without one."""
+    context = ssl.create_default_context(cafile=certifi.where())
+    return urllib.request.build_opener(
+        _GuardedRedirectHandler,
+        urllib.request.HTTPSHandler(context=context),
+    )
 
 
 def download(url: str, dest: Path, opener: urllib.request.OpenerDirector | None = None) -> str:

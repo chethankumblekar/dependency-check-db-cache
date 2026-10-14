@@ -49,6 +49,8 @@ class CiTests(TestCase):
         self.assertIn("mvn -B -f integrations/maven/pom.xml verify", script)
         self.assertIn("ruff==0.14.2", project)
         self.assertIn("build==1.3.0", project)
+        self.assertIn('dependencies = ["certifi"]', project)
+        self.assertIn("certifi", ci)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("actions/workflows/ci.yml/badge.svg?branch=main", readme)

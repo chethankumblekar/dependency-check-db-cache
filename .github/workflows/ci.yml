@@ -32,7 +32,7 @@ jobs:
           java-version: "21"
 
       - name: Install lint and build tools
-        run: python3 -m pip install --disable-pip-version-check ruff==0.14.2 build==1.3.0
+        run: python3 -m pip install --disable-pip-version-check ruff==0.14.2 build==1.3.0 certifi
 
       - name: Lint, build, and test
         run: bash ./scripts/self-test.sh

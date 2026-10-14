@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.engine import NVD_NOTICE, pinned_engine  # noqa: E402
 from checkstead.errors import RefusedHost, SnapshotRefused  # noqa: E402
-from checkstead.http import download  # noqa: E402
+from checkstead.http import build_opener, download, read_text  # noqa: E402
 from checkstead.scan import build_scan_command, run_scan, scrub_environment  # noqa: E402
 from checkstead.snapshot import parse_manifest, safe_extract, write_manifest  # noqa: E402
 
@@ -354,6 +354,42 @@ class Phase1Tests(TestCase):
         self.assertEqual(second.snapshot_time, "2026-10-07T01:02:03Z")
         for host in server.hosts:
             self.assertNotIn("services.nvd.nist.gov", host)
+
+    def test_https_opener_uses_certifi_and_still_refuses_nvd(self) -> None:
+        import ssl
+        import urllib.request
+
+        import certifi
+
+        bundle = Path(certifi.where())
+        self.assertTrue(bundle.is_file())
+        self.assertGreater(bundle.stat().st_size, 0)
+        real_create = ssl.create_default_context
+        contexts: list[ssl.SSLContext] = []
+
+        def create_default_context(*args, **kwargs):
+            self.assertEqual(args, ())
+            self.assertEqual(kwargs, {"cafile": str(bundle)})
+            context = real_create(*args, **kwargs)
+            contexts.append(context)
+            return context
+
+        with mock.patch("checkstead.http.ssl.create_default_context", create_default_context):
+            opener = build_opener()
+
+        https = [
+            handler
+            for handler in opener.handlers
+            if isinstance(handler, urllib.request.HTTPSHandler)
+        ]
+        self.assertEqual([handler._context for handler in https], contexts)
+        with mock.patch.object(
+            urllib.request.OpenerDirector,
+            "open",
+            side_effect=AssertionError("the client opened a connection"),
+        ):
+            with self.assertRaises(RefusedHost):
+                read_text("https://services.nvd.nist.gov/rest/json/cves/2.0", opener)
 
     def test_nvd_host_is_refused_without_a_connection(self) -> None:
         dest = ROOT / "build" / "tests" / "blocked.bin"

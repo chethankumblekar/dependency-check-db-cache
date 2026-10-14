@@ -417,7 +417,7 @@ Put the server behind TLS when it is not on your own machine, and set `CHECKSTEA
 ## Develop
 
 ```bash
-python3 -m pip install ruff==0.14.2 build==1.3.0
+python3 -m pip install ruff==0.14.2 build==1.3.0 certifi
 bash scripts/self-test.sh
 ```
 
