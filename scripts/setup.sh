@@ -321,7 +321,7 @@ install_checkstead_package() {
       rm -rf "$pip_tmp"
     fi
   fi
-  "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check --upgrade "$PACKAGE_URL"
+  "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir "$PACKAGE_URL"
   echo "Installed checkstead under $ROOT/venv"
 }
 

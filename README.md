@@ -32,7 +32,7 @@ Reports are written to `checkstead-report/`.
 A project virtualenv has its own `checkstead`. Install into that environment, then run the same command:
 
 ```bash
-python -m pip install https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz
+python -m pip install --upgrade --force-reinstall --no-cache-dir https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz
 checkstead scan --scan . --project my-service
 ```
 

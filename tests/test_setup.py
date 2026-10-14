@@ -329,3 +329,8 @@ class SetupTests(TestCase):
         self.assertLess(readme.index(SETUP_COMMAND), architecture)
         self.assertLess(readme.index("checkstead scan --scan . --project my-service"), architecture)
         self.assertLess(readme.index("checkstead-report/"), architecture)
+        install = (
+            "python -m pip install --upgrade --force-reinstall --no-cache-dir "
+            "https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
+        )
+        self.assertLess(readme.index(install), architecture)
