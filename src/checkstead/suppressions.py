@@ -1,12 +1,20 @@
-"""Private suppression files stay on disk. A URL is refused."""
+"""Private suppression files stay on disk. A URL is refused.
+
+A missing, blank, or empty file is not an error. Rules are applied only when
+a local file contains them.
+"""
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ElementTree
 from datetime import date
 from pathlib import Path
 
 from checkstead.errors import ChecksteadError
+
+# A <suppress> rule. The <suppressions> root is not a rule.
+_RULE = re.compile(r"<(?:[\w.-]+:)?suppress(?=[\s>/])", re.IGNORECASE)
 
 
 def public_suppression_file() -> Path | None:
@@ -27,7 +35,28 @@ def public_suppression_file() -> Path | None:
     return None
 
 
+def contains_rules(path: Path) -> bool:
+    """True when the file has at least one suppression rule."""
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not text.strip() or _RULE.search(text) is None:
+        return False
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as exc:
+        raise ChecksteadError(f"Private suppression file is not XML: {path}") from exc
+    return any(_local(element.tag) == "suppress" for element in root.iter())
+
+
 def resolve_private_suppressions(value: str, base: Path | None = None) -> Path | None:
+    """Return a local file only when it contains rules.
+
+    Omitted, blank, missing, and empty values scan with no private rules.
+    """
     text = value.strip()
     if not text:
         return None
@@ -39,8 +68,8 @@ def resolve_private_suppressions(value: str, base: Path | None = None) -> Path |
     path = Path(text)
     if not path.is_absolute():
         path = (base or Path.cwd()) / path
-    if not path.is_file():
-        raise ChecksteadError(f"Private suppression file not found: {path}")
+    if not contains_rules(path):
+        return None
     return path
 
 

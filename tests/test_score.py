@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 from unittest import TestCase
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from checkstead.config import DEFAULT_SNAPSHOT_URL, parse_config_text  # noqa: E402
 from checkstead.errors import ChecksteadError  # noqa: E402
 from checkstead.score import evaluate_report  # noqa: E402
+from checkstead.scan import build_scan_command  # noqa: E402
 from checkstead.suppressions import public_suppression_file, resolve_private_suppressions  # noqa: E402
 
 
@@ -143,6 +145,34 @@ class ScoreTests(TestCase):
             resolve_private_suppressions("https://example.invalid/suppress.xml")
         self.assertIsNone(public_suppression_file())
 
-    def test_a_private_file_must_exist(self) -> None:
-        with self.assertRaises(ChecksteadError):
-            resolve_private_suppressions("missing-suppressions.xml", Path("/tmp"))
+    def test_private_suppressions_are_optional(self) -> None:
+        root = ROOT / "build" / "tests" / "optional-suppressions"
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        self.assertIsNone(resolve_private_suppressions(""))
+        self.assertIsNone(resolve_private_suppressions("   "))
+        self.assertIsNone(resolve_private_suppressions("missing-suppressions.xml", root))
+        empty = root / "empty.xml"
+        empty.write_text("\n", encoding="utf-8")
+        self.assertIsNone(resolve_private_suppressions(str(empty)))
+        shell = root / "shell.xml"
+        shell.write_text(
+            "<?xml version=\"1.0\"?><suppressions></suppressions>\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(resolve_private_suppressions(str(shell)))
+        rules = root / "rules.xml"
+        rules.write_text(
+            "<?xml version=\"1.0\"?>\n"
+            "<suppressions><suppress><cve>CVE-2020-0001</cve></suppress></suppressions>\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(resolve_private_suppressions(str(rules)), rules)
+        engine = Path("/opt/dependency-check/bin/dependency-check.sh")
+        bare = build_scan_command(engine, Path("/var/cache"), [root], "sample", root / "out")
+        self.assertNotIn("--suppression", bare)
+        applied = build_scan_command(
+            engine, Path("/var/cache"), [root], "sample", root / "out", suppressions=[rules]
+        )
+        self.assertIn("--suppression", applied)
+        self.assertIn(str(rules), applied)

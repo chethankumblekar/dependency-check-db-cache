@@ -15,5 +15,6 @@ failOnKev: false
 # true fails the build when a finding has no score.
 failUnscored: false
 
-# A local suppression file. A URL is refused. The file is not published.
+# Optional. Blank, missing, or empty means no private rules.
+# A local file that contains rules is applied. A URL is refused.
 privateSuppressions:
