@@ -11,6 +11,29 @@ This product uses data from the NVD API but is not endorsed or certified by the 
 
 Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 
+## Setup
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
+```
+
+## Run
+
+Open a new terminal.
+
+```bash
+checkstead scan --scan . --project my-service
+```
+
+Reports are written to `checkstead-report/`.
+
+A project virtualenv has its own `checkstead`. Install into that environment, then run the same command:
+
+```bash
+python -m pip install https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz
+checkstead scan --scan . --project my-service
+```
+
 | | |
 | --- | --- |
 | Name | Checkstead |
@@ -22,6 +45,8 @@ Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 
 ## Contents
 
+- [Setup](#setup)
+- [Run](#run)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [What this release does](#what-this-release-does)
@@ -141,30 +166,9 @@ A snapshot manifest names the engine that built it. If that version is not the p
 
 ## Scan
 
-On a Mac, one command installs only what is missing, without sudo, under `$HOME/checkstead`: Python 3.11+ when no such interpreter runs, a JDK when `java` does not run, the pinned Dependency-Check zip when that binary is missing, and the checkstead virtualenv (certifi included). A later terminal finds that engine with no extra export. A second run skips each of those when it is already present.
+[Setup](#setup) installs only what is missing, without sudo, under `$HOME/checkstead`. [Run](#run) is the scan. The first scan downloads the published snapshot. Setup does not call the NVD and does not ship a database.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
-```
-
-Open a new terminal, then:
-
-```bash
-checkstead scan --scan . --project my-service
-```
-
-The first scan downloads the published snapshot. Setup does not call the NVD and does not ship a database.
-
-From a checkout, the same script is `bash scripts/setup.sh`. To install into a virtualenv yourself:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install .
-checkstead version
-```
-
-`checkstead version` prints `13.0.0`.
+From a checkout, the same script is `bash scripts/setup.sh`. `checkstead version` prints `13.0.0`.
 
 Put [`checkstead.yml`](checkstead.yml) in the project you scan, or use the copy in this repository. The file is four keys:
 

@@ -265,3 +265,11 @@ class SetupTests(TestCase):
         message = str(caught.exception)
         self.assertIn(SETUP_COMMAND, message)
         self.assertNotIn("exited 1", message)
+
+    def test_readme_leads_with_the_setup_and_scan_commands(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        architecture = readme.index("## Architecture")
+        self.assertLess(readme.index("## Setup"), architecture)
+        self.assertLess(readme.index(SETUP_COMMAND), architecture)
+        self.assertLess(readme.index("checkstead scan --scan . --project my-service"), architecture)
+        self.assertLess(readme.index("checkstead-report/"), architecture)
