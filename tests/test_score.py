@@ -9,7 +9,7 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checkstead.config import parse_config_text  # noqa: E402
+from checkstead.config import DEFAULT_SNAPSHOT_URL, parse_config_text  # noqa: E402
 from checkstead.errors import ChecksteadError  # noqa: E402
 from checkstead.score import evaluate_report  # noqa: E402
 from checkstead.suppressions import public_suppression_file, resolve_private_suppressions  # noqa: E402
@@ -115,6 +115,21 @@ class ScoreTests(TestCase):
             failing.failures,
             ["prefer-newest failed the build on CVE-2024-2000 no score"],
         )
+
+    def test_a_score_policy_file_uses_the_default_snapshot(self) -> None:
+        only_policy = parse_config_text(
+            "scorePolicy: highest\nthreshold: 7\n",
+            Path("/Users/cipher_crawler/Playground/genesis/checkstead.yml"),
+        )
+        self.assertEqual(only_policy.snapshot_url, DEFAULT_SNAPSHOT_URL)
+        self.assertEqual(only_policy.score_policy, "highest")
+        self.assertEqual(only_policy.threshold, 7)
+        blank = parse_config_text("snapshot:\nscorePolicy: prefer-newest\n")
+        self.assertEqual(blank.snapshot_url, DEFAULT_SNAPSHOT_URL)
+        explicit = "https://example.invalid/manifest.json"
+        kept = parse_config_text(f"snapshot: {explicit}\nscorePolicy: highest\n")
+        self.assertEqual(kept.snapshot_url, explicit)
+        self.assertEqual(kept.score_policy, "highest")
 
     def test_config_names_the_two_policies_and_refuses_a_url(self) -> None:
         parsed = parse_config_text(

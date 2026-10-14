@@ -74,9 +74,7 @@ def parse_config_text(text: str, source: Path | None = None) -> Config:
         if not key:
             raise ChecksteadError(f"{where}:{lineno}: missing key.")
         values[key] = value
-    snapshot = values.pop("snapshot", "").strip()
-    if not snapshot:
-        raise ChecksteadError(f"{where}: set snapshot to a manifest URL.")
+    snapshot = values.pop("snapshot", "").strip() or DEFAULT_SNAPSHOT_URL
     policy = _policy(values.pop("scorePolicy", ""), where)
     threshold = _threshold(values.pop("threshold", ""), where)
     fail_on_kev = _bool(values.pop("failOnKev", ""), "failOnKev", where)
