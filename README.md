@@ -37,13 +37,17 @@ Run the command for your system again when a finished scan still exits 14.
 
 ## Run
 
-Open a new terminal. The working directory can be any directory.
+Open a new terminal. The working directory can be any directory. `checkstead scan` and `checkstead ui` do not have to be started from the install directory.
 
 ```bash
 checkstead scan --scan . --project my-service
 ```
 
-Reports are written to `checkstead-report/`. A `checkstead.yml` beside the scanned project is used when the current directory has none. An empty private suppression file does not fail the scan.
+Reports are written to `checkstead-report/`. Checkstead reads `checkstead.yml` from the current directory. When that file is absent, it uses `checkstead.yml` beside the project you scan.
+
+The score policy is `prefer-newest` unless that file sets `highest`. `prefer-newest` uses an NVD score when the report has one, otherwise a CNA score, otherwise another analyzer in the report. The newer CVSS version from that source is the one that counts. `highest` uses the largest base score from any source. The report names the version, the score, and the source.
+
+`privateSuppressions` is optional. Omit it, leave it blank, or name a file that is missing or empty, and the scan runs with no private rules.
 
 ```bash
 checkstead ui
@@ -85,13 +89,13 @@ export CHECKSTEAD_GITHUB_API=https://github.example.com/api/v3
 
 The website address is taken from that API URL. `https://api.github.com` uses `https://github.com`. A GitHub Enterprise Server API at `https://<host>/api/v3` uses `https://<host>`. Set `CHECKSTEAD_GITHUB_OAUTH` only when the website host differs from the host in the API URL.
 
-An organization owner connects GitHub from that page:
+An organization owner connects GitHub from that page. The page has no token field. Checkstead creates the GitHub App, sends the owner to GitHub to approve the install, and stores the app id, private key, and client credentials GitHub returns.
 
 1. Run the local server from any directory. When that directory contains `checkstead.yml`, organization scans use its score policy. A scan of a project uses the `checkstead.yml` beside that project when the server's directory has none.
 2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
 3. Open http://127.0.0.1:8765/github.
-4. Enter the organization login and create the GitHub App. The browser opens GitHub so the organization owner can confirm the app. The app asks to read repository contents and metadata.
-5. Install the app on that organization when GitHub asks. Checkstead accepts an installation on an organization.
+4. Enter the organization login and continue. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata.
+5. On the installation page, click **Install** to approve the app on that organization. Checkstead stores the credentials GitHub returns and accepts the installation.
 6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot.
 
 With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with no score threshold and no private suppression file.
@@ -123,9 +127,9 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the findings list and the score source are empty on purpose.
 
-Sign in with GitHub, with a Microsoft Entra work or school account, or with a personal access token. GitLab is not connected.
+Sign in with GitHub or with a Microsoft Entra work or school account. GitLab is not connected.
 
-![Sign-in page with GitHub, Microsoft, and a personal access token](docs/screenshots/sign-in.png)
+![Sign-in page with GitHub and Microsoft](docs/screenshots/sign-in.png)
 
 The timeline names the snapshot, the engine, the revision, and the person git recorded for that revision. The drift between the two fixture scans is guava 31.1-jre to 32.1.3-jre. commons-lang3 left, and gson arrived.
 
@@ -172,9 +176,9 @@ flowchart TB
     reports[Directories of scan reports]
     ui[Web UI]
     accounts[Account store]
-    github[GitHub OAuth or token]
+    github[GitHub]
     entra[Microsoft Entra]
-    azure[Azure DevOps token]
+    azure[Azure DevOps]
     report --> reports --> ui
     github --> accounts
     entra --> accounts
@@ -414,10 +418,10 @@ The Release workflow publishes the extension. Set both of these on the repositor
 
 | Name | Kind | What to put there |
 | --- | --- | --- |
-| `AZURE_MARKETPLACE_TOKEN` | Secret | A personal access token with Marketplace (Publish). Organization: All accessible organizations. Create it at [the token page](https://dev.azure.com/_usersSettings/tokens). |
+| `AZURE_MARKETPLACE_TOKEN` | Secret | Marketplace (Publish) credential for this extension. Organization: All accessible organizations. Create it at [the Azure DevOps credential page](https://dev.azure.com/_usersSettings/tokens). |
 | `AZURE_MARKETPLACE_PUBLISHER` | Variable | The publisher id from [the Marketplace publisher hub](https://marketplace.visualstudio.com/manage). Create that publisher with a Microsoft account. |
 
-The token page can offer to create an organization so the token has a home. The Release workflow on GitHub is what publishes. Teams that already use Azure Pipelines open the listing and choose **Get it free**, then use `ChecksteadScan@0`. Their agent pulls the scanner image, so the GHCR package has to be public. See [Container images](#container-images).
+That credential page can offer to create an organization so the publisher has a home. The Release workflow on GitHub is what publishes. Teams that already use Azure Pipelines open the listing and choose **Get it free**, then use `ChecksteadScan@0`. Their agent pulls the scanner image, so the GHCR package has to be public. See [Container images](#container-images).
 
 Microsoft lists a public extension when the publisher is verified. On the publisher **Details** tab, verify a domain you control if the page asks for that. Microsoft may also review the listing.
 
@@ -437,7 +441,7 @@ A scan records a revision when you pass `--revision`. When that revision is a co
 
 ## Server
 
-The timeline is a server you can run on a laptop or deploy as a container. People can sign in with GitHub, with a Microsoft Entra work or school account, or with a GitHub or Azure DevOps personal access token. The server asks that host who the person is, then discards the token. It does not keep a copy.
+The timeline is a server you can run on a laptop or deploy as a container. People sign in with GitHub or with a Microsoft Entra work or school account. The first person to sign in is the administrator.
 
 On a laptop, from this checkout:
 
@@ -463,7 +467,7 @@ docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead ghcr.io/chet
 
 The scan image can start it too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server.
 
-Single sign-on needs an app registration. Leave the variables unset and the buttons stay on the page, marked not configured, and a personal access token still works.
+Single sign-on needs an app registration. Leave the variables unset and the buttons stay on the page, marked not configured. The GitHub organization connection is separate: it creates a GitHub App and does not ask for a token. See [GitHub organization](#github-organization).
 
 | Variable | What it is |
 | --- | --- |
@@ -476,13 +480,6 @@ Single sign-on needs an app registration. Leave the variables unset and the butt
 | `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
 
 The redirect URLs are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. On a laptop without TLS they are `http://127.0.0.1:8765/...`. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
-
-Create a token for the host you use:
-
-| Host | What to create | What the server asks |
-| --- | --- | --- |
-| GitHub | A personal access token that can read your user. A classic token needs the `read:user` scope. | `https://api.github.com/user` |
-| Azure DevOps | A personal access token for the organization, and the organization name on the sign-in form. | `https://dev.azure.com/{organization}/_apis/connectionData` |
 
 The first person to sign in becomes the administrator. After that, Administration is where that person adds logins and chooses who is a user and who is an administrator. Someone who has not been added cannot sign in. The last administrator cannot be removed.
 

@@ -156,23 +156,10 @@
     <div class="sso">
       <a class="sso-link" id="sso-github" href="/api/sso/github/start"><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Sign in with GitHub</a>
       <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
+      <p class="notice">The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
       <p class="empty" id="sso-note"></p>
+      <p class="empty" id="later"></p>
     </div>
-    <form id="sign-in">
-      <p class="notice">Or use a GitHub or Azure DevOps personal access token. The token is used once to read who you are, and it is not stored. The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
-      <label>Provider
-        <span class="choice"><span id="provider-mark"></span><select id="provider" name="provider"></select></span>
-      </label>
-      <label id="organization-field" hidden>Organization
-        <input id="organization" name="organization" autocomplete="organization" placeholder="your-organization">
-      </label>
-      <label>Token
-        <input id="token" name="token" type="password" autocomplete="current-password" required>
-      </label>
-      <button type="submit"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>Sign in</button>
-      <p id="sign-in-error" class="error" hidden></p>
-      <p id="later" class="empty"></p>
-    </form>
   </section>
   <section id="admin" hidden>
     <div class="panel">
@@ -477,11 +464,6 @@
       });
     }
 
-    function selectedProvider() {
-      const key = document.getElementById("provider").value;
-      return session.providers.find((provider) => provider.key === key);
-    }
-
     function showSignedOut() {
       show("gate", true);
       show("admin", false);
@@ -575,39 +557,8 @@
       holder.replaceChildren(icon(provider && providerIcons[provider.key] ? providerIcons[provider.key] : "person"));
     }
 
-    document.getElementById("provider").addEventListener("change", () => {
-      const provider = selectedProvider();
-      document.getElementById("organization-field").hidden = !(provider && provider.organization);
-      markFor(document.getElementById("provider"), "provider-mark");
-    });
     document.getElementById("add-provider").addEventListener("change", () => {
       markFor(document.getElementById("add-provider"), "add-provider-mark");
-    });
-
-    document.getElementById("sign-in").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      showError("sign-in-error", "");
-      const provider = document.getElementById("provider").value;
-      const body = {
-        provider: provider,
-        token: document.getElementById("token").value,
-      };
-      if (selectedProvider() && selectedProvider().organization) {
-        body.organization = document.getElementById("organization").value;
-      }
-      try {
-        const payload = await api("/api/session", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(body),
-        });
-        document.getElementById("token").value = "";
-        session.user = payload.user;
-        showApp();
-        await loadHistory();
-      } catch (error) {
-        showError("sign-in-error", error.message);
-      }
     });
 
     document.getElementById("sign-out").addEventListener("click", async () => {
@@ -670,7 +621,7 @@
       bindSso(document.getElementById("sso-entra"), !!entra.enabled);
       const note = document.getElementById("sso-note");
       if (!github.enabled && !entra.enabled) {
-        note.textContent = "GitHub and Microsoft sign-in need an app registration on this server. A personal access token still works.";
+        note.textContent = "GitHub and Microsoft sign-in need an app registration on this server.";
       } else if (!github.enabled) {
         note.textContent = "GitHub sign-in is not configured. Set CHECKSTEAD_GITHUB_CLIENT_ID and CHECKSTEAD_GITHUB_CLIENT_SECRET.";
       } else if (!entra.enabled) {
@@ -682,10 +633,7 @@
 
     fetch("/api/providers").then((response) => response.json()).then(async (payload) => {
       session.providers = payload.providers || [];
-      fillProviders(document.getElementById("provider"), false);
-      markFor(document.getElementById("provider"), "provider-mark");
       document.getElementById("later").textContent = payload.later || "";
-      document.getElementById("organization-field").hidden = true;
       const response = await fetch("/api/session");
       if (!response.ok) {
         showSignedOut();

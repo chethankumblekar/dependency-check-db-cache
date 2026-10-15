@@ -138,10 +138,10 @@ def begin_manifest(data_dir: Path, organization: str, public_base: str, state: s
     return (
         "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
         "<title>Create the Checkstead GitHub App</title>"
-        f"<p>Continue to GitHub to create the app for {org_text}.</p>"
+        f"<p>Checkstead is opening GitHub so an organization owner can approve the app for {org_text}.</p>"
         f"<form method=\"post\" action=\"{action}\">"
         f"<input type=\"hidden\" name=\"manifest\" value=\"{hidden}\">"
-        "<button type=\"submit\">Create the GitHub App</button>"
+        "<button type=\"submit\">Continue on GitHub</button>"
         "</form><script>document.forms[0].submit()</script></html>"
     )
 
@@ -497,6 +497,9 @@ def render_github_page(status: dict) -> str:
     web = escape(str(status.get("web") or ""))
     parts = [
         f"<p>GitHub API <code>{api}</code>. Website <code>{web}</code>.</p>",
+        "<p>Checkstead creates the GitHub App and sends an organization owner to GitHub "
+        "to approve the install. GitHub returns the app id, private key, and client "
+        "credentials, and Checkstead stores them. There is no token field.</p>"
         "<p>The app reads repository contents and metadata. "
         "A scan uses the score policy in checkstead.yml in the directory "
         "where the server was started. With no project file, the policy is "
@@ -517,7 +520,9 @@ def render_github_page(status: dict) -> str:
         parts.append(f"<p>App <code>{slug}</code> is ready for {org}.</p>")
         if not installation:
             link = escape(f"{status.get('web')}/apps/{app.get('slug')}/installations/new", quote=True)
-            parts.append(f"<p><a href=\"{link}\">Install the app on {org}</a></p>")
+            parts.append(
+                f"<p><a href=\"{link}\">Install</a> approves the app on {org}.</p>"
+            )
         else:
             installed = escape(str(installation.get("organization") or ""))
             parts.append(f"<p>Installed on {installed}.</p>")

@@ -1,7 +1,7 @@
 """Scan timeline and the server that guards it.
 
 The same command runs on a laptop and in the container. A session comes
-from a GitHub or Azure DevOps token. The timeline itself is unchanged.
+from GitHub or Microsoft sign-in. The timeline itself is unchanged.
 """
 
 from __future__ import annotations
@@ -368,7 +368,7 @@ def bind_server(
                 return
             try:
                 organization = pending_organization(store.data_dir, state)
-                created = exchange_manifest(store.data_dir, code, organization, github_transport)
+                exchange_manifest(store.data_dir, code, organization, github_transport)
                 link = install_url(store.data_dir)
             except ChecksteadError as exc:
                 clear_pending(store.data_dir)
@@ -379,16 +379,7 @@ def bind_server(
                 self._html(400, render_message("GitHub", ["GitHub did not create the app."]))
                 return
             clear_pending(store.data_dir)
-            org = str(created.get("organization") or organization)
-            self._html(
-                200,
-                render_message(
-                    "GitHub App created",
-                    [f"The GitHub App {created.get('slug')} is ready for {org}."],
-                    link,
-                    f"Install it on {org}",
-                ),
-            )
+            self._redirect(link)
 
         def _github_setup(self, query: dict[str, list[str]]) -> None:
             installation_id = (query.get("installation_id") or [""])[0]
@@ -468,6 +459,13 @@ def bind_server(
                 self._json(400, {"error": "Request body is not valid."})
                 return None
             return {key: values[0] if values else "" for key, values in parsed.items()}
+
+        def _redirect(self, location: str) -> None:
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
 
         def _html(self, status: int, page: str, cookie: str | None = None) -> None:
             body = page.encode("utf-8")

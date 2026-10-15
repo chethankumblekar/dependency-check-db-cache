@@ -296,6 +296,16 @@ class GitHubAppTests(TestCase):
         subprocess.run(["bash", "-n", str(ROOT / "scripts" / "local.sh")], check=True)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertLess(readme.index(LOCAL_COMMAND), readme.index("## Architecture"))
+        self.assertIn(
+            "irm https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.ps1 | iex",
+            readme,
+        )
+        self.assertIn("prefer-newest", readme)
+        self.assertIn("privateSuppressions", readme)
+        self.assertIn("click **Install**", readme)
+        self.assertNotIn("Create a token", readme)
+        self.assertNotIn("read:user", readme)
+        self.assertNotIn("paste", readme.lower())
         self.assertTrue(localhost_client("127.0.0.1"))
         self.assertTrue(localhost_client("::1"))
         self.assertFalse(localhost_client("10.0.0.8"))
@@ -368,10 +378,16 @@ class GitHubAppTests(TestCase):
         host, port = server.server_address[:2]
         base = f"http://{host}:{port}"
 
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+        opener = urllib.request.build_opener(_NoRedirect)
+
         def request(path: str, method: str = "GET", data_bytes: bytes | None = None, headers: dict | None = None):
             req = urllib.request.Request(base + path, data=data_bytes, headers=headers or {}, method=method)
             try:
-                with urllib.request.urlopen(req) as response:
+                with opener.open(req) as response:
                     return response.status, response.read(), response.headers
             except urllib.error.HTTPError as exc:
                 return exc.code, exc.read(), exc.headers
@@ -386,6 +402,9 @@ class GitHubAppTests(TestCase):
             status, page, _headers = request("/github")
             self.assertEqual(status, 200)
             self.assertIn(b"Organization login", page)
+            self.assertNotIn(b'name="token"', page)
+            self.assertNotIn(b"personal access", page.lower())
+            self.assertIn(b"There is no token field.", page)
 
             form = urllib.parse.urlencode({"organization": "acme"}).encode()
             status, page, headers = request(
@@ -414,16 +433,18 @@ class GitHubAppTests(TestCase):
             )
             self.assertEqual(status, 400)
 
-            status, page, _headers = request(
+            status, page, headers = request(
                 f"/api/github/manifest/callback?code=demo-code-123&state={state}",
                 headers={"Cookie": f"checkstead_github={state}"},
             )
-            self.assertEqual(status, 200, page.decode())
+            location = headers.get("Location")
+            self.assertEqual(status, 302, page.decode(errors="replace"))
+            self.assertEqual(location, "https://github.example.com/apps/checkstead/installations/new")
+            self.assertNotIn("services.nvd.nist.gov", location)
             self.assertNotIn(b"PRIVATE KEY", page)
             self.assertNotIn(b"secret-value", page)
-            self.assertIn(b"https://github.example.com/apps/checkstead/installations/new", page)
             self.assertNotIn(b"https://github.com/", page)
-            self.assertIn(b"Install it on acme", page)
+            self.assertNotIn("https://github.com/", location)
             key = data / "github-app" / "private-key.pem"
             self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE((data / "github-app" / "credentials.json").stat().st_mode), 0o600)

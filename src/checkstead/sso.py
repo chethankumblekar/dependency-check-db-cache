@@ -1,8 +1,8 @@
 """Sign in with GitHub or a Microsoft Entra work account.
 
 The server redirects to the provider and exchanges the code itself.
-The provider token is not stored. An app registration has to be configured
-before either button works. A personal access token still signs someone in.
+The provider credential from that sign-in is not stored. An app registration
+has to be configured before either button works.
 """
 
 from __future__ import annotations
