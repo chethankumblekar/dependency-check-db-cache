@@ -27,6 +27,7 @@ from checkstead.errors import ChecksteadError, RefusedHost  # noqa: E402
 from checkstead.github_app import (  # noqa: E402
     accept_installation,
     app_jwt,
+    begin_manifest,
     build_manifest,
     github_request,
     localhost_client,
@@ -119,7 +120,7 @@ class GitHubAppTests(TestCase):
         with github_env(api="https://github.example.com/api/v3", oauth="https://override.example"):
             self.assertEqual(github_web_base(), "https://override.example")
 
-    def test_a_user_installation_is_refused_and_an_org_installation_is_stored(self) -> None:
+    def test_a_user_installation_is_stored_for_that_user(self) -> None:
         data = self._work("install")
         self._store_app(data, pem="not-a-key\n")
         with self.assertRaises(ChecksteadError) as refused:
@@ -140,6 +141,82 @@ class GitHubAppTests(TestCase):
         self.assertEqual(stored, {"id": 9, "organization": "acme"})
         saved = json.loads((data / "github-app" / "installation.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["accountType"], "Organization")
+        (data / "github-app" / "app.json").write_text(
+            json.dumps({"id": 15, "slug": "checkstead", "organization": "octocat", "accountType": "User"}),
+            encoding="utf-8",
+        )
+        personal = accept_installation(
+            data,
+            {"id": 11, "account": {"login": "octocat", "type": "User"}},
+        )
+        self.assertEqual(personal, {"id": 11, "organization": "octocat"})
+        saved = json.loads((data / "github-app" / "installation.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["accountType"], "User")
+
+    def test_a_personal_account_creates_the_app_and_scans_that_users_repositories(self) -> None:
+        root = self._work("personal")
+        data = root / "data"
+        calls: list[str] = []
+
+        def transport(method: str, url: str, headers: dict, body):
+            calls.append(url)
+            self.assertNotIn("services.nvd.nist.gov", url)
+            if url.endswith("/users/octocat"):
+                return 200, json.dumps({"login": "octocat", "type": "User"}).encode()
+            if url.endswith("/access_tokens"):
+                return 201, json.dumps({"token": "ghs_user"}).encode()
+            if "/installation/repositories" in url:
+                return 200, json.dumps(
+                    {"repositories": [{"full_name": "octocat/hello", "default_branch": "main"}]}
+                ).encode()
+            raise AssertionError(url)
+
+        page = begin_manifest(data, "octocat", "http://127.0.0.1:8765", "state-user", transport)
+        self.assertIn("https://github.com/settings/apps/new?state=state-user", page)
+        self.assertNotIn("/organizations/octocat/", page)
+        self.assertEqual(manifest_target("octocat", "state-user", "User"), "https://github.com/settings/apps/new?state=state-user")
+        directory = data / "github-app"
+        (directory / "app.json").write_text(
+            json.dumps({"id": 15, "slug": "checkstead", "organization": "octocat", "accountType": "User"}),
+            encoding="utf-8",
+        )
+        (directory / "private-key.pem").write_text(self.pem, encoding="utf-8")
+        stored = accept_installation(
+            data,
+            {"id": 77, "account": {"login": "octocat", "type": "User"}},
+        )
+        self.assertEqual(stored["organization"], "octocat")
+        seen: list[dict] = []
+
+        def fake_scan(paths, **kwargs):
+            seen.append(kwargs)
+            out = kwargs["out_dir"]
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "checkstead.txt").write_text(
+                f"branch: {kwargs.get('branch') or ''}\nscore-policy: {kwargs['score_policy']}\n",
+                encoding="utf-8",
+            )
+
+        def fetch_zip(url: str, headers: dict, dest: Path) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(dest, "w") as archive:
+                archive.writestr("octocat-hello/README", "hi\n")
+
+        with github_env():
+            results = scan_installed_repositories(
+                data,
+                root / "scans",
+                root,
+                transport,
+                fake_scan,
+                fetch_zip,
+            )
+        self.assertEqual(results[0]["repository"], "octocat/hello")
+        self.assertNotIn("error", results[0])
+        self.assertEqual(seen[0]["branch"], "main")
+        self.assertEqual(seen[0]["private_suppressions"], "")
+        for url in calls:
+            self.assertNotIn("services.nvd.nist.gov", url)
 
     def test_jwt_signs_with_openssl_and_the_nvd_is_refused(self) -> None:
         data = self._work("jwt")
@@ -327,6 +404,8 @@ class GitHubAppTests(TestCase):
         def transport(method: str, url: str, headers: dict, body):
             calls.append(url)
             self.assertNotIn("services.nvd.nist.gov", url)
+            if url.endswith("/users/acme"):
+                return 200, json.dumps({"login": "acme", "type": "Organization"}).encode()
             if url.endswith("/conversions"):
                 return 201, json.dumps(
                     {
@@ -401,7 +480,8 @@ class GitHubAppTests(TestCase):
             self.assertIsNone(payload["app"])
             status, page, _headers = request("/github")
             self.assertEqual(status, 200)
-            self.assertIn(b"Organization login", page)
+            self.assertIn(b"GitHub login", page)
+            self.assertIn(b"A user login or an organization.", page)
             self.assertNotIn(b'name="token"', page)
             self.assertNotIn(b"personal access", page.lower())
             self.assertIn(b"There is no token field.", page)

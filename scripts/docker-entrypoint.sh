@@ -20,4 +20,7 @@ fi
 if [[ -n "${INPUT_BASE:-}" ]]; then
   args+=(--base "$INPUT_BASE")
 fi
+if [[ -n "${INPUT_BRANCH:-}" ]]; then
+  args+=(--branch "$INPUT_BRANCH")
+fi
 exec checkstead "${args[@]}"

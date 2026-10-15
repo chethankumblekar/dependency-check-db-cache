@@ -13,7 +13,7 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checkstead.history import diff_scans, history_payload, load_history, load_scan  # noqa: E402
+from checkstead.history import branch_groups, diff_scans, history_payload, load_history, load_scan  # noqa: E402
 from checkstead.ui import bind_server  # noqa: E402
 
 
@@ -138,6 +138,7 @@ class HistoryTests(TestCase):
         self.assertEqual(changed[0]["after"]["version"], "32.1.3-jre")
         self.assertFalse(payload["drifts"][0]["scores"]["available"])
         self.assertEqual(payload["scans"][0]["scoreLines"], [])
+        self.assertIsNone(payload["scans"][0]["branch"])
 
     def test_a_score_line_names_version_score_and_source(self) -> None:
         root = ROOT / "build" / "tests" / "score-line"
@@ -163,3 +164,105 @@ class HistoryTests(TestCase):
         )
         payload = history_payload([scan])
         self.assertEqual(payload["scans"][0]["scoreLines"], scan.score_lines)
+
+    def test_drift_stays_inside_one_branch(self) -> None:
+        root = ROOT / "build" / "tests" / "branch-groups"
+        if root.exists():
+            import shutil
+            shutil.rmtree(root)
+
+        def report(name: str, project: str, branch: str, dependency: str) -> None:
+            directory = root / name
+            directory.mkdir(parents=True)
+            (directory / "checkstead.txt").write_text(
+                "engine: 13.0.0\n"
+                "snapshot: 2026-10-06T01:02:03Z\n"
+                "checksum: sha256:abc\n"
+                f"project: {project}\n"
+                f"branch: {branch}\n"
+                "notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.\n",
+                encoding="utf-8",
+            )
+            (directory / "dependency-check-report.json").write_text(
+                json.dumps({"dependencies": [{"fileName": dependency, "name": dependency, "version": "1"}]}),
+                encoding="utf-8",
+            )
+
+        report("01", "one", "main", "alpha")
+        report("02", "two", "feature", "beta")
+        report("03", "three", "main", "gamma")
+        scans = load_history(root)
+        self.assertEqual(
+            [[scan.id for scan in group] for group in branch_groups(scans)],
+            [["01", "03"], ["02"]],
+        )
+        payload = history_payload(scans)
+        self.assertEqual(
+            [(item["before"], item["after"]) for item in payload["drifts"]],
+            [("01", "03")],
+        )
+        self.assertEqual(payload["scans"][0]["branch"], "main")
+        self.assertEqual(payload["drifts"][0]["dependencies"]["added"][0]["name"], "gamma")
+        page = (ROOT / "src" / "checkstead" / "ui_page.html").read_text(encoding="utf-8")
+        self.assertIn("branch-group", page)
+        self.assertIn("function branchGroups", page)
+        self.assertIn("scan.branch", page)
+
+    def test_a_scan_records_the_git_branch(self) -> None:
+        import os
+        import subprocess
+        from datetime import date
+
+        sys.path.insert(0, str(ROOT / "tests"))
+        from checkstead.scan import run_scan
+        from test_phase1 import FixtureServer, manifest_for, write_zip
+
+        root = ROOT / "build" / "tests" / "record-branch"
+        if root.exists():
+            import shutil
+            shutil.rmtree(root)
+        repo = root / "tree"
+        repo.mkdir(parents=True)
+        env = os.environ.copy()
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "Ada Lovelace",
+                "GIT_AUTHOR_EMAIL": "ada@example.com",
+                "GIT_COMMITTER_NAME": "Ada Lovelace",
+                "GIT_COMMITTER_EMAIL": "ada@example.com",
+            }
+        )
+        subprocess.run(["git", "init", "-b", "feature"], cwd=repo, check=True, capture_output=True)
+        (repo / "note").write_text("tree\n", encoding="utf-8")
+        subprocess.run(["git", "add", "note"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "note"], cwd=repo, check=True, capture_output=True, env=env)
+        blob = root / "db.zip"
+        write_zip(blob, "branch")
+        server = FixtureServer()
+        self.addCleanup(server.close)
+        server.manifest = manifest_for(blob, "2026-10-15T05:24:17Z")
+        server.zip_bytes = blob.read_bytes()
+        recorded = run_scan(
+            [repo],
+            project="sample",
+            config_snapshot_url=server.manifest_url,
+            out_dir=root / "out",
+            cache_dir=root / "cache",
+            today=date(2026, 10, 15),
+            dry_run=True,
+        )
+        text = recorded.report_path.read_text(encoding="utf-8")
+        self.assertIn("branch: feature\n", text)
+        overridden = run_scan(
+            [repo],
+            project="sample",
+            config_snapshot_url=server.manifest_url,
+            out_dir=root / "override",
+            cache_dir=root / "cache",
+            today=date(2026, 10, 15),
+            dry_run=True,
+            branch="release",
+        )
+        self.assertIn("branch: release\n", overridden.report_path.read_text(encoding="utf-8"))
+        for host in server.hosts:
+            self.assertNotIn("services.nvd.nist.gov", host)

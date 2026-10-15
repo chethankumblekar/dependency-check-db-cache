@@ -1,4 +1,4 @@
-"""A GitHub App an organization owner installs from the local server.
+"""A GitHub App a user or an organization owner installs from the local server.
 
 The API host is CHECKSTEAD_GITHUB_API. github.com is the default.
 A GitHub Enterprise Server base such as https://host/api/v3 uses that host.
@@ -45,7 +45,7 @@ def localhost_client(host: str) -> bool:
 def normalize_org(organization: str) -> str:
     cleaned = organization.strip()
     if not _ORG.fullmatch(cleaned):
-        raise ChecksteadError("Enter the GitHub organization login.")
+        raise ChecksteadError("Enter a GitHub user login or an organization login.")
     return cleaned
 
 
@@ -56,16 +56,18 @@ def build_manifest(public_base: str) -> dict:
         "url": base + "/",
         "redirect_url": base + "/api/github/manifest/callback",
         "setup_url": base + "/api/github/setup",
-        "description": "Scan this organization's repositories with Checkstead.",
+        "description": "Scan this account's repositories with Checkstead.",
         "public": False,
         "default_permissions": {"contents": "read", "metadata": "read"},
         "default_events": [],
     }
 
 
-def manifest_target(organization: str, state: str) -> str:
+def manifest_target(organization: str, state: str, account_type: str = "Organization") -> str:
     org = normalize_org(organization)
     query = urllib.parse.urlencode({"state": state})
+    if account_type == "User":
+        return f"{github_web_base()}/settings/apps/new?{query}"
     return f"{github_web_base()}/organizations/{urllib.parse.quote(org)}/settings/apps/new?{query}"
 
 
@@ -107,12 +109,14 @@ def github_status(data_dir: Path) -> dict:
             "id": app.get("id"),
             "slug": app.get("slug"),
             "organization": app.get("organization"),
+            "accountType": app.get("accountType") or "Organization",
         }
     installation_public = None
-    if installation and installation.get("accountType") == "Organization":
+    if installation and installation.get("accountType") in {"Organization", "User"}:
         installation_public = {
             "id": installation.get("id"),
             "organization": installation.get("organization"),
+            "accountType": installation.get("accountType"),
         }
     return {
         "api": github_api_base(),
@@ -122,23 +126,48 @@ def github_status(data_dir: Path) -> dict:
     }
 
 
-def begin_manifest(data_dir: Path, organization: str, public_base: str, state: str) -> str:
+def account_kind(login: str, transport=None) -> str:
+    """User or Organization, from the GitHub account record. This does not call the NVD."""
+    transport = transport or default_transport
+    status, body = github_request(
+        "GET",
+        f"{github_api_base()}/users/{urllib.parse.quote(login)}",
+        {"Accept": _ACCEPT, "X-GitHub-Api-Version": _API_VERSION},
+        None,
+        transport,
+    )
+    payload = _json_object(status, body, "GitHub did not identify that login.")
+    kind = payload.get("type")
+    if kind in {"User", "Organization"}:
+        return kind
+    raise ChecksteadError("GitHub did not identify that login.")
+
+
+def begin_manifest(
+    data_dir: Path,
+    organization: str,
+    public_base: str,
+    state: str,
+    transport=None,
+) -> str:
     org = normalize_org(organization)
     if not state or any(char in state for char in "\r\n\x00 "):
         raise ChecksteadError("The GitHub App could not be started.")
+    kind = account_kind(org, transport)
     directory = _app_dir(data_dir)
     _write_private(
         directory / "pending.json",
-        json.dumps({"state": state, "organization": org}),
+        json.dumps({"state": state, "organization": org, "accountType": kind}),
     )
     manifest = json.dumps(build_manifest(public_base), separators=(",", ":"))
-    action = escape(manifest_target(org, state), quote=True)
+    action = escape(manifest_target(org, state, kind), quote=True)
     hidden = escape(manifest, quote=True)
     org_text = escape(org)
+    who = "personal account" if kind == "User" else "organization"
     return (
         "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
         "<title>Create the Checkstead GitHub App</title>"
-        f"<p>Checkstead is opening GitHub so an organization owner can approve the app for {org_text}.</p>"
+        f"<p>Checkstead is opening GitHub so you can approve the app for the {who} {org_text}.</p>"
         f"<form method=\"post\" action=\"{action}\">"
         f"<input type=\"hidden\" name=\"manifest\" value=\"{hidden}\">"
         "<button type=\"submit\">Continue on GitHub</button>"
@@ -240,18 +269,33 @@ def app_jwt(app_id: str, pem_path: Path, now: int | None = None) -> str:
 
 
 def pending_organization(data_dir: Path, state: str) -> str:
+    login, _kind = pending_account(data_dir, state)
+    return login
+
+
+def pending_account(data_dir: Path, state: str) -> tuple[str, str]:
     pending = _read_json(data_dir / "github-app" / "pending.json")
     if not pending or pending.get("state") != state:
         raise ChecksteadError("GitHub could not be confirmed. Create the app again.")
-    return normalize_org(str(pending.get("organization") or ""))
+    kind = str(pending.get("accountType") or "Organization")
+    if kind not in {"User", "Organization"}:
+        kind = "Organization"
+    return normalize_org(str(pending.get("organization") or "")), kind
 
 
 def clear_pending(data_dir: Path) -> None:
     (data_dir / "github-app" / "pending.json").unlink(missing_ok=True)
 
 
-def exchange_manifest(data_dir: Path, code: str, organization: str, transport=None) -> dict:
+def exchange_manifest(
+    data_dir: Path,
+    code: str,
+    organization: str,
+    transport=None,
+    account_type: str = "Organization",
+) -> dict:
     org = normalize_org(organization)
+    kind = account_type if account_type in {"User", "Organization"} else "Organization"
     usable = _code(code)
     transport = transport or default_transport
     quoted = urllib.parse.quote(usable, safe="")
@@ -282,7 +326,7 @@ def exchange_manifest(data_dir: Path, code: str, organization: str, transport=No
             }
         ),
     )
-    public = {"id": app_id, "slug": slug, "organization": org}
+    public = {"id": app_id, "slug": slug, "organization": org, "accountType": kind}
     _write_private(directory / "app.json", json.dumps(public))
     return public
 
@@ -301,22 +345,32 @@ def _load_app(data_dir: Path) -> tuple[dict, Path]:
 def accept_installation(data_dir: Path, payload: dict) -> dict:
     app, _key = _load_app(data_dir)
     account = payload.get("account")
-    if not isinstance(account, dict) or account.get("type") != "Organization":
-        raise ChecksteadError("Checkstead accepts a GitHub App installation on an organization.")
+    if not isinstance(account, dict) or account.get("type") not in {"Organization", "User"}:
+        raise ChecksteadError("Checkstead accepts a GitHub App installation on a user or an organization.")
     login = str(account.get("login") or "")
     try:
         org = normalize_org(login)
     except ChecksteadError as exc:
         raise ChecksteadError(
-            "Checkstead accepts a GitHub App installation on an organization."
+            "Checkstead accepts a GitHub App installation on a user or an organization."
         ) from exc
     expected = str(app.get("organization") or "")
+    expected_type = str(app.get("accountType") or "Organization")
+    account_type = str(account.get("type"))
+    if expected_type not in {"User", "Organization"}:
+        expected_type = "Organization"
+    if account_type != expected_type:
+        created = "organization" if expected_type == "Organization" else "user"
+        raise ChecksteadError(
+            f"This installation is a {account_type.lower()} account, "
+            f"and the app was created for the {created} {expected}."
+        )
     if expected.casefold() != org.casefold():
         raise ChecksteadError(f"This installation is for {org}, not {expected}.")
     installation_id = payload.get("id")
     if installation_id in (None, "") or not str(installation_id).isdigit():
         raise ChecksteadError("GitHub did not return an installation.")
-    stored = {"id": int(installation_id), "organization": org, "accountType": "Organization"}
+    stored = {"id": int(installation_id), "organization": org, "accountType": account_type}
     _write_private(data_dir / "github-app" / "installation.json", json.dumps(stored))
     return {"id": stored["id"], "organization": org}
 
@@ -341,8 +395,8 @@ def complete_setup(data_dir: Path, installation_id: str, transport=None) -> dict
 def _installation_token(data_dir: Path, transport) -> tuple[dict, str]:
     app, key = _load_app(data_dir)
     installation = _read_json(data_dir / "github-app" / "installation.json")
-    if not installation or installation.get("accountType") != "Organization":
-        raise ChecksteadError("Install the GitHub App on the organization first.")
+    if not installation or installation.get("accountType") not in {"Organization", "User"}:
+        raise ChecksteadError("Install the GitHub App on the account first.")
     token = app_jwt(str(app["id"]), key)
     status, body = github_request(
         "POST",
@@ -359,7 +413,7 @@ def _installation_token(data_dir: Path, transport) -> tuple[dict, str]:
 
 
 def list_repositories(token: str, transport) -> list[str]:
-    names: list[str] = []
+    names: list[tuple[str, str | None]] = []
     for page in range(1, 101):
         status, body = github_request(
             "GET",
@@ -368,16 +422,25 @@ def list_repositories(token: str, transport) -> list[str]:
             None,
             transport,
         )
-        payload = _json_object(status, body, "GitHub did not list the organization's repositories.")
+        payload = _json_object(status, body, "GitHub did not list this account's repositories.")
         batch = payload.get("repositories")
         if not isinstance(batch, list):
-            raise ChecksteadError("GitHub did not list the organization's repositories.")
+            raise ChecksteadError("GitHub did not list this account's repositories.")
         for repo in batch:
             if isinstance(repo, dict) and isinstance(repo.get("full_name"), str):
-                names.append(repo["full_name"])
+                names.append((repo["full_name"], _branch_name(repo.get("default_branch"))))
         if len(batch) < 100:
             break
     return names
+
+
+def _branch_name(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 200 or any(char in cleaned for char in "\r\n\x00"):
+        return None
+    return cleaned
 
 
 def _today() -> date:
@@ -425,7 +488,7 @@ def scan_installed_repositories(
     scans_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[dict] = []
-    for full_name in names:
+    for full_name, branch_name in names:
         entry = {
             "repository": full_name,
             "scorePolicy": config.score_policy,
@@ -464,6 +527,7 @@ def scan_installed_repositories(
                 fail_on_kev=config.fail_on_kev,
                 fail_unscored=config.fail_unscored,
                 private_suppressions=config.private_suppressions,
+                branch=branch_name,
             )
         except ChecksteadError as exc:
             entry["error"] = str(exc)
@@ -497,9 +561,10 @@ def render_github_page(status: dict) -> str:
     web = escape(str(status.get("web") or ""))
     parts = [
         f"<p>GitHub API <code>{api}</code>. Website <code>{web}</code>.</p>",
-        "<p>Checkstead creates the GitHub App and sends an organization owner to GitHub "
-        "to approve the install. GitHub returns the app id, private key, and client "
-        "credentials, and Checkstead stores them. There is no token field.</p>"
+        "<p>Checkstead creates the GitHub App and sends you to GitHub "
+        "to approve the install. A user login installs the app on that personal account. "
+        "An organization login installs it on that organization. GitHub returns the app id, "
+        "private key, and client credentials, and Checkstead stores them. There is no token field.</p>"
         "<p>The app reads repository contents and metadata. "
         "A scan uses the score policy in checkstead.yml in the directory "
         "where the server was started. With no project file, the policy is "
@@ -510,8 +575,9 @@ def render_github_page(status: dict) -> str:
     if not app:
         parts.append(
             "<form method=\"post\" action=\"/api/github/manifest\">"
-            "<p><label>Organization login<br>"
-            "<input name=\"organization\" required autocomplete=\"off\"></label></p>"
+            "<p><label>GitHub login<br>"
+            "<input name=\"login\" required autocomplete=\"off\"></label></p>"
+            "<p>A user login or an organization.</p>"
             "<button type=\"submit\">Create the GitHub App</button></form>"
         )
     else:
@@ -528,18 +594,18 @@ def render_github_page(status: dict) -> str:
             parts.append(f"<p>Installed on {installed}.</p>")
             parts.append(
                 "<form method=\"post\" action=\"/api/github/scan\">"
-                "<button type=\"submit\">Scan the organization's repositories</button>"
+                "<button type=\"submit\">Scan this account's repositories</button>"
                 "</form>"
             )
     parts.append("<p><a href=\"/\">Timeline</a></p>")
-    return _shell("GitHub organization", "".join(parts))
+    return _shell("GitHub", "".join(parts))
 
 
 def render_message(title: str, paragraphs: list[str], link: str | None = None, label: str = "") -> str:
     body = "".join(f"<p>{escape(text)}</p>" for text in paragraphs)
     if link:
         body += f"<p><a href=\"{escape(link, quote=True)}\">{escape(label or link)}</a></p>"
-    body += "<p><a href=\"/github\">GitHub organization</a></p>"
+    body += "<p><a href=\"/github\">GitHub</a></p>"
     return _shell(title, body)
 
 
@@ -559,5 +625,5 @@ def render_scan_results(scans: list[dict]) -> str:
                 line += f". Report {escape(str(scan.get('report') or ''))}"
             items.append(f"<li>{line}</li>")
         body = "<ul>" + "".join(items) + "</ul>"
-    body += "<p><a href=\"/github\">GitHub organization</a></p>"
-    return _shell("Organization scan", body)
+    body += "<p><a href=\"/github\">GitHub</a></p>"
+    return _shell("Repository scan", body)

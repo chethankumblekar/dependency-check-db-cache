@@ -25,14 +25,14 @@ from checkstead.github_app import (
     github_status,
     install_url,
     localhost_client,
-    pending_organization,
+    pending_account,
     render_github_page,
     render_message,
     render_scan_results,
     scan_installed_repositories,
 )
 from checkstead.history import history_payload, load_history
-from checkstead.identity import AuthError, identify, list_providers
+from checkstead.identity import AuthError, Identity, identify, list_providers
 from checkstead.sso import (
     STATE_COOKIE,
     authorize_url,
@@ -114,6 +114,22 @@ def _session_cookie(token: str, max_age: int) -> str:
     return "; ".join(parts)
 
 
+def _local_sign_in(client_host: str, host_header: str) -> bool:
+    """True for the local server. A public host does not get this sign-in."""
+    if os.environ.get("CHECKSTEAD_LOCAL") == "1":
+        return True
+    if localhost_client(client_host):
+        return True
+    host = host_header.split(",")[0].strip().lower()
+    if host.startswith("["):
+        name = host.split("]", 1)[0].strip("[")
+    elif host.count(":") == 1:
+        name = host.split(":", 1)[0]
+    else:
+        name = host
+    return name in {"localhost", "127.0.0.1", "::1"}
+
+
 def _github_cookie(state: str) -> str:
     parts = [
         f"{GITHUB_COOKIE}={state}",
@@ -154,7 +170,11 @@ def bind_server(
                 self._json(200, list_providers())
                 return
             if path == "/api/sso":
-                self._json(200, sso_status())
+                status = sso_status()
+                status["local"] = {
+                    "enabled": _local_sign_in(self.client_address[0], self.headers.get("Host", ""))
+                }
+                self._json(200, status)
                 return
             if path in {"/api/sso/github/start", "/api/sso/entra/start"}:
                 self._sso_start(path.split("/")[3])
@@ -204,6 +224,9 @@ def bind_server(
 
         def do_POST(self) -> None:
             path = self.path.split("?", 1)[0]
+            if path == "/api/session/local":
+                self._local_session()
+                return
             if path == "/api/session":
                 body = self._body()
                 if body is None:
@@ -320,6 +343,17 @@ def bind_server(
             self.send_header("Set-Cookie", f"{STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
             self.end_headers()
 
+        def _local_session(self) -> None:
+            if not _local_sign_in(self.client_address[0], self.headers.get("Host", "")):
+                self._json(403, {"error": "This sign-in is only available on localhost."})
+                return
+            try:
+                token, user = store.sign_in(Identity("local", "local", "local", "This computer"))
+            except AccountError as exc:
+                self._json(exc.status, {"error": str(exc)})
+                return
+            self._json(200, {"user": user}, _session_cookie(token, SESSION_DAYS * 24 * 3600))
+
         def _github_ok(self) -> bool:
             if localhost_client(self.client_address[0]):
                 return True
@@ -346,9 +380,10 @@ def bind_server(
             try:
                 page = begin_manifest(
                     store.data_dir,
-                    str(fields.get("organization") or ""),
+                    str(fields.get("login") or fields.get("organization") or ""),
                     public_base(self.headers.get("Host", "")),
                     state,
+                    github_transport,
                 )
             except (AuthError, ChecksteadError) as exc:
                 self._html(400, render_message("GitHub", [str(exc)]))
@@ -367,8 +402,14 @@ def bind_server(
                 self._html(400, render_message("GitHub", ["GitHub could not be confirmed. Create the app again."]))
                 return
             try:
-                organization = pending_organization(store.data_dir, state)
-                exchange_manifest(store.data_dir, code, organization, github_transport)
+                organization, account_type = pending_account(store.data_dir, state)
+                exchange_manifest(
+                    store.data_dir,
+                    code,
+                    organization,
+                    github_transport,
+                    account_type,
+                )
                 link = install_url(store.data_dir)
             except ChecksteadError as exc:
                 clear_pending(store.data_dir)
@@ -398,7 +439,7 @@ def bind_server(
                     "GitHub App installed",
                     [f"Checkstead accepted the installation on {org}."],
                     "/github",
-                    "Scan the organization's repositories",
+                    "Scan this account's repositories",
                 ),
             )
 

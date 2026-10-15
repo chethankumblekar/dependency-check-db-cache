@@ -40,6 +40,24 @@ class CiTests(TestCase):
         self.assertIn("value=engine-", ci)
         self.assertIn("docker/metadata-action@v5", ci)
         self.assertIn("docker/build-push-action@v6", ci)
+        self.assertIn("linux/amd64,linux/arm64", ci)
+        self.assertIn("docker/setup-qemu-action@v3", ci)
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest", compose)
+        self.assertIn("restart: unless-stopped", compose)
+        self.assertIn("127.0.0.1:8765:8765", compose)
+        self.assertIn("checkstead-data:", compose)
+        self.assertIn("env_file:", compose)
+        for name in (
+            "CHECKSTEAD_GITHUB_CLIENT_ID",
+            "CHECKSTEAD_GITHUB_CLIENT_SECRET",
+            "CHECKSTEAD_ENTRA_CLIENT_ID",
+            "CHECKSTEAD_ENTRA_CLIENT_SECRET",
+            "CHECKSTEAD_ENTRA_TENANT",
+        ):
+            self.assertIn(name, example)
+        self.assertNotIn("paste", example.lower())
 
         self.assertIn("ruff check src tests", script)
         self.assertIn("python3 -m compileall -q src tests", script)

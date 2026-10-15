@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 from urllib.request import OpenerDirector
 
-from checkstead.commit import lookup_commit
+from checkstead.commit import lookup_branch, lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
@@ -262,6 +262,7 @@ def _write_scored_report(
     base_dir: Path | None = None,
     base_scans: list[Path] | None = None,
     pull_request: str | None = None,
+    branch: str | None = None,
 ) -> None:
     extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
     payload = _load_engine_payload(out_dir / "dependency-check-report.json")
@@ -309,6 +310,7 @@ def _write_scored_report(
         author_email,
         extra,
         pull_request,
+        branch,
     )
     if pull_request:
         (out_dir / COMMENT_NAME).write_text(
@@ -352,6 +354,7 @@ def run_scan(
     suppression_base: Path | None = None,
     base: list[Path] | None = None,
     pull_request: str | None = None,
+    branch: str | None = None,
 ) -> ScanResult:
     base_paths = list(base or [])
     for scan in scans:
@@ -373,6 +376,7 @@ def run_scan(
         found = lookup_commit(revision, scans[0])
         if found:
             author, author_email = found
+    branch_name = (branch or "").strip() or lookup_branch(scans[0])
     out_dir.mkdir(parents=True, exist_ok=True)
     private = resolve_private_suppressions(private_suppressions, suppression_base or Path.cwd())
     suppressions: list[Path] = []
@@ -417,6 +421,7 @@ def run_scan(
         author_email,
         header + ["findings: none"],
         pull_request,
+        branch_name,
     )
     (out_dir / "checkstead-command.txt").write_text(
         "\n\n".join("\n".join(item) for item in commands) + "\n",
@@ -471,6 +476,7 @@ def run_scan(
             base_dir,
             base_paths,
             pull_request,
+            branch_name,
         )
         return ScanResult(
             engine_version=snapshot.engine_version,

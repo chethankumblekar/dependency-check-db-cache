@@ -52,6 +52,7 @@ class Scan:
     has_score_source: bool
     score_lines: list[str] = field(default_factory=list)
     pull_request: str | None = None
+    branch: str | None = None
 
 
 @dataclass
@@ -237,6 +238,7 @@ def load_scan(directory: Path) -> Scan:
         has_score_source=has_score_source,
         score_lines=score_lines_from_report(report_text),
         pull_request=header.get("pull-request") or None,
+        branch=header.get("branch") or None,
     )
 
 
@@ -318,8 +320,25 @@ def _finding_json(item: Finding) -> dict:
     return payload
 
 
+def branch_groups(scans: list[Scan]) -> list[list[Scan]]:
+    """Scans in timeline order, split so each group is one git branch."""
+    grouped: dict[str, list[Scan]] = {}
+    order: list[str] = []
+    for scan in scans:
+        key = scan.branch or ""
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(scan)
+    return [grouped[key] for key in order]
+
+
 def history_payload(scans: list[Scan]) -> dict:
-    drifts = [diff_scans(scans[index - 1], scans[index]) for index in range(1, len(scans))]
+    drifts = [
+        diff_scans(group[index - 1], group[index])
+        for group in branch_groups(scans)
+        for index in range(1, len(group))
+    ]
     return {
         "notice": scans[0].notice if scans else NVD_NOTICE,
         "scans": [
@@ -336,6 +355,7 @@ def history_payload(scans: list[Scan]) -> dict:
                 "hasScoreSource": scan.has_score_source,
                 "scoreLines": list(scan.score_lines),
                 "pullRequest": scan.pull_request,
+                "branch": scan.branch,
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],
                 "findings": [_finding_json(item) for item in scan.findings],
             }

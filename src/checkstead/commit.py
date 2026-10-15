@@ -10,6 +10,26 @@ import subprocess
 from pathlib import Path
 
 
+def lookup_branch(start: Path) -> str | None:
+    """The git branch of this tree. A detached HEAD or a tree without git records none."""
+    directory = start if start.is_dir() else start.parent
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(directory), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    name = (completed.stdout or "").strip()
+    if not name or name == "HEAD" or any(char in name for char in "\r\n\x00"):
+        return None
+    return name[:200]
+
+
 def lookup_commit(revision: str, start: Path) -> tuple[str, str] | None:
     if not revision or any(char in revision for char in "\r\n\x00"):
         return None

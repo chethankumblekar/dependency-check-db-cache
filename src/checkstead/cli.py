@@ -87,6 +87,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         suppression_base=suppression_base,
         base=[Path(path) for path in args.base],
         pull_request=args.pull_request or None,
+        branch=args.branch or None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -123,6 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--pull-request",
         help="Pull request number recorded on the report, the comment, and the timeline.",
+    )
+    scan.add_argument(
+        "--branch",
+        help="Git branch recorded on the report. Defaults to the branch of the scanned tree.",
     )
     scan.add_argument(
         "--dry-run",

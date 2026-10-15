@@ -52,6 +52,11 @@
     .choice { display: flex; align-items: center; gap: 8px; }
     .choice select { flex: 1; }
     .timeline { border-right: 1px solid var(--line); padding-right: 20px; }
+    .branch-group { margin: 0 0 18px; }
+    .branch-group h3 {
+      margin: 0 0 8px; font-size: 13px; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--muted);
+    }
     .scan {
       display: block;
       width: 100%;
@@ -157,6 +162,11 @@
       <a class="sso-link" id="sso-github" href="/api/sso/github/start"><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Sign in with GitHub</a>
       <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
       <p class="notice">The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
+      <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories.</p>
+      <form id="local-sign-in" hidden>
+        <button type="submit">Sign in on this computer</button>
+        <p id="local-error" class="error" hidden></p>
+      </form>
       <p class="empty" id="sso-note"></p>
       <p class="empty" id="later"></p>
     </div>
@@ -250,29 +260,49 @@
       return "";
     }
 
+    function branchGroups(scans) {
+      const groups = [];
+      const index = new Map();
+      scans.forEach((scan) => {
+        const key = scan.branch || "";
+        if (!index.has(key)) {
+          index.set(key, groups.length);
+          groups.push({branch: key, scans: []});
+        }
+        groups[index.get(key)].scans.push(scan);
+      });
+      return groups;
+    }
+
     function renderTimeline() {
       const root = document.getElementById("scans");
       root.replaceChildren();
-      state.history.scans.forEach((scan) => {
-        const button = document.createElement("button");
-        button.className = "scan";
-        button.type = "button";
-        button.dataset.scan = scan.id;
-        if (scan.id === state.selected) button.setAttribute("aria-current", "true");
-        button.append(
-          text("strong", scanName(scan)),
-          withIcon("clock", "snapshot " + scan.snapshot, "span", "meta-line"),
-          withIcon("package", "engine " + scan.engine, "span", "meta-line"),
-          withIcon("commit", revisionLabel(scan), "span", "meta-line")
-        );
-        const committer = committerLabel(scan);
-        if (committer) button.append(withIcon("person", committer, "span", "meta-line"));
-        button.addEventListener("click", () => {
-          state.selected = scan.id;
-          state.openKey = null;
-          render();
+      branchGroups(state.history.scans).forEach((group) => {
+        const section = document.createElement("section");
+        section.className = "branch-group";
+        section.append(text("h3", group.branch || "No branch"));
+        group.scans.forEach((scan) => {
+          const button = document.createElement("button");
+          button.className = "scan";
+          button.type = "button";
+          button.dataset.scan = scan.id;
+          if (scan.id === state.selected) button.setAttribute("aria-current", "true");
+          button.append(
+            text("strong", scanName(scan)),
+            withIcon("clock", "snapshot " + scan.snapshot, "span", "meta-line"),
+            withIcon("package", "engine " + scan.engine, "span", "meta-line"),
+            withIcon("commit", revisionLabel(scan), "span", "meta-line")
+          );
+          const committer = committerLabel(scan);
+          if (committer) button.append(withIcon("person", committer, "span", "meta-line"));
+          button.addEventListener("click", () => {
+            state.selected = scan.id;
+            state.openKey = null;
+            render();
+          });
+          section.append(button);
         });
-        root.append(button);
+        root.append(section);
       });
       const later = state.history.later || { suppressions: [], falsePositives: [] };
       const suppression = document.getElementById("suppressions");
@@ -629,14 +659,31 @@
       link.addEventListener("click", (event) => event.preventDefault());
     }
 
+    document.getElementById("local-sign-in").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showError("local-error", "");
+      try {
+        const current = await api("/api/session/local", {method: "POST"});
+        session.user = current.user;
+        showApp();
+        await loadHistory();
+      } catch (error) {
+        showError("local-error", error.message);
+      }
+    });
+
     fetch("/api/sso").then((response) => response.json()).then((payload) => {
       const github = payload.github || {};
       const entra = payload.entra || {};
+      const local = payload.local || {};
       bindSso(document.getElementById("sso-github"), !!github.enabled);
       bindSso(document.getElementById("sso-entra"), !!entra.enabled);
+      document.getElementById("local-sign-in").hidden = !local.enabled;
       const note = document.getElementById("sso-note");
       if (!github.enabled && !entra.enabled) {
-        note.textContent = "GitHub and Microsoft sign-in need an app registration on this server.";
+        note.textContent = local.enabled
+          ? "GitHub and Microsoft sign-in need an app registration. On this computer you can sign in without one."
+          : "GitHub and Microsoft sign-in need an app registration on this server.";
       } else if (!github.enabled) {
         note.textContent = "GitHub sign-in is not configured. Set CHECKSTEAD_GITHUB_CLIENT_ID and CHECKSTEAD_GITHUB_CLIENT_SECRET.";
       } else if (!entra.enabled) {

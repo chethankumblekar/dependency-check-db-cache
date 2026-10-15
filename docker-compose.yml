@@ -1,0 +1,16 @@
+services:
+  checkstead:
+    image: ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - checkstead-data:/var/lib/checkstead
+    environment:
+      CHECKSTEAD_LOCAL: "1"
+    env_file:
+      - path: .env
+        required: false
+
+volumes:
+  checkstead-data:

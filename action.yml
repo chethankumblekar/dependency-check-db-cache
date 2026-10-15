@@ -27,6 +27,7 @@ runs:
         INPUT_PROJECT: ${{ inputs.project }}
         INPUT_OUTPUT: ${{ inputs.output }}
         INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_BRANCH: ${{ github.head_ref || (github.ref_type == 'branch' && github.ref_name) || '' }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -67,6 +68,9 @@ runs:
             cfg="${INPUT_CONFIG#./}"
             scan_args+=(--config "/head/${cfg}")
           fi
+          if [[ -n "${INPUT_BRANCH:-}" ]]; then
+            scan_args+=(--branch "$INPUT_BRANCH")
+          fi
           mkdir -p "${GITHUB_WORKSPACE}/${INPUT_OUTPUT}"
           docker run --rm \
             -v "$work/head:/head" \
@@ -82,6 +86,7 @@ runs:
             -e INPUT_PROJECT \
             -e INPUT_OUTPUT \
             -e INPUT_CONFIG \
+            -e INPUT_BRANCH \
             checkstead-action
         fi
     - name: Comment on the pull request

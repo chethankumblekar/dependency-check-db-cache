@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from checkstead.commit import lookup_commit  # noqa: E402
+from checkstead.commit import lookup_branch, lookup_commit  # noqa: E402
 from checkstead.ui import bind_server  # noqa: E402
 
 
@@ -91,6 +91,12 @@ class CommitTests(TestCase):
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
         self.assertEqual(lookup_commit(revision, repo), ("Ada Lovelace", "ada@example.com"))
         self.assertIsNone(lookup_commit("0" * 40, repo))
+        current = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo, text=True
+        ).strip()
+        self.assertEqual(lookup_branch(repo), current)
+        subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True)
+        self.assertEqual(lookup_branch(repo), "feature")
 
 
 class SsoTests(TestCase):
@@ -146,6 +152,45 @@ class SsoTests(TestCase):
         request = urllib.request.Request(self.base + path, headers=headers)
         with self.opener.open(request) as response:
             return response.status, response.read(), response.headers
+
+    def test_localhost_sign_in_opens_the_timeline_without_oauth(self) -> None:
+        os.environ.pop("CHECKSTEAD_LOCAL", None)
+        status, body, _headers = self.open("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Sign in on this computer", body)
+        self.assertIn(b"An OAuth app only signs a person in.", body)
+        self.assertIn(b"reads and scans repositories.", body)
+        self.assertNotIn(b'name="token"', body)
+        self.assertNotIn(b"paste", body.lower())
+        status, body, _headers = self.open("/api/sso")
+        payload = json.loads(body)
+        self.assertFalse(payload["github"]["enabled"])
+        self.assertFalse(payload["entra"]["enabled"])
+        self.assertTrue(payload["local"]["enabled"])
+        request = urllib.request.Request(self.base + "/api/session/local", data=b"{}", method="POST")
+        with self.opener.open(request) as response:
+            signed = json.load(response)
+            cookie = response.headers.get("Set-Cookie")
+        self.assertEqual(signed["user"]["provider"], "local")
+        self.assertEqual(signed["user"]["login"], "local")
+        self.assertEqual(signed["user"]["role"], "admin")
+        token = cookie.split("checkstead_session=", 1)[1].split(";", 1)[0]
+        history = urllib.request.Request(
+            self.base + "/api/history",
+            headers={"Cookie": f"checkstead_session={token}"},
+        )
+        with urllib.request.urlopen(history) as response:
+            timeline = json.load(response)
+        self.assertIn("scans", timeline)
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_ID"] = "client-id"
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_SECRET"] = "client-secret"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        status, body, _headers = self.open("/api/sso")
+        payload = json.loads(body)
+        self.assertTrue(payload["github"]["enabled"])
+        self.assertTrue(payload["entra"]["enabled"])
+        self.assertTrue(payload["local"]["enabled"])
 
     def test_sso_stays_off_until_the_app_is_configured(self) -> None:
         status, body, _headers = self.open("/api/sso")
