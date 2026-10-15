@@ -134,7 +134,7 @@ The first scan on a branch is the scan view. This one records branch `main`. Dir
 
 ![Scan of billing on branch main, with descriptions in the direct and transitive groups](docs/screenshots/scan.png)
 
-The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The same findings are on both scans, so the drift list says no findings were added or removed. The direct and transitive groups under that list still show each description, score, score source, and package.
+The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The drift list says no findings were added or removed between the two scans. The direct and transitive groups under that list still show each description, score, score source, and package.
 
 ![Drift on branch main. The finding groups stay visible under the dependency changes.](docs/screenshots/drift.png)
 

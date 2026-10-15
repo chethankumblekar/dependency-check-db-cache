@@ -209,6 +209,8 @@ class HistoryTests(TestCase):
         self.assertIn("scan.branch", page)
         self.assertIn("finding-groups", page)
         self.assertIn("findingsSection", page)
+        self.assertIn("No findings were added or removed between the two scans.", page)
+        self.assertNotIn("No findings in either report.", page)
 
     def test_a_scan_records_the_git_branch(self) -> None:
         import os

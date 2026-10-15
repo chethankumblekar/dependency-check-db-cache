@@ -420,7 +420,7 @@
       const found = drift.findings;
       const findingCount = found.added.length + found.removed.length + found.changed.length;
       if (!findingCount) {
-        findingList.append(text("li", "No findings in either report.", "empty"));
+        findingList.append(text("li", "No findings were added or removed between the two scans.", "empty"));
       }
       ["added", "removed"].forEach((kind) => {
         found[kind].forEach((item) => {
