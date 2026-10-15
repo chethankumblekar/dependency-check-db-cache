@@ -130,13 +130,13 @@ On localhost, the first person uses **Sign in on this computer**. That button is
 
 ![Sign-in page. Sign in on this computer is enabled. GitHub and Microsoft are inactive.](docs/screenshots/sign-in.png)
 
-The first scan on a branch is the scan view. This one records branch `main`. Each finding is one row: score, vulnerability id, package, direct or transitive, production or dev, and score source. The rows in each group are sorted by score, highest first. The description stays closed until the row is opened. Direct, transitive, production, and dev stay as groups, and the list can be narrowed to one relationship and one scope.
+The first scan on a branch is the scan view. This one records branch `main`. Each finding is one row: score, vulnerability id, package, direct or transitive, production or dev, and score source. The list is about one screen high and shows 20 rows at a time, highest score first, with the count and **Next**. The description and the CVSS detail stay closed until the row is opened. The filters narrow the same list to direct or transitive, and to production or dev.
 
-![Scan of billing on branch main. Findings are closed rows sorted by score.](docs/screenshots/scan.png)
+![Scan of billing on branch main. Twenty finding rows, with the count and Next.](docs/screenshots/scan.png)
 
-The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The drift list says no findings were added or removed between the two scans. The same row list sits under that line.
+The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The drift list says no findings were added or removed between the two scans. The same paged row list sits under that line.
 
-![Drift on branch main. The finding rows stay under the dependency changes.](docs/screenshots/drift.png)
+![Drift on branch main. The paged finding rows stay under the dependency changes.](docs/screenshots/drift.png)
 
 The first person to sign in is the administrator. Administration is where that person adds later accounts.
 
@@ -406,7 +406,7 @@ The Action passes `GITHUB_REF_NAME` and `GITHUB_SHA` into the scan. `checkstead.
 
 On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base.
 
-Findings in `checkstead.txt` are separate groups: direct and transitive, and production and dev. Each vulnerability has a `description:` line, plus the score, the score source, and the package. The timeline keeps those groups and lists each finding as one row, sorted by score. The description stays closed until the row is opened. The SARIF result carries the same description, score, score source, and package.
+Findings in `checkstead.txt` are separate groups: direct and transitive, and production and dev. Each vulnerability has a `description:` line, plus the score, the score source, and the package. The timeline lists each finding as one row, sorted by score, highest first. About 20 rows show at a time. The description and the CVSS detail stay closed until the row is opened. The SARIF result carries the same description, score, score source, and package.
 
 ### Pull requests
 
@@ -468,7 +468,7 @@ The two reports already in `ui/scans` are a pair of fixture scans on the same sn
 
 A scan records a revision when you pass `--revision`, and the GitHub Action passes `GITHUB_SHA`. When that revision is a commit git can see, the report also names the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
 
-A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Each finding is one row in its direct or transitive group and its production or dev group: score, vulnerability id, package, and score source. The description stays closed until the row is opened. The rows are sorted by score, highest first. The list can be narrowed to one relationship and one scope without dropping those groups.
+A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Each finding is one row: score, vulnerability id, package, direct or transitive, production or dev, and score source. The rows stay in a list about one screen high, sorted by score, highest first. The list shows about 20 rows at a time, with the count and a next set. The description and the CVSS detail stay closed until the row is opened. The list can be narrowed to one relationship and one scope.
 
 ## Server
 

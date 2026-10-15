@@ -100,11 +100,12 @@
     .finding-filters { display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 0 0 16px; }
     .finding-filters div { display: flex; flex-wrap: wrap; gap: 6px; }
     .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-    .finding-groups { display: grid; gap: 16px; }
-    .finding-relationship, .finding-scope { display: grid; gap: 8px; }
-    .finding-relationship { padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #faf7f2; }
-    .finding-relationship h3, .finding-scope h4 {
-      margin: 0; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    .finding-pager { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 10px; }
+    .finding-pager button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .finding-count { margin: 0; color: var(--muted); }
+    .finding-window {
+      max-height: calc(100vh - 220px);
+      overflow: auto;
     }
     .finding-list { display: grid; gap: 4px; }
     .finding-list li + li { margin-top: 0; }
@@ -131,7 +132,13 @@
     .finding-kind, .finding-source { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
     .finding-chevron { justify-self: end; transition: transform 120ms ease; }
     .finding-row.open .finding-chevron { transform: rotate(90deg); }
-    .finding-text { margin: 0; padding: 0 12px 10px; }
+    .finding-text { margin: 0; }
+    .finding-detail { display: grid; gap: 8px; padding: 0 12px 12px; }
+    .finding-cvss { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; color: var(--muted); font-size: 13px; }
+    .finding-cvss div { display: flex; gap: 6px; }
+    .finding-cvss dt, .finding-cvss dd { margin: 0; }
+    .finding-cvss dt { font-weight: 650; color: var(--ink); }
+    .finding-cvss dd { font-family: ui-monospace, monospace; word-break: break-all; }
     .tag { font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
     .added .tag { color: var(--added); }
     .removed .tag { color: var(--removed); }
@@ -274,7 +281,9 @@
       openFinding: null,
       findingRelationship: "",
       findingScope: "",
+      findingPage: 0,
     };
+    const findingPageSize = 20;
 
     function text(tag, value, className) {
       const node = document.createElement(tag);
@@ -361,6 +370,7 @@
             state.selected = scan.id;
             state.openKey = null;
             state.openFinding = null;
+            state.findingPage = 0;
             render();
           });
           section.append(button);
@@ -462,7 +472,7 @@
       });
       findings.append(findingList);
       detail.append(findings);
-      detail.append(findingsSection(scan.findings || []));
+      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
     }
 
     function findingLabel(item) {
@@ -508,6 +518,7 @@
           ["transitive", "Transitive"],
         ], state.findingRelationship, (value) => {
           state.findingRelationship = value;
+          state.findingPage = 0;
           render();
         }),
         filterGroup("Scope", [
@@ -516,13 +527,54 @@
           ["dev", "Dev"],
         ], state.findingScope, (value) => {
           state.findingScope = value;
+          state.findingPage = 0;
           render();
         })
       );
       return bar;
     }
 
-    function findingRow(item) {
+    function parseScoreLine(line) {
+      const body = String(line || "").replace(/^finding:\s*/, "");
+      const fields = {};
+      body.split(/\s+/).slice(1).forEach((token) => {
+        const split = token.indexOf("=");
+        if (split > 0) fields[token.slice(0, split)] = token.slice(split + 1);
+      });
+      return fields;
+    }
+
+    function scoreLineFor(item, lines) {
+      const id = item.id || "";
+      const dependency = item.dependency || "";
+      return (lines || []).find((line) => {
+        const body = String(line).replace(/^finding:\s*/, "");
+        if (!body.startsWith(id + " ")) return false;
+        return !dependency || body.includes("dependency=" + dependency);
+      });
+    }
+
+    function findingDetail(item, lines) {
+      const detail = document.createElement("div");
+      detail.className = "finding-detail";
+      detail.append(text("p", item.description || "No description recorded.", "finding-text"));
+      const fields = parseScoreLine(scoreLineFor(item, lines) || "");
+      const pairs = [];
+      if (fields.cvss || fields.vector) pairs.push(["CVSS", [fields.cvss, fields.vector].filter(Boolean).join(" ")]);
+      if (fields.kev && fields.kev !== "no") pairs.push(["KEV", fields.kev]);
+      if (!pairs.length) return detail;
+      const meta = document.createElement("dl");
+      meta.className = "finding-cvss";
+      pairs.forEach((pair) => {
+        const bit = document.createElement("div");
+        bit.append(text("dt", pair[0]), text("dd", pair[1]));
+        meta.append(bit);
+      });
+      detail.append(meta);
+      return detail;
+    }
+
+    function findingRow(item, lines) {
       const key = findingKey(item);
       const open = state.openFinding === key;
       const row = document.createElement("li");
@@ -546,42 +598,67 @@
         render();
       });
       row.append(button);
-      if (open) row.append(text("p", item.description || "No description recorded.", "finding-text"));
+      if (open) row.append(findingDetail(item, lines));
       return row;
     }
 
-    function findingsSection(findings) {
+    function findingPager(total) {
+      const bar = document.createElement("div");
+      bar.className = "finding-pager";
+      const pages = Math.max(1, Math.ceil(total / findingPageSize));
+      if (state.findingPage > pages - 1) state.findingPage = 0;
+      const start = state.findingPage * findingPageSize;
+      const end = Math.min(total, start + findingPageSize);
+      bar.append(text("p", total ? (start + 1) + "–" + end + " of " + total : "No findings.", "finding-count"));
+      if (total > findingPageSize) {
+        const previous = document.createElement("button");
+        previous.type = "button";
+        previous.className = "quiet";
+        previous.textContent = "Previous";
+        previous.disabled = state.findingPage === 0;
+        previous.addEventListener("click", () => {
+          state.findingPage -= 1;
+          state.openFinding = null;
+          render();
+        });
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "quiet";
+        next.textContent = "Next";
+        next.disabled = end >= total;
+        next.addEventListener("click", () => {
+          state.findingPage += 1;
+          state.openFinding = null;
+          render();
+        });
+        bar.append(previous, next);
+      }
+      return {bar, start, end};
+    }
+
+    function findingsSection(findings, lines) {
       const section = document.createElement("section");
       section.append(withIcon("alert", "Findings", "h2"));
       section.append(findingFilters());
-      const groups = document.createElement("div");
-      groups.className = "finding-groups";
-      const relationships = state.findingRelationship ? [state.findingRelationship] : ["direct", "transitive"];
-      const scopes = state.findingScope ? [state.findingScope] : ["production", "dev"];
-      relationships.forEach((relationship) => {
-        const column = document.createElement("section");
-        column.className = "finding-relationship";
-        column.append(text("h3", relationship));
-        scopes.forEach((scope) => {
-          const block = document.createElement("div");
-          block.className = "finding-scope";
-          block.append(text("h4", scope));
-          const items = (findings || []).filter((item) => {
-            return (item.relationship || "direct") === relationship && (item.scope || "production") === scope;
-          });
-          items.sort((a, b) => findingRank(b) - findingRank(a) || String(a.id || "").localeCompare(String(b.id || "")));
-          if (!items.length) block.append(text("p", "No findings.", "empty"));
-          else {
-            const list = document.createElement("ul");
-            list.className = "finding-list";
-            items.forEach((item) => list.append(findingRow(item)));
-            block.append(list);
-          }
-          column.append(block);
-        });
-        groups.append(column);
+      const items = (findings || []).filter((item) => {
+        const relationship = item.relationship || "direct";
+        const scope = item.scope || "production";
+        if (state.findingRelationship && relationship !== state.findingRelationship) return false;
+        if (state.findingScope && scope !== state.findingScope) return false;
+        return true;
       });
-      section.append(groups);
+      items.sort((a, b) => findingRank(b) - findingRank(a) || String(a.id || "").localeCompare(String(b.id || "")));
+      const pager = findingPager(items.length);
+      section.append(pager.bar);
+      const findingWindow = document.createElement("div");
+      findingWindow.className = "finding-window";
+      if (items.length) {
+        const list = document.createElement("ul");
+        list.className = "finding-list";
+        items.slice(pager.start, pager.end).forEach((item) => list.append(findingRow(item, lines)));
+        findingWindow.append(list);
+      }
+      section.append(findingWindow);
       return section;
     }
 
@@ -595,26 +672,9 @@
       return row;
     }
 
-    function scoreSection(lines, available) {
-      const scores = document.createElement("section");
-      scores.append(withIcon("gauge", "CVSS and score source", "h2"));
-      if (lines.length) {
-        const list = document.createElement("ul");
-        lines.forEach((line) => {
-          const row = document.createElement("li");
-          row.className = "row";
-          row.textContent = line.replace(/^finding:\s*/, "");
-          list.append(row);
-        });
-        scores.append(list);
-        return scores;
-      }
-      if (!available) {
-        scores.append(text("p", "No score source in these reports. A phase 1 report does not carry one yet.", "empty"));
-      } else {
-        scores.append(text("p", "Score source is present on at least one finding. Changes are listed with the findings above.", "empty"));
-      }
-      return scores;
+    function scoreNote(available) {
+      if (available) return null;
+      return text("p", "No score source in these reports. A phase 1 report does not carry one yet.", "empty");
     }
 
     function renderScan(scan) {
@@ -627,7 +687,7 @@
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
       detail.append(identityLine(scan));
-      detail.append(findingsSection(scan.findings || []));
+      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
       const section = document.createElement("section");
       section.append(withIcon("package", "Dependencies", "h2"));
       const list = document.createElement("ul");
@@ -645,7 +705,10 @@
       }
       section.append(list);
       detail.append(section);
-      detail.append(scoreSection(scan.scoreLines || [], scan.hasScoreSource));
+      if (!(scan.scoreLines || []).length) {
+        const note = scoreNote(scan.hasScoreSource);
+        if (note) detail.append(note);
+      }
     }
 
     function render() {
