@@ -149,11 +149,15 @@ def begin_manifest(
     public_base: str,
     state: str,
     transport=None,
+    account_type: str | None = None,
 ) -> str:
     org = normalize_org(organization)
     if not state or any(char in state for char in "\r\n\x00 "):
         raise ChecksteadError("The GitHub App could not be started.")
-    kind = account_kind(org, transport)
+    if account_type in {"User", "Organization"}:
+        kind = account_type
+    else:
+        kind = account_kind(org, transport)
     directory = _app_dir(data_dir)
     _write_private(
         directory / "pending.json",
@@ -575,9 +579,15 @@ def render_github_page(status: dict) -> str:
     if not app:
         parts.append(
             "<form method=\"post\" action=\"/api/github/manifest\">"
+            "<fieldset><legend>Account</legend>"
+            "<label><input type=\"radio\" name=\"account\" value=\"user\" checked> "
+            "Personal account</label> "
+            "<label><input type=\"radio\" name=\"account\" value=\"organization\"> "
+            "Organization</label>"
+            "</fieldset>"
             "<p><label>GitHub login<br>"
-            "<input name=\"login\" required autocomplete=\"off\"></label></p>"
-            "<p>A user login or an organization.</p>"
+            "<input name=\"login\" required autocomplete=\"username\"></label></p>"
+            "<p>For a personal account, type the user login.</p>"
             "<button type=\"submit\">Create the GitHub App</button></form>"
         )
     else:

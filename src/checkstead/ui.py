@@ -378,12 +378,17 @@ def bind_server(
                 return
             state = secrets.token_urlsafe(24)
             try:
+                chosen = {
+                    "user": "User",
+                    "organization": "Organization",
+                }.get(str(fields.get("account") or "").strip().lower())
                 page = begin_manifest(
                     store.data_dir,
                     str(fields.get("login") or fields.get("organization") or ""),
                     public_base(self.headers.get("Host", "")),
                     state,
                     github_transport,
+                    chosen,
                 )
             except (AuthError, ChecksteadError) as exc:
                 self._html(400, render_message("GitHub", [str(exc)]))
@@ -457,13 +462,13 @@ def bind_server(
                 if self._wants_json():
                     self._json(400, {"error": str(exc)})
                 else:
-                    self._html(400, render_message("Organization scan", [str(exc)]))
+                    self._html(400, render_message("Scan", [str(exc)]))
                 return
             except Exception:
                 if self._wants_json():
-                    self._json(400, {"error": "The organization scan could not finish."})
+                    self._json(400, {"error": "The scan could not finish."})
                 else:
-                    self._html(400, render_message("Organization scan", ["The organization scan could not finish."]))
+                    self._html(400, render_message("Scan", ["The scan could not finish."]))
                 return
             if self._wants_json():
                 self._json(200, {"scans": scans})

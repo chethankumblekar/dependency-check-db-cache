@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.config import DEFAULT_SNAPSHOT_URL  # noqa: E402
 from checkstead.errors import ChecksteadError, RefusedHost  # noqa: E402
+from checkstead.history import load_history  # noqa: E402
 from checkstead.github_app import (  # noqa: E402
     accept_installation,
     app_jwt,
@@ -481,7 +482,10 @@ class GitHubAppTests(TestCase):
             status, page, _headers = request("/github")
             self.assertEqual(status, 200)
             self.assertIn(b"GitHub login", page)
-            self.assertIn(b"A user login or an organization.", page)
+            self.assertIn(b"Personal account", page)
+            self.assertIn(b'name="account" value="user"', page)
+            self.assertIn(b"Organization", page)
+            self.assertIn(b"For a personal account, type the user login.", page)
             self.assertNotIn(b'name="token"', page)
             self.assertNotIn(b"personal access", page.lower())
             self.assertIn(b"There is no token field.", page)
@@ -577,3 +581,138 @@ class GitHubAppTests(TestCase):
             self.assertIn("private-suppressions: none", report)
             for url in calls:
                 self.assertNotIn("services.nvd.nist.gov", url)
+
+    def test_labeled_personal_account_scans_into_the_server_directory(self) -> None:
+        root = self._work("personal-choice")
+        data = root / "data"
+        scans = root / "scans"
+        cwd = root / "project"
+        scans.mkdir()
+        cwd.mkdir()
+        calls: list[str] = []
+
+        def transport(method: str, url: str, headers: dict, body):
+            calls.append(url)
+            self.assertNotIn("/users/", url)
+            self.assertNotIn("services.nvd.nist.gov", url)
+            if url.endswith("/access_tokens"):
+                return 201, json.dumps({"token": "ghs_user"}).encode()
+            if "/installation/repositories" in url:
+                return 200, json.dumps(
+                    {
+                        "repositories": [
+                            {"full_name": "chethankumblekar/demo", "default_branch": "main"}
+                        ]
+                    }
+                ).encode()
+            raise AssertionError(url)
+
+        def fetch_zip(url: str, headers: dict, dest: Path) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(dest, "w") as archive:
+                archive.writestr("chethankumblekar-demo-sha/README", "hi\n")
+
+        def fake_scan(paths, **kwargs):
+            out = kwargs["out_dir"]
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "checkstead.txt").write_text(
+                "project: chethankumblekar/demo\n"
+                f"branch: {kwargs.get('branch') or ''}\n"
+                "snapshot: 2026-10-06T01:02:03Z\n",
+                encoding="utf-8",
+            )
+
+        server = bind_server(
+            scans,
+            "127.0.0.1",
+            0,
+            data,
+            github_transport=transport,
+            github_scan=fake_scan,
+            github_fetch_zip=fetch_zip,
+            config_cwd=cwd,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        host, port = server.server_address[:2]
+        base = f"http://{host}:{port}"
+        with github_env(api="https://github.example.com/api/v3"):
+            page = urllib.request.urlopen(base + "/github").read()
+            self.assertIn(b"Personal account", page)
+            self.assertIn(b'name="account" value="user" checked', page)
+            self.assertIn(b"For a personal account, type the user login.", page)
+            form = urllib.parse.urlencode(
+                {"account": "user", "login": "chethankumblekar"}
+            ).encode()
+            manifest = urllib.request.Request(
+                base + "/api/github/manifest",
+                data=form,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urllib.request.urlopen(manifest) as response:
+                created = response.read().decode()
+            self.assertIn("/settings/apps/new?state=", created)
+            self.assertNotIn("/organizations/chethankumblekar/", created)
+            self.assertFalse(any("/users/" in url for url in calls))
+            directory = data / "github-app"
+            (directory / "app.json").write_text(
+                json.dumps(
+                    {
+                        "id": 15,
+                        "slug": "checkstead",
+                        "organization": "chethankumblekar",
+                        "accountType": "User",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (directory / "private-key.pem").write_text(self.pem, encoding="utf-8")
+            (directory / "installation.json").write_text(
+                json.dumps(
+                    {"id": 77, "organization": "chethankumblekar", "accountType": "User"}
+                ),
+                encoding="utf-8",
+            )
+            scan = urllib.request.Request(
+                base + "/api/github/scan",
+                data=b"{}",
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(scan) as response:
+                body = json.load(response)
+        report = Path(body["scans"][0]["report"])
+        self.assertEqual(report.parent.parent, scans.resolve())
+        self.assertTrue(str(report).startswith(str(scans.resolve())))
+        self.assertIn("branch: main", report.read_text(encoding="utf-8"))
+        grouped = load_history(scans)
+        self.assertEqual(len(grouped), 1)
+        self.assertEqual(grouped[0].branch, "main")
+        self.assertEqual(grouped[0].project, "chethankumblekar/demo")
+
+    def test_server_entrypoint_enables_localhost_sign_in_and_persists_scans(self) -> None:
+        script = (ROOT / "scripts" / "server-entrypoint.sh").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "Dockerfile.server").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('export CHECKSTEAD_LOCAL=1', script)
+        self.assertIn("su -p", script)
+        self.assertIn("/var/lib/checkstead/scans", script)
+        self.assertNotIn("/opt/checkstead/scans", script)
+        self.assertIn("CHECKSTEAD_LOCAL=1", dockerfile)
+        self.assertIn("CHECKSTEAD_SCANS=/var/lib/checkstead/scans", dockerfile)
+        self.assertIn("checkstead-scans:/var/lib/checkstead/scans", compose)
+        self.assertIn("CHECKSTEAD_SCANS: /var/lib/checkstead/scans", compose)
+        subprocess.run(["bash", "-n", str(ROOT / "scripts" / "server-entrypoint.sh")], check=True)
+        self.assertIn("http://127.0.0.1:8765/api/sso/github/callback", readme)
+        self.assertIn("docker compose up -d", readme)
+        self.assertIn("http://127.0.0.1:8765/", readme)
+        self.assertIn("Sign in on this computer", readme)
+        self.assertIn("chethankumblekar", readme)
+        self.assertIn("security-events: write", readme)
+        self.assertIn("checkstead-report/checkstead.sarif", readme)
+        self.assertNotIn("need an app registration", readme)
+        self.assertNotIn("paste", readme.lower())

@@ -163,8 +163,8 @@
       <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
       <p class="notice">The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
       <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories.</p>
-      <form id="local-sign-in" hidden>
-        <button type="submit">Sign in on this computer</button>
+      <form id="local-sign-in">
+        <button type="submit" id="sign-in-local">Sign in on this computer</button>
         <p id="local-error" class="error" hidden></p>
       </form>
       <p class="empty" id="sso-note"></p>
@@ -678,16 +678,19 @@
       const local = payload.local || {};
       bindSso(document.getElementById("sso-github"), !!github.enabled);
       bindSso(document.getElementById("sso-entra"), !!entra.enabled);
-      document.getElementById("local-sign-in").hidden = !local.enabled;
+      const localForm = document.getElementById("local-sign-in");
+      const localButton = document.getElementById("sign-in-local");
+      localForm.hidden = !local.enabled;
+      localButton.disabled = !local.enabled;
       const note = document.getElementById("sso-note");
-      if (!github.enabled && !entra.enabled) {
-        note.textContent = local.enabled
-          ? "GitHub and Microsoft sign-in need an app registration. On this computer you can sign in without one."
-          : "GitHub and Microsoft sign-in need an app registration on this server.";
+      if (local.enabled) {
+        note.textContent = "";
+      } else if (!github.enabled && !entra.enabled) {
+        note.textContent = "Sign-in on this computer is not available from this address.";
       } else if (!github.enabled) {
-        note.textContent = "GitHub sign-in is not configured. Set CHECKSTEAD_GITHUB_CLIENT_ID and CHECKSTEAD_GITHUB_CLIENT_SECRET.";
+        note.textContent = "GitHub sign-in is optional and is not set on this server.";
       } else if (!entra.enabled) {
-        note.textContent = "Microsoft Entra sign-in is not configured. Set CHECKSTEAD_ENTRA_CLIENT_ID and CHECKSTEAD_ENTRA_CLIENT_SECRET. The default tenant is organizations, which is work and school accounts.";
+        note.textContent = "Microsoft sign-in is optional and is not set on this server.";
       } else {
         note.textContent = "";
       }

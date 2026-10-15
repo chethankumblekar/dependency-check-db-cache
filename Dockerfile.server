@@ -4,16 +4,18 @@ RUN useradd --system --create-home --home-dir /var/lib/checkstead checkstead
 
 COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src
-COPY ui/scans /opt/checkstead/scans
 COPY scripts/server-entrypoint.sh /usr/local/bin/checkstead-server
 
 RUN pip install --no-cache-dir /opt/checkstead-src \
     && chmod 0755 /usr/local/bin/checkstead-server \
-    && mkdir -p /var/lib/checkstead \
+    && mkdir -p /var/lib/checkstead/scans \
     && chown -R checkstead:checkstead /var/lib/checkstead
 
 ENV CHECKSTEAD_DATA=/var/lib/checkstead
+ENV CHECKSTEAD_SCANS=/var/lib/checkstead/scans
+ENV CHECKSTEAD_LOCAL=1
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8765
 VOLUME /var/lib/checkstead
+VOLUME /var/lib/checkstead/scans
 ENTRYPOINT ["/usr/local/bin/checkstead-server"]

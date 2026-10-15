@@ -6,11 +6,14 @@ services:
       - "127.0.0.1:8765:8765"
     volumes:
       - checkstead-data:/var/lib/checkstead
+      - checkstead-scans:/var/lib/checkstead/scans
     environment:
       CHECKSTEAD_LOCAL: "1"
+      CHECKSTEAD_SCANS: /var/lib/checkstead/scans
     env_file:
       - path: .env
         required: false
 
 volumes:
   checkstead-data:
+  checkstead-scans:

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.commit import lookup_branch, lookup_commit  # noqa: E402
-from checkstead.ui import bind_server  # noqa: E402
+from checkstead.ui import _local_sign_in, bind_server  # noqa: E402
 
 
 class NoRedirect(urllib.request.HTTPErrorProcessor):
@@ -158,6 +158,9 @@ class SsoTests(TestCase):
         status, body, _headers = self.open("/")
         self.assertEqual(status, 200)
         self.assertIn(b"Sign in on this computer", body)
+        self.assertIn(b'id="sign-in-local"', body)
+        self.assertNotIn(b'id="local-sign-in" hidden', body)
+        self.assertNotIn(b"need an app registration", body)
         self.assertIn(b"An OAuth app only signs a person in.", body)
         self.assertIn(b"reads and scans repositories.", body)
         self.assertNotIn(b'name="token"', body)
@@ -191,6 +194,15 @@ class SsoTests(TestCase):
         self.assertTrue(payload["github"]["enabled"])
         self.assertTrue(payload["entra"]["enabled"])
         self.assertTrue(payload["local"]["enabled"])
+        os.environ.pop("CHECKSTEAD_GITHUB_CLIENT_ID", None)
+        os.environ.pop("CHECKSTEAD_GITHUB_CLIENT_SECRET", None)
+        os.environ.pop("CHECKSTEAD_ENTRA_CLIENT_ID", None)
+        os.environ.pop("CHECKSTEAD_ENTRA_CLIENT_SECRET", None)
+        self.assertFalse(_local_sign_in("172.17.0.1", "172.17.0.1:8765"))
+        self.assertTrue(_local_sign_in("172.17.0.1", "127.0.0.1:8765"))
+        os.environ["CHECKSTEAD_LOCAL"] = "1"
+        self.assertTrue(_local_sign_in("172.17.0.1", "172.17.0.1:8765"))
+        os.environ.pop("CHECKSTEAD_LOCAL", None)
 
     def test_sso_stays_off_until_the_app_is_configured(self) -> None:
         status, body, _headers = self.open("/api/sso")

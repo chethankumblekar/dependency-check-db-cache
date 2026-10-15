@@ -71,7 +71,7 @@ checkstead scan --scan . --project my-service
 | Engine | OWASP Dependency-Check 13.0.0 |
 | Version | 0.1.0 |
 
-## GitHub organization
+## GitHub
 
 One command installs anything Checkstead still needs, then starts the local server. Python, Java, and Dependency-Check that are already present stay in place.
 
@@ -89,14 +89,14 @@ export CHECKSTEAD_GITHUB_API=https://github.example.com/api/v3
 
 The website address is taken from that API URL. `https://api.github.com` uses `https://github.com`. A GitHub Enterprise Server API at `https://<host>/api/v3` uses `https://<host>`. Set `CHECKSTEAD_GITHUB_OAUTH` only when the website host differs from the host in the API URL.
 
-A user or an organization owner connects GitHub from that page. The page has no token field. Checkstead creates the GitHub App, sends you to GitHub to approve the install, and stores the app id, private key, and client credentials GitHub returns. A user login installs the app on that personal account and scans that user's repositories. An organization login does the same for the organization.
+A personal account or an organization owner connects GitHub from that page. The page has no token field. Choose **Personal account** or **Organization**. Checkstead creates the GitHub App, sends you to GitHub to approve the install, and stores the app id, private key, and client credentials GitHub returns. A personal account installs the app on that user and scans that user's repositories. An organization does the same for the organization.
 
 1. Run the local server from any directory. When that directory contains `checkstead.yml`, these scans use its score policy. A scan of a project uses the `checkstead.yml` beside that project when the server's directory has none.
 2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
 3. Open http://127.0.0.1:8765/github.
-4. Enter a user login or an organization login and continue. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata.
+4. Choose **Personal account** and type the user login, which is the GitHub username. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login when the account is an organization. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata.
 5. On the installation page, click **Install** to approve the app on that account. Checkstead stores the credentials GitHub returns and accepts the installation.
-6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot.
+6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot. The report is written into the server's scan directory and the timeline groups it by branch.
 
 With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with no score threshold and no private suppression file.
 
@@ -104,7 +104,7 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 - [Setup](#setup)
 - [Run](#run)
-- [GitHub organization](#github-organization)
+- [GitHub](#github)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [What this release does](#what-this-release-does)
@@ -128,7 +128,7 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the findings list and the score source are empty on purpose.
 
-On localhost, sign in on this computer when no OAuth app is configured. GitHub and Microsoft sign-in stay available when their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
+On localhost, the first person uses **Sign in on this computer**. GitHub and Microsoft sign-in stay off until their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
 
 ![Sign-in page with GitHub and Microsoft](docs/screenshots/sign-in.png)
 
@@ -402,11 +402,15 @@ jobs:
 
 On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base. The report keeps direct or transitive, production or dev, and the score source.
 
-The build fails only when an introduced finding fails the score policy (`threshold`, `failOnKev`, `failUnscored`). Findings already on the base are listed and do not fail the build. An empty threshold does not fail on score.
+### Pull requests
 
-The Action posts one comment on the pull request and updates that same comment on later pushes. The comment is sent with the workflow `GITHUB_TOKEN`. `pull-requests: write` is the permission that allows it. The comment names the pull request. `checkstead.txt` records it as `pull-request:`, and the timeline uses that line in the scan name.
+The Action posts one comment on the pull request and updates that same comment in place on later pushes. The comment is sent with the workflow `GITHUB_TOKEN`. `pull-requests: write` is the permission that allows it. The report is tagged to the pull request: `checkstead.txt` records `pull-request:`, and the timeline uses that line in the scan name.
 
-The Action uploads `checkstead-report/checkstead.sarif`. GitHub shows those findings on the repository Security tab. `security-events: write` is what allows that upload.
+The build fails only when the pull request introduces a finding the score policy would fail (`threshold`, `failOnKev`, `failUnscored`). Findings already on the base are listed and do not fail the build. An empty threshold does not fail on score.
+
+### SARIF
+
+The Action writes `checkstead-report/checkstead.sarif` and uploads it. GitHub shows those findings on the repository Security tab. The workflow needs `security-events: write`.
 
 Pin a commit SHA when the scan should stay on one build. `@main` follows this repository. After a version tag, `v0` follows the newest 0.x release. See [Release](#release).
 
@@ -462,7 +466,11 @@ A scan records the git branch of the tree it scanned, or the branch you pass wit
 
 ## Server
 
-The timeline is a server you can run on a laptop or deploy as a container. On localhost the first person can sign in on this computer with no `CHECKSTEAD_GITHUB_CLIENT_ID`, no `CHECKSTEAD_GITHUB_CLIENT_SECRET`, and no Entra settings. GitHub and Microsoft sign-in stay available when those variables are set. An OAuth app only signs a person in. The GitHub App created from `/github` reads and scans repositories. The first person to sign in is the administrator. The variable names are in [`.env.example`](.env.example).
+The timeline is a server you can run on a laptop or deploy as a container. The first person to sign in is the administrator. Variable names for the optional sign-in buttons are in [`.env.example`](.env.example).
+
+### Localhost timeline
+
+The first person signs in and opens the timeline with no `CHECKSTEAD_GITHUB_CLIENT_ID`, no `CHECKSTEAD_GITHUB_CLIENT_SECRET`, and no Entra app. The enabled control is **Sign in on this computer**. That sign-in does not use an OAuth app.
 
 On a laptop, from this checkout:
 
@@ -472,41 +480,51 @@ PYTHONPATH=src python3 -m checkstead ui
 
 Open http://127.0.0.1:8765/. Accounts are stored under `~/.local/share/checkstead`, or in the directory you pass with `--data`.
 
-The container is the same server, listening on every interface so it can be deployed on a host you choose:
+The container is the same server. `Dockerfile.server` listens on every interface inside the container and turns localhost sign-in on. The published port in [`docker-compose.yml`](docker-compose.yml) is `127.0.0.1:8765`.
 
 ```bash
 docker build -f Dockerfile.server -t checkstead-server .
-docker run --rm -p 8765:8765 -v checkstead-data:/var/lib/checkstead checkstead-server
+docker run --rm -p 127.0.0.1:8765:8765 -v checkstead-data:/var/lib/checkstead -v checkstead-scans:/var/lib/checkstead/scans checkstead-server
 ```
 
 The published server image is the same container. CI publishes it for `linux/amd64` and `linux/arm64`, so an Apple Silicon Mac does not emulate it.
 
 ```bash
 docker pull ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
-docker run --rm -p 127.0.0.1:8765:8765 -v checkstead-data:/var/lib/checkstead ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
+docker run --rm -p 127.0.0.1:8765:8765 -v checkstead-data:/var/lib/checkstead -v checkstead-scans:/var/lib/checkstead/scans ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server:latest
 ```
 
-[`docker-compose.yml`](docker-compose.yml) runs that image with a persistent volume, `restart: unless-stopped`, the port bound to `127.0.0.1:8765`, and an optional env file for the OAuth variables.
+### Optional GitHub and Microsoft sign-in
+
+GitHub and Microsoft sign-in work only when the server variables are set. Leave them unset and those buttons stay on the page, marked not configured. **Sign in on this computer** stays enabled.
+
+| Variable | What it is |
+| --- | --- |
+| `CHECKSTEAD_GITHUB_CLIENT_ID` | GitHub OAuth app client id. This app only signs a person in. |
+| `CHECKSTEAD_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
+| `CHECKSTEAD_ENTRA_CLIENT_ID` | Microsoft Entra client id. This app only signs a person in. |
+| `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Microsoft Entra client secret |
+| `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
+
+The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
+
+`CHECKSTEAD_GITHUB_ORG` is optional. When set, only members of that GitHub organization can use the GitHub button.
+
+### GitHub App
+
+The GitHub App is created from `/github`. It reads and scans repositories. It is not the OAuth app above, and it does not ask for a token. A personal account is supported, not only an organization. Choose **Personal account** and type the user login. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login for an organization. See [GitHub](#github).
+
+### Scans
+
+The timeline is empty until a scan report is in the server's scan directory. In the container that directory is `/var/lib/checkstead/scans`. A scan started from `/github` is stored there and grouped by branch. [`docker-compose.yml`](docker-compose.yml) keeps that directory on the `checkstead-scans` volume, and keeps accounts on `checkstead-data`.
 
 ```bash
 docker compose up -d
 ```
 
-The scan image can start it too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server.
+Open http://127.0.0.1:8765/.
 
-GitHub and Microsoft sign-in need an app registration. Leave the variables unset and those buttons stay on the page, marked not configured. On localhost, sign in on this computer instead. Copy [`.env.example`](.env.example) to `.env` when you set the variables. The GitHub App is separate from that OAuth app: it is created from `/github` and is what reads and scans repositories. It does not ask for a token. See [GitHub organization](#github-organization).
-
-| Variable | What it is |
-| --- | --- |
-| `CHECKSTEAD_GITHUB_API` | GitHub API base URL. Defaults to `https://api.github.com`. For GitHub Enterprise Server set `https://<host>/api/v3`. |
-| `CHECKSTEAD_GITHUB_CLIENT_ID` | GitHub OAuth app client id |
-| `CHECKSTEAD_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
-| `CHECKSTEAD_GITHUB_ORG` | Optional. When set, only members of this GitHub organization can use the GitHub button. |
-| `CHECKSTEAD_ENTRA_CLIENT_ID` | Entra app registration client id |
-| `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Entra app registration client secret |
-| `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
-
-The redirect URLs are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. On a laptop without TLS they are `http://127.0.0.1:8765/...`. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
+The scan image can start the server too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server. A checkout of this repository, started with `python3 -m checkstead ui`, reads `ui/scans` instead. See [Timeline](#timeline).
 
 The first person to sign in becomes the administrator. After that, Administration is where that person adds logins and chooses who is a user and who is an administrator. Someone who has not been added cannot sign in. The last administrator cannot be removed.
 
