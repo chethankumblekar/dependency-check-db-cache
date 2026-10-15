@@ -27,16 +27,73 @@ runs:
         INPUT_PROJECT: ${{ inputs.project }}
         INPUT_OUTPUT: ${{ inputs.output }}
         INPUT_CONFIG: ${{ inputs.config }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
+        set -euo pipefail
         docker build -t checkstead-action -f "$GITHUB_ACTION_PATH/Dockerfile" "$GITHUB_ACTION_PATH"
-        docker run --rm \
-          -v "$GITHUB_WORKSPACE:/work" \
-          -w /work \
-          -e INPUT_SCAN \
-          -e INPUT_PROJECT \
-          -e INPUT_OUTPUT \
-          -e INPUT_CONFIG \
-          checkstead-action
+        if [[ -n "${PR_NUMBER:-}" && -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
+          work="${RUNNER_TEMP:-/tmp}/checkstead-pr-${PR_NUMBER}"
+          rm -rf "$work"
+          mkdir -p "$work/head" "$work/base"
+          GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "$BASE_SHA"
+          GIT_TERMINAL_PROMPT=0 git fetch --no-tags origin "pull/${PR_NUMBER}/head"
+          git archive "$HEAD_SHA" | tar -x -C "$work/head"
+          git archive "$BASE_SHA" | tar -x -C "$work/base"
+          rel="${INPUT_SCAN#./}"
+          rel="${rel%/}"
+          if [[ -z "$rel" || "$rel" == "." ]]; then
+            head_scan="/head"
+            base_scan="/base"
+            have_base=1
+          else
+            head_scan="/head/${rel}"
+            base_scan="/base/${rel}"
+            if [[ -e "$work/base/${rel}" ]]; then
+              have_base=1
+            else
+              have_base=0
+            fi
+          fi
+          scan_args=(scan --scan "$head_scan" --out /out --pull-request "$PR_NUMBER")
+          if [[ "$have_base" == 1 ]]; then
+            scan_args+=(--base "$base_scan")
+          fi
+          if [[ -n "${INPUT_PROJECT:-}" ]]; then
+            scan_args+=(--project "$INPUT_PROJECT")
+          fi
+          if [[ -n "${INPUT_CONFIG:-}" ]]; then
+            cfg="${INPUT_CONFIG#./}"
+            scan_args+=(--config "/head/${cfg}")
+          fi
+          mkdir -p "${GITHUB_WORKSPACE}/${INPUT_OUTPUT}"
+          docker run --rm \
+            -v "$work/head:/head" \
+            -v "$work/base:/base" \
+            -v "${GITHUB_WORKSPACE}/${INPUT_OUTPUT}:/out" \
+            -w /head \
+            checkstead-action "${scan_args[@]}"
+        else
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            -e INPUT_SCAN \
+            -e INPUT_PROJECT \
+            -e INPUT_OUTPUT \
+            -e INPUT_CONFIG \
+            checkstead-action
+        fi
+    - name: Comment on the pull request
+      if: always() && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_API_URL: ${{ github.api_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        COMMENT_FILE: ${{ github.workspace }}/${{ inputs.output }}/checkstead-comment.md
+      run: python3 "$GITHUB_ACTION_PATH/scripts/pr-comment.py"
     - name: Upload SARIF
       if: always()
       uses: github/codeql-action/upload-sarif@v3

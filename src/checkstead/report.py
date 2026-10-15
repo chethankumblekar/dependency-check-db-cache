@@ -14,6 +14,7 @@ def render_report(
     author: str | None = None,
     author_email: str | None = None,
     extra: list[str] | None = None,
+    pull_request: str | None = None,
 ) -> str:
     lines = [
         f"engine: {engine_version}",
@@ -28,6 +29,8 @@ def render_report(
         lines.append(f"author: {author}")
     if author_email:
         lines.append(f"author-email: {author_email}")
+    if pull_request:
+        lines.append(f"pull-request: {pull_request}")
     lines.append(f"notice: {NVD_NOTICE}")
     if extra:
         lines.extend(extra)
@@ -44,6 +47,7 @@ def write_report(
     author: str | None = None,
     author_email: str | None = None,
     extra: list[str] | None = None,
+    pull_request: str | None = None,
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "checkstead.txt"
@@ -57,6 +61,7 @@ def write_report(
             author,
             author_email,
             extra,
+            pull_request,
         ),
         encoding="utf-8",
     )

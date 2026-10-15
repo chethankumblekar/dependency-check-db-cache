@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -16,7 +17,15 @@ from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
 from checkstead.roles import roles_from_paths
 from checkstead.sarif import write_sarif
-from checkstead.score import POLICY_FAILURE, evaluate_report
+from checkstead.score import (
+    COMMENT_NAME,
+    POLICY_FAILURE,
+    FindingLine,
+    evaluate_report,
+    partition_findings,
+    policy_failures,
+    render_pull_request_comment,
+)
 from checkstead.snapshot import resolve_snapshot, safe_extract
 from checkstead.suppressions import (
     public_suppression_file,
@@ -220,6 +229,20 @@ def build_scan_command(
     return command
 
 
+def _load_engine_payload(engine_report: Path) -> dict:
+    if not engine_report.is_file():
+        return {}
+    try:
+        loaded = json.loads(engine_report.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ChecksteadError(
+            f"Dependency-Check JSON report is not readable: {engine_report}"
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise ChecksteadError(f"Dependency-Check JSON report is not an object: {engine_report}")
+    return loaded
+
+
 def _write_scored_report(
     out_dir: Path,
     engine_version: str,
@@ -236,20 +259,12 @@ def _write_scored_report(
     private: Path | None,
     today: date,
     scans: list[Path],
+    base_dir: Path | None = None,
+    base_scans: list[Path] | None = None,
+    pull_request: str | None = None,
 ) -> None:
     extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
-    engine_report = out_dir / "dependency-check-report.json"
-    payload: dict = {}
-    if engine_report.is_file():
-        try:
-            loaded = json.loads(engine_report.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ChecksteadError(
-                f"Dependency-Check JSON report is not readable: {engine_report}"
-            ) from exc
-        if not isinstance(loaded, dict):
-            raise ChecksteadError(f"Dependency-Check JSON report is not an object: {engine_report}")
-        payload = loaded
+    payload = _load_engine_payload(out_dir / "dependency-check-report.json")
     scored = evaluate_report(
         payload,
         policy=score_policy,
@@ -258,6 +273,27 @@ def _write_scored_report(
         fail_unscored=fail_unscored,
         roles=roles_from_paths(scans),
     )
+    introduced = scored.findings
+    existing: list[FindingLine] = []
+    failures = scored.failures
+    if base_dir is not None:
+        base_payload = _load_engine_payload(base_dir / "dependency-check-report.json")
+        base_scored = evaluate_report(
+            base_payload,
+            policy=score_policy,
+            threshold=threshold,
+            fail_on_kev=fail_on_kev,
+            fail_unscored=fail_unscored,
+            roles=roles_from_paths(base_scans or []),
+        )
+        introduced, existing = partition_findings(scored.findings, base_scored.findings)
+        failures = policy_failures(
+            introduced,
+            policy=score_policy,
+            threshold=threshold,
+            fail_on_kev=fail_on_kev,
+            fail_unscored=fail_unscored,
+        )
     write_sarif(out_dir, scored.findings, project)
     extra.extend(scored.lines)
     if private is not None:
@@ -272,9 +308,21 @@ def _write_scored_report(
         author,
         author_email,
         extra,
+        pull_request,
     )
-    if scored.failures:
-        raise ChecksteadError("\n".join(scored.failures), exit_code=POLICY_FAILURE)
+    if pull_request:
+        (out_dir / COMMENT_NAME).write_text(
+            render_pull_request_comment(
+                pull_request,
+                snapshot_time,
+                introduced,
+                existing,
+                failures,
+            ),
+            encoding="utf-8",
+        )
+    if failures:
+        raise ChecksteadError("\n".join(failures), exit_code=POLICY_FAILURE)
 
 
 def default_cache_dir() -> Path:
@@ -302,10 +350,16 @@ def run_scan(
     fail_unscored: bool = False,
     private_suppressions: str = "",
     suppression_base: Path | None = None,
+    base: list[Path] | None = None,
+    pull_request: str | None = None,
 ) -> ScanResult:
+    base_paths = list(base or [])
     for scan in scans:
         if not scan.exists():
             raise ChecksteadError(f"Scan path does not exist: {scan}")
+    for path in base_paths:
+        if not path.exists():
+            raise ChecksteadError(f"Base path does not exist: {path}")
     snapshot = resolve_snapshot(config_snapshot_url, cache_dir, today, opener)
     if snapshot.engine_version != pinned_engine():
         raise ChecksteadError(
@@ -336,6 +390,21 @@ def run_scan(
         dict(os.environ),
         suppressions,
     )
+    commands = [command]
+    base_dir: Path | None = None
+    if base_paths:
+        base_dir = Path(tempfile.mkdtemp(prefix="checkstead-base-"))
+        commands.append(
+            build_scan_command(
+                engine_path,
+                snapshot.data_dir,
+                base_paths,
+                project_name,
+                base_dir,
+                dict(os.environ),
+                suppressions,
+            )
+        )
     header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
     report_path = write_report(
         out_dir,
@@ -347,58 +416,70 @@ def run_scan(
         author,
         author_email,
         header + ["findings: none"],
+        pull_request,
     )
-    (out_dir / "checkstead-command.txt").write_text("\n".join(command) + "\n", encoding="utf-8")
+    (out_dir / "checkstead-command.txt").write_text(
+        "\n\n".join("\n".join(item) for item in commands) + "\n",
+        encoding="utf-8",
+    )
     print(f"engine: {snapshot.engine_version}")
     print(f"snapshot: {snapshot.snapshot_time}")
     print(f"notice: {NVD_NOTICE}")
-    if dry_run:
-        write_sarif(out_dir, [], project_name)
-        print("checkstead: dry run, Dependency-Check was not started.", flush=True)
+    try:
+        if dry_run:
+            write_sarif(out_dir, [], project_name)
+            print("checkstead: dry run, Dependency-Check was not started.", flush=True)
+            return ScanResult(
+                engine_version=snapshot.engine_version,
+                snapshot_time=snapshot.snapshot_time,
+                checksum=snapshot.checksum,
+                command=tuple(command),
+                report_path=report_path,
+                dry_run=True,
+            )
+        if not engine_path.is_file():
+            raise ChecksteadError(
+                "Dependency-Check is not installed at "
+                f"{engine_path}. Install the pinned release or set CHECKSTEAD_ENGINE."
+            )
+        if not os.access(engine_path, os.X_OK):
+            raise ChecksteadError(f"Dependency-Check is not executable: {engine_path}")
+        safe_extract(snapshot.database_path, snapshot.data_dir)
+        for item in commands:
+            completed = subprocess.run(item, env=command_environment(dict(os.environ)), check=False)
+            if completed.returncode != 0:
+                raise ChecksteadError(
+                    f"Dependency-Check exited {completed.returncode}.",
+                    exit_code=completed.returncode,
+                )
+        _write_scored_report(
+            out_dir,
+            snapshot.engine_version,
+            snapshot.snapshot_time,
+            snapshot.checksum,
+            project_name,
+            revision,
+            author,
+            author_email,
+            score_policy,
+            threshold,
+            fail_on_kev,
+            fail_unscored,
+            private,
+            today,
+            scans,
+            base_dir,
+            base_paths,
+            pull_request,
+        )
         return ScanResult(
             engine_version=snapshot.engine_version,
             snapshot_time=snapshot.snapshot_time,
             checksum=snapshot.checksum,
             command=tuple(command),
             report_path=report_path,
-            dry_run=True,
+            dry_run=False,
         )
-    if not engine_path.is_file():
-        raise ChecksteadError(
-            "Dependency-Check is not installed at "
-            f"{engine_path}. Install the pinned release or set CHECKSTEAD_ENGINE."
-        )
-    if not os.access(engine_path, os.X_OK):
-        raise ChecksteadError(f"Dependency-Check is not executable: {engine_path}")
-    safe_extract(snapshot.database_path, snapshot.data_dir)
-    completed = subprocess.run(command, env=command_environment(dict(os.environ)), check=False)
-    if completed.returncode != 0:
-        raise ChecksteadError(
-            f"Dependency-Check exited {completed.returncode}.",
-            exit_code=completed.returncode,
-        )
-    _write_scored_report(
-        out_dir,
-        snapshot.engine_version,
-        snapshot.snapshot_time,
-        snapshot.checksum,
-        project_name,
-        revision,
-        author,
-        author_email,
-        score_policy,
-        threshold,
-        fail_on_kev,
-        fail_unscored,
-        private,
-        today,
-        scans,
-    )
-    return ScanResult(
-        engine_version=snapshot.engine_version,
-        snapshot_time=snapshot.snapshot_time,
-        checksum=snapshot.checksum,
-        command=tuple(command),
-        report_path=report_path,
-        dry_run=False,
-    )
+    finally:
+        if base_dir is not None:
+            shutil.rmtree(base_dir, ignore_errors=True)

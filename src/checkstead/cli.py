@@ -85,6 +85,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         fail_unscored=config.fail_unscored,
         private_suppressions=config.private_suppressions,
         suppression_base=suppression_base,
+        base=[Path(path) for path in args.base],
+        pull_request=args.pull_request or None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -112,6 +114,16 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--cache", help="Snapshot cache. Defaults to ~/.cache/checkstead.")
     scan.add_argument("--engine", help="Path to dependency-check.sh. Defaults to CHECKSTEAD_ENGINE.")
     scan.add_argument("--revision", help="Commit or revision to record on the report, when you have one.")
+    scan.add_argument(
+        "--base",
+        action="append",
+        default=[],
+        help="Base tree to compare. Repeatable. Scanned with the same snapshot and --noupdate.",
+    )
+    scan.add_argument(
+        "--pull-request",
+        help="Pull request number recorded on the report, the comment, and the timeline.",
+    )
     scan.add_argument(
         "--dry-run",
         action="store_true",

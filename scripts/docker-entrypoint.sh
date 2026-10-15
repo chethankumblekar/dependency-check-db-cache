@@ -14,4 +14,10 @@ fi
 if [[ -n "${INPUT_CONFIG:-}" ]]; then
   args+=(--config "$INPUT_CONFIG")
 fi
+if [[ -n "${INPUT_PULL_REQUEST:-}" ]]; then
+  args+=(--pull-request "$INPUT_PULL_REQUEST")
+fi
+if [[ -n "${INPUT_BASE:-}" ]]; then
+  args+=(--base "$INPUT_BASE")
+fi
 exec checkstead "${args[@]}"

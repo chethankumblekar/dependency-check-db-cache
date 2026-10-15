@@ -238,6 +238,12 @@
       return "revision " + scan.revision.slice(0, 12);
     }
 
+    function scanName(scan) {
+      const name = scan.project || scan.id;
+      if (scan.pullRequest) return name + " #" + scan.pullRequest;
+      return name;
+    }
+
     function committerLabel(scan) {
       if (scan.author) return "committed by " + scan.author;
       if (scan.revision) return "committer not recorded";
@@ -254,7 +260,7 @@
         button.dataset.scan = scan.id;
         if (scan.id === state.selected) button.setAttribute("aria-current", "true");
         button.append(
-          text("strong", scan.project || scan.id),
+          text("strong", scanName(scan)),
           withIcon("clock", "snapshot " + scan.snapshot, "span", "meta-line"),
           withIcon("package", "engine " + scan.engine, "span", "meta-line"),
           withIcon("commit", revisionLabel(scan), "span", "meta-line")
@@ -302,7 +308,7 @@
       const before = state.history.scans.find((item) => item.id === drift.before);
       detail.replaceChildren(
         withIcon("diff", "Drift", "h2"),
-        text("p", (before.project || before.id) + " to " + (scan.project || scan.id), "meta"),
+        text("p", scanName(before) + " to " + scanName(scan), "meta"),
         withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line")
       );
       const committer = committerLabel(scan);
@@ -400,7 +406,7 @@
     function renderScan(scan) {
       const detail = document.getElementById("detail");
       detail.replaceChildren(
-        withIcon("package", scan.project || scan.id, "h2"),
+        withIcon("package", scanName(scan), "h2"),
         withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line"),
         text("p", "First scan on this timeline. Drift is shown from the next scan.", "empty")
       );

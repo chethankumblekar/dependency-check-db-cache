@@ -51,6 +51,7 @@ class Scan:
     has_dependency_report: bool
     has_score_source: bool
     score_lines: list[str] = field(default_factory=list)
+    pull_request: str | None = None
 
 
 @dataclass
@@ -235,6 +236,7 @@ def load_scan(directory: Path) -> Scan:
         has_dependency_report=report.is_file(),
         has_score_source=has_score_source,
         score_lines=score_lines_from_report(report_text),
+        pull_request=header.get("pull-request") or None,
     )
 
 
@@ -333,6 +335,7 @@ def history_payload(scans: list[Scan]) -> dict:
                 "hasDependencyReport": scan.has_dependency_report,
                 "hasScoreSource": scan.has_score_source,
                 "scoreLines": list(scan.score_lines),
+                "pullRequest": scan.pull_request,
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],
                 "findings": [_finding_json(item) for item in scan.findings],
             }

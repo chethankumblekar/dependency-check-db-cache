@@ -380,16 +380,17 @@ From another repository, copy `integrations/gradle/checkstead.gradle` or apply t
 
 ## GitHub Action
 
-`action.yml` in this repository builds the scanner image and runs `checkstead scan`. It has no API key input. The report is written to `checkstead-report/` in the workspace.
+`action.yml` in this repository builds the scanner image and runs `checkstead scan`. It has no API key input and no token input. The report is written to `checkstead-report/` in the workspace.
 
 ```yaml
 name: Scan
-on: [push]
+on: [push, pull_request]
 jobs:
   scan:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write
       security-events: write
     steps:
       - uses: actions/checkout@v5
@@ -398,6 +399,12 @@ jobs:
           scan: .
           project: my-service
 ```
+
+On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base. The report keeps direct or transitive, production or dev, and the score source.
+
+The build fails only when an introduced finding fails the score policy (`threshold`, `failOnKev`, `failUnscored`). Findings already on the base are listed and do not fail the build. An empty threshold does not fail on score.
+
+The Action posts one comment on the pull request and updates that same comment on later pushes. The comment is sent with the workflow `GITHUB_TOKEN`. `pull-requests: write` is the permission that allows it. The comment names the pull request. `checkstead.txt` records it as `pull-request:`, and the timeline uses that line in the scan name.
 
 The Action uploads `checkstead-report/checkstead.sarif`. GitHub shows those findings on the repository Security tab. `security-events: write` is what allows that upload.
 
