@@ -356,7 +356,7 @@
         found[kind].forEach((item) => {
           const row = document.createElement("li");
           row.className = "row " + kind;
-          row.append(withIcon(driftIcons[kind], kind, "div", "tag"), text("div", item.dependency + " " + item.id));
+          row.append(withIcon(driftIcons[kind], kind, "div", "tag"), text("div", findingLabel(item)));
           findingList.append(row);
         });
       });
@@ -364,6 +364,15 @@
       detail.append(findings);
 
       detail.append(scoreSection(scan.scoreLines || [], drift.scores.available));
+    }
+
+    function findingLabel(item) {
+      const parts = [item.dependency, item.id];
+      if (item.relationship || item.scope) {
+        parts.push("(" + [item.relationship, item.scope].filter(Boolean).join(", ") + ")");
+      }
+      if (item.scoreSource) parts.push("source " + item.scoreSource);
+      return parts.join(" ");
     }
 
     function scoreSection(lines, available) {

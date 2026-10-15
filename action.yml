@@ -18,8 +18,31 @@ inputs:
     required: false
     default: ""
 runs:
-  using: "docker"
-  image: "Dockerfile"
+  using: composite
+  steps:
+    - name: Scan
+      shell: bash
+      env:
+        INPUT_SCAN: ${{ inputs.scan }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_CONFIG: ${{ inputs.config }}
+      run: |
+        docker build -t checkstead-action -f "$GITHUB_ACTION_PATH/Dockerfile" "$GITHUB_ACTION_PATH"
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:/work" \
+          -w /work \
+          -e INPUT_SCAN \
+          -e INPUT_PROJECT \
+          -e INPUT_OUTPUT \
+          -e INPUT_CONFIG \
+          checkstead-action
+    - name: Upload SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.output }}/checkstead.sarif
+        category: checkstead
 branding:
   icon: "shield"
   color: "gray-dark"

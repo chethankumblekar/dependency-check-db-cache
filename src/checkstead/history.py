@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from checkstead.engine import NVD_NOTICE
+from checkstead.match import confirmed_vulnerability
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ class Finding:
     cvss: dict[str, str]
     score_source: str | None
     score_source_present: bool
+    relationship: str | None = None
+    scope: str | None = None
 
 
 @dataclass
@@ -138,6 +141,8 @@ def load_engine_report(path: Path) -> tuple[list[Dependency], list[Finding], boo
         for vulnerability in raw.get("vulnerabilities") or []:
             if not isinstance(vulnerability, dict):
                 continue
+            if not confirmed_vulnerability(raw, vulnerability):
+                continue
             finding = _finding(dependency.name, vulnerability)
             findings.append(finding)
             has_score_source = has_score_source or finding.score_source_present
@@ -151,11 +156,70 @@ def score_lines_from_report(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.startswith("finding:")]
 
 
+def parse_finding_line(line: str) -> dict[str, str] | None:
+    if not line.startswith("finding:"):
+        return None
+    body = line[len("finding:") :].strip()
+    identifier, _, rest = body.partition(" ")
+    if not identifier:
+        return None
+    fields = {"identifier": identifier}
+    for token in rest.split():
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        fields[key] = value
+    return fields
+
+
+def _classified(findings: list[Finding], report_text: str) -> list[Finding]:
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for line in report_text.splitlines():
+        fields = parse_finding_line(line)
+        if fields is None:
+            continue
+        grouped.setdefault(fields["identifier"], []).append(fields)
+    classified: list[Finding] = []
+    for finding in findings:
+        options = grouped.get(finding.identifier) or []
+        chosen = None
+        for fields in options:
+            dep = fields.get("dependency") or ""
+            if dep == finding.dependency or dep.startswith(finding.dependency + ":"):
+                chosen = fields
+                break
+        if chosen is None and len(options) == 1:
+            chosen = options[0]
+        if chosen is None:
+            classified.append(finding)
+            continue
+        source = chosen.get("source")
+        present = finding.score_source_present
+        score_source = finding.score_source
+        if source and source != "none":
+            present = True
+            score_source = source
+        classified.append(
+            Finding(
+                dependency=finding.dependency,
+                identifier=finding.identifier,
+                cvss=finding.cvss,
+                score_source=score_source,
+                score_source_present=present,
+                relationship=chosen.get("relationship") or None,
+                scope=chosen.get("scope") or None,
+            )
+        )
+    return classified
+
+
 def load_scan(directory: Path) -> Scan:
     report_text = (directory / "checkstead.txt").read_text(encoding="utf-8")
     header = parse_header(report_text)
     report = directory / "dependency-check-report.json"
     dependencies, findings, has_score_source = load_engine_report(report)
+    findings = _classified(findings, report_text)
+    has_score_source = has_score_source or any(item.score_source_present for item in findings)
     return Scan(
         id=directory.name,
         project=header.get("project") or None,
@@ -188,7 +252,12 @@ def _same_dependency(left: Dependency, right: Dependency) -> bool:
 
 
 def _same_finding(left: Finding, right: Finding) -> bool:
-    return left.cvss == right.cvss and left.score_source == right.score_source
+    return (
+        left.cvss == right.cvss
+        and left.score_source == right.score_source
+        and left.relationship == right.relationship
+        and left.scope == right.scope
+    )
 
 
 def diff_scans(before: Scan, after: Scan) -> Drift:
@@ -240,6 +309,10 @@ def _finding_json(item: Finding) -> dict:
     }
     if item.score_source_present:
         payload["scoreSource"] = item.score_source
+    if item.relationship:
+        payload["relationship"] = item.relationship
+    if item.scope:
+        payload["scope"] = item.scope
     return payload
 
 

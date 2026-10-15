@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from checkstead.errors import ChecksteadError
+from checkstead.match import confirmed_vulnerability, ecosystem_identity
 
 POLICIES = ("prefer-newest", "highest")
 POLICY_FAILURE = 3
@@ -50,6 +51,9 @@ class FindingLine:
     choice: ScoreChoice | None
     kev: bool
     enrichment: str
+    relationship: str = "direct"
+    scope: str = "production"
+    location: str = ""
 
     def report(self) -> str:
         if self.choice is None:
@@ -63,7 +67,8 @@ class FindingLine:
         return (
             f"finding: {self.identifier} cvss={version} score={score} "
             f"source={source} vector={vector} enrichment={self.enrichment} "
-            f"kev={kev} dependency={self.dependency}"
+            f"kev={kev} dependency={self.dependency} "
+            f"relationship={self.relationship} scope={self.scope}"
         )
 
     def failure(self, policy: str, reason: str) -> str:
@@ -82,6 +87,7 @@ class FindingLine:
 class ScoreResult:
     lines: list[str]
     failures: list[str]
+    findings: list[FindingLine]
 
 
 def _number(value: float) -> str:
@@ -191,11 +197,12 @@ def _enrichment(has_cpe: bool, has_nvd_score: bool) -> str:
     return "no-nvd-score"
 
 
-def findings_from_report(payload: dict, policy: str) -> list[FindingLine]:
+def findings_from_report(payload: dict, policy: str, roles=None) -> list[FindingLine]:
     if policy not in POLICIES:
         raise ChecksteadError(f"scorePolicy must be prefer-newest or highest, not {policy!r}.")
     grouped: dict[tuple[str, str], list[dict]] = {}
     cpe: dict[tuple[str, str], bool] = {}
+    deps: dict[tuple[str, str], dict] = {}
     order: list[tuple[str, str]] = []
     for dependency in payload.get("dependencies") or []:
         if not isinstance(dependency, dict):
@@ -204,6 +211,8 @@ def findings_from_report(payload: dict, policy: str) -> list[FindingLine]:
         for vulnerability in dependency.get("vulnerabilities") or []:
             if not isinstance(vulnerability, dict):
                 continue
+            if not confirmed_vulnerability(dependency, vulnerability):
+                continue
             identifier = str(vulnerability.get("name") or vulnerability.get("id") or "").strip()
             if not identifier:
                 continue
@@ -211,6 +220,7 @@ def findings_from_report(payload: dict, policy: str) -> list[FindingLine]:
             if key not in grouped:
                 grouped[key] = []
                 cpe[key] = False
+                deps[key] = dependency
                 order.append(key)
             grouped[key].append(vulnerability)
             cpe[key] = cpe[key] or _has_cpe(dependency, vulnerability)
@@ -221,8 +231,40 @@ def findings_from_report(payload: dict, policy: str) -> list[FindingLine]:
         choice = _choose(scores, policy)
         kev = any(isinstance(record.get("knownExploitedVulnerability"), dict) for record in records)
         has_nvd = any(score.kind == "nvd" for score in scores)
-        lines.append(FindingLine(key[0], key[1], choice, kev, _enrichment(cpe[key], has_nvd)))
+        relationship, scope = _role_for(deps[key], roles)
+        lines.append(
+            FindingLine(
+                key[0],
+                key[1],
+                choice,
+                kev,
+                _enrichment(cpe[key], has_nvd),
+                relationship,
+                scope,
+                _location(deps[key]),
+            )
+        )
     return lines
+
+
+def _role_for(dependency: dict, roles) -> tuple[str, str]:
+    if roles is None or roles.empty:
+        return "direct", "production"
+    identity = ecosystem_identity(dependency)
+    if identity is None:
+        return "direct", "production"
+    return roles.lookup(identity[0], identity[1])
+
+
+def _location(dependency: dict) -> str:
+    raw = str(dependency.get("filePath") or dependency.get("fileName") or "dependency")
+    text = raw.replace("\\", "/")
+    marker = "/work/"
+    if marker in text:
+        text = text.split(marker, 1)[1]
+    if text.startswith("/"):
+        text = text.rsplit("/", 1)[-1]
+    return text or "dependency"
 
 
 def evaluate_report(
@@ -232,8 +274,9 @@ def evaluate_report(
     threshold: float | None,
     fail_on_kev: bool,
     fail_unscored: bool,
+    roles=None,
 ) -> ScoreResult:
-    findings = findings_from_report(payload, policy)
+    findings = findings_from_report(payload, policy, roles)
     failures: list[str] = []
     for finding in findings:
         if finding.choice is not None and threshold is not None and finding.choice.value >= threshold:
@@ -245,6 +288,6 @@ def evaluate_report(
     report = [finding.report() for finding in findings]
     if not report:
         report = ["findings: none"]
-    return ScoreResult(report, failures)
+    return ScoreResult(report, failures, findings)
 
 

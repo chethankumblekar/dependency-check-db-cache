@@ -14,6 +14,8 @@ from checkstead.commit import lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.report import write_report
+from checkstead.roles import roles_from_paths
+from checkstead.sarif import write_sarif
 from checkstead.score import POLICY_FAILURE, evaluate_report
 from checkstead.snapshot import resolve_snapshot, safe_extract
 from checkstead.suppressions import (
@@ -233,6 +235,7 @@ def _write_scored_report(
     fail_unscored: bool,
     private: Path | None,
     today: date,
+    scans: list[Path],
 ) -> None:
     extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
     engine_report = out_dir / "dependency-check-report.json"
@@ -253,7 +256,9 @@ def _write_scored_report(
         threshold=threshold,
         fail_on_kev=fail_on_kev,
         fail_unscored=fail_unscored,
+        roles=roles_from_paths(scans),
     )
+    write_sarif(out_dir, scored.findings, project)
     extra.extend(scored.lines)
     if private is not None:
         extra.extend(suppression_report(private, today, seen_identifiers(payload)))
@@ -348,6 +353,7 @@ def run_scan(
     print(f"snapshot: {snapshot.snapshot_time}")
     print(f"notice: {NVD_NOTICE}")
     if dry_run:
+        write_sarif(out_dir, [], project_name)
         print("checkstead: dry run, Dependency-Check was not started.", flush=True)
         return ScanResult(
             engine_version=snapshot.engine_version,
@@ -386,6 +392,7 @@ def run_scan(
         fail_unscored,
         private,
         today,
+        scans,
     )
     return ScanResult(
         engine_version=snapshot.engine_version,

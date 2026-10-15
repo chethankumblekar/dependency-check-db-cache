@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -12,6 +13,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.config import DEFAULT_SNAPSHOT_URL, parse_config_text  # noqa: E402
 from checkstead.errors import ChecksteadError  # noqa: E402
+from checkstead.history import load_scan  # noqa: E402
+from checkstead.roles import roles_from_paths  # noqa: E402
+from checkstead.sarif import SARIF_NAME, write_sarif  # noqa: E402
 from checkstead.score import evaluate_report  # noqa: E402
 from checkstead.scan import build_scan_command  # noqa: E402
 from checkstead.suppressions import public_suppression_file, resolve_private_suppressions  # noqa: E402
@@ -176,3 +180,128 @@ class ScoreTests(TestCase):
         )
         self.assertIn("--suppression", applied)
         self.assertIn(str(rules), applied)
+
+    def test_a_fuzzy_cpe_is_omitted_and_the_package_identity_is_kept(self) -> None:
+        payload = {
+            "dependencies": [
+                {
+                    "fileName": "next:16.3.5",
+                    "filePath": "/work/node_modules/next/package.json",
+                    "packages": [
+                        {"id": "pkg:npm/next@16.3.5", "confidence": "HIGHEST"},
+                        {
+                            "id": "cpe:2.3:a:nextgen:nextgen:1.0:*:*:*:*:*:*:*",
+                            "confidence": "LOW",
+                            "notes": "fuzzy match",
+                        },
+                    ],
+                    "vulnerabilityIds": [
+                        {
+                            "id": "cpe:2.3:a:nextgen:nextgen:1.0:*:*:*:*:*:*:*",
+                            "confidence": "LOW",
+                            "notes": "fuzzy match",
+                        }
+                    ],
+                    "vulnerabilities": [
+                        _vuln("CVE-FUZZY", "NVD", _v3(9.8)),
+                        {"name": "GHSA-next", "source": "NPM", **_v3(5.3)},
+                    ],
+                },
+                {
+                    "fileName": "braces:3.0.2",
+                    "packages": [{"id": "pkg:npm/braces@3.0.2", "confidence": "HIGHEST"}],
+                    "vulnerabilityIds": [
+                        {"id": "cpe:2.3:a:braces:braces:3.0.2:*:*:*:*:*:*:*", "confidence": "HIGHEST"}
+                    ],
+                    "vulnerabilities": [
+                        {
+                            "name": "CVE-REAL",
+                            "source": "NVD",
+                            **_v3(7.5),
+                            "vulnerableSoftware": [
+                                {"software": {"id": "cpe:2.3:a:braces:braces:3.0.2:*:*:*:*:*:*:*"}}
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+        root = ROOT / "build" / "tests" / "npm-roles"
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        (root / "package.json").write_text(
+            json.dumps({"dependencies": {"next": "16.3.5"}, "devDependencies": {"eslint": "9.0.0"}}),
+            encoding="utf-8",
+        )
+        (root / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "packages": {
+                        "": {},
+                        "node_modules/next": {"version": "16.3.5"},
+                        "node_modules/braces": {"version": "3.0.2", "dev": True},
+                        "node_modules/@modelcontextprotocol/sdk": {"version": "1.0.0", "dev": True},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        roles = roles_from_paths([root])
+        result = evaluate_report(
+            payload,
+            policy="prefer-newest",
+            threshold=None,
+            fail_on_kev=False,
+            fail_unscored=False,
+            roles=roles,
+        )
+        joined = "\n".join(result.lines)
+        self.assertNotIn("CVE-FUZZY", joined)
+        self.assertIn("GHSA-next", joined)
+        self.assertIn("relationship=direct scope=production", joined)
+        self.assertIn("CVE-REAL", joined)
+        self.assertIn("dependency=braces:3.0.2", joined)
+        self.assertIn("relationship=transitive scope=dev", joined)
+        self.assertNotIn("services.nvd.nist.gov", joined)
+        braces = next(item for item in result.findings if item.identifier == "CVE-REAL")
+        self.assertEqual(braces.scope, "dev")
+        self.assertNotEqual(braces.scope, "production")
+        nxt = next(item for item in result.findings if item.identifier == "GHSA-next")
+        self.assertEqual((nxt.relationship, nxt.scope), ("direct", "production"))
+        self.assertEqual(nxt.choice.source, "NPM")
+        sarif_path = write_sarif(root / "out", result.findings, "next-app")
+        self.assertEqual(sarif_path.name, SARIF_NAME)
+        document = json.loads(sarif_path.read_text(encoding="utf-8"))
+        results = document["runs"][0]["results"]
+        self.assertEqual({item["ruleId"] for item in results}, {"GHSA-next", "CVE-REAL"})
+        real = next(item for item in results if item["ruleId"] == "CVE-REAL")
+        self.assertEqual(real["properties"]["relationship"], "transitive")
+        self.assertEqual(real["properties"]["scope"], "dev")
+        self.assertEqual(real["properties"]["scoreSource"], "NVD")
+        self.assertEqual(real["properties"]["security-severity"], "7.5")
+        self.assertIn("transitive, dev", real["message"]["text"])
+        self.assertIn("source NVD", real["message"]["text"])
+        self.assertNotIn("CVE-FUZZY", sarif_path.read_text(encoding="utf-8"))
+
+        report = root / "out"
+        (report / "checkstead.txt").write_text(
+            "engine: 13.0.0\n"
+            "snapshot: 2026-10-06T01:02:03Z\n"
+            "checksum: sha256:abc\n"
+            "project: next-app\n"
+            "notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.\n"
+            + joined
+            + "\n",
+            encoding="utf-8",
+        )
+        (report / "dependency-check-report.json").write_text(json.dumps(payload), encoding="utf-8")
+        scan = load_scan(report)
+        identifiers = {item.identifier for item in scan.findings}
+        self.assertNotIn("CVE-FUZZY", identifiers)
+        real_finding = next(item for item in scan.findings if item.identifier == "CVE-REAL")
+        self.assertEqual(real_finding.relationship, "transitive")
+        self.assertEqual(real_finding.scope, "dev")
+        self.assertEqual(real_finding.score_source, "NVD")
+        dev_finding = next(item for item in scan.findings if item.identifier == "GHSA-next")
+        self.assertEqual(dev_finding.scope, "production")
+        self.assertNotEqual(dev_finding.scope, real_finding.scope)

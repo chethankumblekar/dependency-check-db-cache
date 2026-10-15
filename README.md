@@ -247,6 +247,10 @@ privateSuppressions:
 
 `privateSuppressions` is optional. Omit it, leave it blank, or name a file that is missing or empty, and the scan runs with no private rules. When that local file contains rules, those rules are applied. A URL is refused. Expired rules and CVE rules that matched nothing are listed in `checkstead.txt`. Checkstead does not ship a confirmed public rule. Upstream hosted suppressions stay the ones in the snapshot.
 
+When a dependency already has a package URL, or a name and version from its ecosystem, that identity is what Checkstead reports. A CPE match is a confirmed finding only when it names that same package. A fuzzy CPE match, which Dependency-Check records at low confidence, is not a confirmed finding. No suppression file is required to drop it.
+
+Each finding in `checkstead.txt` is direct or transitive, and production or dev. Dev is not the production bucket. A devDependency, or a lockfile entry marked dev, is dev. The timeline shows the same classification. `checkstead scan` also writes `checkstead.sarif` beside that report. The result includes the classification and the score source.
+
 ```bash
 checkstead scan --scan . --project my-service
 ```
@@ -384,6 +388,9 @@ on: [push]
 jobs:
   scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v5
       - uses: chethankumblekar/dependency-check-db-cache@main
@@ -391,6 +398,8 @@ jobs:
           scan: .
           project: my-service
 ```
+
+The Action uploads `checkstead-report/checkstead.sarif`. GitHub shows those findings on the repository Security tab. `security-events: write` is what allows that upload.
 
 Pin a commit SHA when the scan should stay on one build. `@main` follows this repository. After a version tag, `v0` follows the newest 0.x release. See [Release](#release).
 
