@@ -332,6 +332,16 @@ class SetupTests(TestCase):
         self.assertNotIn("services.nvd.nist.gov", windows)
         self.assertNotIn("nvdApiKey", windows)
         self.assertIn(WINDOWS_SETUP_COMMAND, (ROOT / "README.md").read_text(encoding="utf-8"))
+        azure = (ROOT / "docs" / "azure.md").read_text(encoding="utf-8")
+        self.assertIn("vmImage: ubuntu-latest", azure)
+        self.assertIn("vmImage: windows-latest", azure)
+        self.assertIn(SETUP_COMMAND, azure)
+        self.assertIn(WINDOWS_SETUP_COMMAND, azure)
+        self.assertIn("WEBSITES_PORT", azure)
+        self.assertNotIn("services.nvd.nist.gov", azure.replace(
+            "A scan does not use an NVD API key and does not call `services.nvd.nist.gov`.",
+            "",
+        ))
 
     def test_a_scan_from_another_directory_uses_the_project_file(self) -> None:
         root = ROOT / "build" / "tests" / "setup-any-directory"

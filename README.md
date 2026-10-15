@@ -117,6 +117,7 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 - [Gradle](#gradle)
 - [GitHub Action](#github-action)
 - [Azure DevOps](#azure-devops)
+- [Azure on Ubuntu and Windows](docs/azure.md)
 - [Release](#release)
 - [Timeline](#timeline)
 - [Server](#server)
@@ -405,6 +406,8 @@ The extension in [`integrations/azure-devops`](integrations/azure-devops) adds t
 ```
 
 A full example is [`integrations/azure-devops/example.yml`](integrations/azure-devops/example.yml). GitHub builds use the Action above. The [Release](#release) workflow publishes this extension, and an Azure Pipelines organization installs that public listing before it uses the task.
+
+Ubuntu and Windows steps for a local scan, the App Service timeline, and an Azure DevOps build are in [Azure on Ubuntu and Windows](docs/azure.md).
 
 ## Release
 
