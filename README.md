@@ -126,15 +126,17 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 ## Screenshots
 
-The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the direct, transitive, production, and dev groups are empty on purpose. These fixture scans have no `branch:` line, so the detail says the branch is not recorded.
+On localhost, the first person uses **Sign in on this computer**. That button is enabled. GitHub and Microsoft stay inactive until their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
 
-On localhost, the first person uses **Sign in on this computer**. GitHub and Microsoft sign-in stay off until their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
+![Sign-in page. Sign in on this computer is enabled. GitHub and Microsoft are inactive.](docs/screenshots/sign-in.png)
 
-![Sign-in page with GitHub and Microsoft](docs/screenshots/sign-in.png)
+The first scan on a branch is the scan view. This one records branch `main`. Direct production shows Guava and the description of the temp-directory issue. Transitive production shows minimist, and transitive dev shows Apache Commons Text. Direct dev has no findings.
 
-The timeline names the snapshot, the engine, the revision, and the person git recorded for that revision. The drift between the two fixture scans is guava 31.1-jre to 32.1.3-jre. commons-lang3 left, and gson arrived.
+![Scan of billing on branch main, with descriptions in the direct and transitive groups](docs/screenshots/scan.png)
 
-![Timeline and the guava drift, committed by Cursor Agent](docs/screenshots/drift.png)
+The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The same findings are on both scans, so the drift list says no findings were added or removed. The direct and transitive groups under that list still show each description, score, score source, and package.
+
+![Drift on branch main. The finding groups stay visible under the dependency changes.](docs/screenshots/drift.png)
 
 The first person to sign in is the administrator. Administration is where that person adds later accounts.
 
@@ -201,7 +203,7 @@ Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints
 | `integrations/azure-devops` | Azure DevOps extension and pipeline task |
 | `integrations/maven` | Maven goal that calls `checkstead scan` |
 | `integrations/gradle` | Gradle task that calls `checkstead scan` |
-| `ui/scans` | The two fixture scans shown above |
+| `ui/scans` | Two fixture scans for a checkout. They have no findings and no branch line. |
 | `.github/workflows/ci.yml` | Lint, test, build, and image publish |
 | `.github/workflows/update-snapshot.yml` | Daily snapshot |
 

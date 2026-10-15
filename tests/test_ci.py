@@ -73,9 +73,13 @@ class CiTests(TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("actions/workflows/ci.yml/badge.svg?branch=main", readme)
         self.assertIn("docs/screenshots/sign-in.png", readme)
+        self.assertIn("docs/screenshots/scan.png", readme)
         self.assertIn("docs/screenshots/drift.png", readme)
         self.assertIn("docs/screenshots/administration.png", readme)
         self.assertIn("```mermaid", readme)
         self.assertIn("Chethan K", readme)
-        for shot in ("sign-in.png", "drift.png", "administration.png"):
-            self.assertTrue((ROOT / "docs" / "screenshots" / shot).is_file())
+        shots = ROOT / "docs" / "screenshots"
+        for shot in ("sign-in.png", "scan.png", "drift.png", "administration.png"):
+            self.assertTrue((shots / shot).is_file())
+        self.assertNotEqual((shots / "sign-in.png").read_bytes(), (shots / "drift.png").read_bytes())
+        self.assertNotEqual((shots / "scan.png").read_bytes(), (shots / "drift.png").read_bytes())
