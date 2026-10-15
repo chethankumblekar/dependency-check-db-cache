@@ -209,6 +209,13 @@ class HistoryTests(TestCase):
         self.assertIn("scan.branch", page)
         self.assertIn("finding-groups", page)
         self.assertIn("findingsSection", page)
+        self.assertIn("finding-row", page)
+        self.assertIn("finding-filters", page)
+        self.assertIn("function findingRank", page)
+        self.assertIn("findingRank(b) - findingRank(a)", page)
+        self.assertIn('filterGroup("Relationship"', page)
+        self.assertIn('filterGroup("Scope"', page)
+        self.assertIn("state.openFinding === key", page)
         self.assertIn("No findings were added or removed between the two scans.", page)
         self.assertNotIn("No findings in either report.", page)
 

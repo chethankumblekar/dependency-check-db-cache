@@ -97,21 +97,41 @@
     .row { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); }
     .identity { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 0; }
     .identity span { color: var(--ink); font-size: 14px; }
-    .finding-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .finding-relationship, .finding-scope { display: grid; gap: 12px; }
-    .finding-relationship { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #faf7f2; }
+    .finding-filters { display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 0 0 16px; }
+    .finding-filters div { display: flex; flex-wrap: wrap; gap: 6px; }
+    .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+    .finding-groups { display: grid; gap: 16px; }
+    .finding-relationship, .finding-scope { display: grid; gap: 8px; }
+    .finding-relationship { padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #faf7f2; }
     .finding-relationship h3, .finding-scope h4 {
       margin: 0; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
     }
-    .finding { display: grid; gap: 8px; padding: 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
-    .finding-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-    .finding-head strong { font-size: 15px; }
+    .finding-list { display: grid; gap: 4px; }
+    .finding-list li + li { margin-top: 0; }
+    .finding-row { border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+    .finding-row > button {
+      display: grid;
+      grid-template-columns: 3rem minmax(8.5rem, 1.05fr) minmax(8rem, 1.5fr) 6.4rem 6.4rem minmax(3.4rem, 0.55fr) 1rem;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      padding: 7px 10px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .finding-row > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+    .finding-score { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .vuln-id, .finding-package { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vuln-id { font: 600 13px/1.3 ui-monospace, monospace; }
-    .finding-text { margin: 0; }
-    .finding-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; color: var(--muted); font-size: 13px; }
-    .finding-meta div { display: flex; gap: 6px; }
-    .finding-meta dt, .finding-meta dd { margin: 0; }
-    .finding-meta dt { font-weight: 650; color: var(--ink); }
+    .finding-kind, .finding-source { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .finding-chevron { justify-self: end; transition: transform 120ms ease; }
+    .finding-row.open .finding-chevron { transform: rotate(90deg); }
+    .finding-text { margin: 0; padding: 0 12px 10px; }
     .tag { font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
     .added .tag { color: var(--added); }
     .removed .tag { color: var(--removed); }
@@ -151,7 +171,8 @@
     td button { margin-right: 8px; }
     #gate, #admin { max-width: 1180px; margin: 0 auto; padding: 8px 32px 64px; }
     @media (max-width: 800px) {
-      main, .finding-groups { grid-template-columns: 1fr; }
+      main { grid-template-columns: 1fr; }
+      .finding-row > button { grid-template-columns: 3rem minmax(7rem, 1fr) minmax(6rem, 1.2fr) auto auto auto 1rem; }
       header, main, #gate, #admin { padding-left: 16px; padding-right: 16px; }
       .timeline { padding-right: 0; }
     }
@@ -177,6 +198,7 @@
     <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
     <symbol id="i-azure-devops" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3.2h4.4L8 8 5.4 12.8H1L3.8 8 1 3.2zm14 0L12.2 8 15 12.8h-4.4L8 8l2.6-4.8H15z"/></symbol>
     <symbol id="i-eye-off" viewBox="0 0 16 16"><path d="M2 8s2.2-3.5 6-3.5S14 8 14 8s-2.2 3.5-6 3.5S2 8 2 8z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 13 13 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 16 16"><path d="M6 4.2 10 8 6 11.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
   <header>
     <div class="bar">
@@ -245,7 +267,14 @@
     <article class="panel" id="detail" aria-live="polite"></article>
   </main>
   <script>
-    const state = { history: null, selected: null, openKey: null };
+    const state = {
+      history: null,
+      selected: null,
+      openKey: null,
+      openFinding: null,
+      findingRelationship: "",
+      findingScope: "",
+    };
 
     function text(tag, value, className) {
       const node = document.createElement(tag);
@@ -331,6 +360,7 @@
           button.addEventListener("click", () => {
             state.selected = scan.id;
             state.openKey = null;
+            state.openFinding = null;
             render();
           });
           section.append(button);
@@ -443,48 +473,110 @@
       return parts.filter(Boolean).join(" ");
     }
 
-    function findingCard(item) {
-      const card = document.createElement("article");
-      card.className = "finding";
-      const head = document.createElement("div");
-      head.className = "finding-head";
-      head.append(text("strong", item.package || item.dependency || "Package"));
-      head.append(text("span", item.id || "", "vuln-id"));
-      card.append(head);
-      card.append(text("p", item.description || "No description recorded.", "finding-text"));
-      const meta = document.createElement("div");
-      meta.className = "finding-meta";
-      [
-        ["Score", item.score || "not recorded"],
-        ["Score source", item.scoreSource || "not recorded"],
-        ["Package", item.package || item.dependency || "not recorded"],
-      ].forEach((pair) => {
-        const bit = document.createElement("div");
-        bit.append(text("dt", pair[0]), text("dd", pair[1]));
-        meta.append(bit);
+    function findingRank(item) {
+      const value = Number(item.score);
+      return Number.isFinite(value) ? value : -1;
+    }
+
+    function findingKey(item) {
+      return [item.id, item.package || item.dependency, item.relationship, item.scope].join("\n");
+    }
+
+    function filterGroup(label, options, current, onPick) {
+      const group = document.createElement("div");
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", label);
+      options.forEach((option) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet";
+        button.textContent = option[1];
+        button.setAttribute("aria-pressed", option[0] === current ? "true" : "false");
+        button.addEventListener("click", () => onPick(option[0]));
+        group.append(button);
       });
-      card.append(meta);
-      return card;
+      return group;
+    }
+
+    function findingFilters() {
+      const bar = document.createElement("div");
+      bar.className = "finding-filters";
+      bar.append(
+        filterGroup("Relationship", [
+          ["", "All"],
+          ["direct", "Direct"],
+          ["transitive", "Transitive"],
+        ], state.findingRelationship, (value) => {
+          state.findingRelationship = value;
+          render();
+        }),
+        filterGroup("Scope", [
+          ["", "All"],
+          ["production", "Production"],
+          ["dev", "Dev"],
+        ], state.findingScope, (value) => {
+          state.findingScope = value;
+          render();
+        })
+      );
+      return bar;
+    }
+
+    function findingRow(item) {
+      const key = findingKey(item);
+      const open = state.openFinding === key;
+      const row = document.createElement("li");
+      row.className = "finding-row" + (open ? " open" : "");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+      const chevron = icon("chevron");
+      chevron.classList.add("finding-chevron");
+      button.append(
+        text("span", item.score || "—", "finding-score"),
+        text("span", item.id || "—", "vuln-id"),
+        text("span", item.package || item.dependency || "—", "finding-package"),
+        text("span", item.relationship || "direct", "finding-kind"),
+        text("span", item.scope || "production", "finding-kind"),
+        text("span", item.scoreSource || "—", "finding-source"),
+        chevron
+      );
+      button.addEventListener("click", () => {
+        state.openFinding = open ? null : key;
+        render();
+      });
+      row.append(button);
+      if (open) row.append(text("p", item.description || "No description recorded.", "finding-text"));
+      return row;
     }
 
     function findingsSection(findings) {
       const section = document.createElement("section");
       section.append(withIcon("alert", "Findings", "h2"));
+      section.append(findingFilters());
       const groups = document.createElement("div");
       groups.className = "finding-groups";
-      ["direct", "transitive"].forEach((relationship) => {
+      const relationships = state.findingRelationship ? [state.findingRelationship] : ["direct", "transitive"];
+      const scopes = state.findingScope ? [state.findingScope] : ["production", "dev"];
+      relationships.forEach((relationship) => {
         const column = document.createElement("section");
         column.className = "finding-relationship";
         column.append(text("h3", relationship));
-        ["production", "dev"].forEach((scope) => {
+        scopes.forEach((scope) => {
           const block = document.createElement("div");
           block.className = "finding-scope";
           block.append(text("h4", scope));
           const items = (findings || []).filter((item) => {
             return (item.relationship || "direct") === relationship && (item.scope || "production") === scope;
           });
+          items.sort((a, b) => findingRank(b) - findingRank(a) || String(a.id || "").localeCompare(String(b.id || "")));
           if (!items.length) block.append(text("p", "No findings.", "empty"));
-          items.forEach((item) => block.append(findingCard(item)));
+          else {
+            const list = document.createElement("ul");
+            list.className = "finding-list";
+            items.forEach((item) => list.append(findingRow(item)));
+            block.append(list);
+          }
           column.append(block);
         });
         groups.append(column);
