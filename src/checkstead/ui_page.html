@@ -9,78 +9,109 @@
     :root {
       color-scheme: light;
       --ink: #1c1915;
-      --muted: #5e584f;
-      --line: #d9d1c4;
-      --paper: #f6f3ec;
-      --panel: #fffdf8;
+      --muted: #5c564c;
+      --line: #e4dcd0;
+      --paper: #f3f0e8;
+      --panel: #fffcf7;
+      --card: #ffffff;
       --added: #1d6b43;
       --removed: #8d3b2f;
       --changed: #8a5a12;
       --focus: #1c1915;
+      --shadow: 0 18px 50px rgba(28, 25, 21, 0.06);
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
     body {
       margin: 0;
       color: var(--ink);
-      background: var(--paper);
-      font: 16px/1.45 ui-sans-serif, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 400px at 10% -10%, #fff, transparent 50%),
+        var(--paper);
+      font: 16px/1.5 ui-sans-serif, "Segoe UI", sans-serif;
     }
-    header, main { max-width: 1100px; margin: 0 auto; }
-    header { padding: 28px 24px 8px; }
-    h1 { font: 600 28px/1.1 Georgia, "Iowan Old Style", serif; margin: 0 0 8px; }
-    .notice { color: var(--muted); max-width: 68ch; margin: 0; }
+    header, main { max-width: 1180px; margin: 0 auto; }
+    header { padding: 28px 32px 4px; }
+    h1 {
+      display: flex; align-items: center; gap: 12px;
+      font: 650 32px/1.1 ui-sans-serif, "Segoe UI", sans-serif;
+      letter-spacing: -0.03em; margin: 0;
+    }
+    h1 .icon { width: 28px; height: 28px; }
+    .notice { color: var(--muted); max-width: 68ch; margin: 12px 0 0; }
     main {
       display: grid;
-      grid-template-columns: 320px 1fr;
-      gap: 24px;
-      padding: 20px 24px 48px;
+      grid-template-columns: 340px 1fr;
+      gap: 28px;
+      padding: 28px 32px 64px;
     }
-    h2 { display: flex; align-items: center; gap: 8px; font: 600 13px/1.2 ui-sans-serif, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+    h2 { display: flex; align-items: center; gap: 8px; font: 650 13px/1.2 ui-sans-serif, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 16px; color: var(--muted); }
     .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
     .icon { width: 1em; height: 1em; display: block; flex: none; }
     .with-icon, .meta-line, .tag, .empty, .error, #who { display: flex; align-items: center; gap: 6px; }
     .scan .meta-line { display: flex; }
     .meta-line > span, .empty > span, .error > span, #who > span { min-width: 0; }
-    .sso { display: grid; gap: 8px; max-width: 420px; margin: 0 0 18px; }
-    a.sso-link {
-      display: inline-flex; align-items: center; gap: 8px;
-      width: fit-content; padding: 8px 12px; border: 1px solid var(--line);
-      background: var(--panel); color: inherit; text-decoration: none;
+    .sso {
+      display: grid; gap: 16px; max-width: 440px; margin: 36px auto 24px;
+      padding: 32px; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 18px; box-shadow: var(--shadow);
     }
-    a.sso-link.disabled { opacity: 0.55; cursor: not-allowed; }
+    a.sso-link {
+      display: inline-flex; align-items: center; gap: 10px;
+      width: fit-content; padding: 10px 14px; border: 1px solid var(--line);
+      border-radius: 999px; background: var(--card); color: inherit; text-decoration: none;
+    }
+    a.sso-link.disabled { opacity: 0.45; cursor: not-allowed; }
     .choice { display: flex; align-items: center; gap: 8px; }
     .choice select { flex: 1; }
-    .timeline { border-right: 1px solid var(--line); padding-right: 20px; }
-    .branch-group { margin: 0 0 18px; }
+    .timeline { padding-right: 8px; }
+    .branch-group { margin: 0 0 28px; }
     .branch-group h3 {
-      margin: 0 0 8px; font-size: 13px; letter-spacing: 0.04em;
-      text-transform: uppercase; color: var(--muted);
+      margin: 0 0 12px; font-size: 12px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); font-weight: 650;
     }
     .scan {
-      display: block;
+      display: grid;
+      gap: 4px;
       width: 100%;
       text-align: left;
       background: transparent;
       border: 1px solid transparent;
-      border-left: 3px solid var(--line);
-      padding: 12px 12px 12px 14px;
+      border-radius: 14px;
+      padding: 14px 16px;
       margin: 0 0 8px;
       color: inherit;
       cursor: pointer;
     }
-    .scan[aria-current="true"] { background: var(--panel); border-color: var(--line); border-left-color: var(--ink); }
+    .scan[aria-current="true"] { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow); }
     .scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-    .scan strong { display: block; font-size: 16px; }
+    .scan strong { display: block; font-size: 16px; letter-spacing: -0.01em; }
     .scan span { display: block; color: var(--muted); font-size: 13px; }
     .later { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
     .empty { color: var(--muted); margin: 0 0 10px; }
-    .panel { background: var(--panel); border: 1px solid var(--line); padding: 20px; }
-    .panel h2 { text-transform: none; letter-spacing: 0; font-size: 22px; font-family: Georgia, serif; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
+    .panel > h2 { text-transform: none; letter-spacing: -0.03em; font-size: 28px; color: var(--ink); font-weight: 650; }
     .meta { color: var(--muted); margin-top: 0; }
     ul { list-style: none; padding: 0; margin: 0; }
     li + li { margin-top: 8px; }
-    .row { border: 1px solid var(--line); padding: 10px 12px; background: #fff; }
+    .row { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); }
+    .identity { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 0; }
+    .identity span { color: var(--ink); font-size: 14px; }
+    .finding-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .finding-relationship, .finding-scope { display: grid; gap: 12px; }
+    .finding-relationship { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: #faf7f2; }
+    .finding-relationship h3, .finding-scope h4 {
+      margin: 0; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+    }
+    .finding { display: grid; gap: 8px; padding: 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+    .finding-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    .finding-head strong { font-size: 15px; }
+    .vuln-id { font: 600 13px/1.3 ui-monospace, monospace; }
+    .finding-text { margin: 0; }
+    .finding-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; color: var(--muted); font-size: 13px; }
+    .finding-meta div { display: flex; gap: 6px; }
+    .finding-meta dt, .finding-meta dd { margin: 0; }
+    .finding-meta dt { font-weight: 650; color: var(--ink); }
     .tag { font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
     .added .tag { color: var(--added); }
     .removed .tag { color: var(--removed); }
@@ -101,26 +132,28 @@
     .actions button, form button, button.quiet {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       background: var(--ink);
       color: var(--panel);
       border: 0;
-      padding: 8px 12px;
+      border-radius: 999px;
+      padding: 10px 16px;
       font: inherit;
       cursor: pointer;
     }
     .actions button.quiet, form button.quiet, button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); }
     form { display: grid; gap: 12px; max-width: 420px; }
     label { display: grid; gap: 4px; font-size: 14px; }
-    input, select { font: inherit; padding: 8px; border: 1px solid var(--line); background: #fff; color: inherit; }
+    input, select { font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: inherit; }
     .error { color: var(--removed); margin: 0; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
     td button { margin-right: 8px; }
-    #gate, #admin { max-width: 1100px; margin: 0 auto; padding: 8px 24px 48px; }
+    #gate, #admin { max-width: 1180px; margin: 0 auto; padding: 8px 32px 64px; }
     @media (max-width: 800px) {
-      main { grid-template-columns: 1fr; }
-      .timeline { border-right: 0; padding-right: 0; }
+      main, .finding-groups { grid-template-columns: 1fr; }
+      header, main, #gate, #admin { padding-left: 16px; padding-right: 16px; }
+      .timeline { padding-right: 0; }
     }
   </style>
 </head>
@@ -147,7 +180,7 @@
   </svg>
   <header>
     <div class="bar">
-      <h1>Checkstead</h1>
+      <h1><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>Checkstead</h1>
       <div class="actions">
         <span id="who" class="notice" hidden></span>
         <button type="button" id="show-timeline" class="quiet" hidden><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>Timeline</button>
@@ -343,6 +376,7 @@
       );
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
+      detail.append(identityLine(scan));
 
       const dependencies = document.createElement("section");
       dependencies.append(withIcon("package", "Dependencies", "h2"));
@@ -398,17 +432,75 @@
       });
       findings.append(findingList);
       detail.append(findings);
-
-      detail.append(scoreSection(scan.scoreLines || [], drift.scores.available));
+      detail.append(findingsSection(scan.findings || []));
     }
 
     function findingLabel(item) {
-      const parts = [item.dependency, item.id];
-      if (item.relationship || item.scope) {
-        parts.push("(" + [item.relationship, item.scope].filter(Boolean).join(", ") + ")");
-      }
+      const parts = [item.package || item.dependency, item.id];
+      if (item.description) parts.push(item.description);
+      if (item.score) parts.push("score " + item.score);
       if (item.scoreSource) parts.push("source " + item.scoreSource);
-      return parts.join(" ");
+      return parts.filter(Boolean).join(" ");
+    }
+
+    function findingCard(item) {
+      const card = document.createElement("article");
+      card.className = "finding";
+      const head = document.createElement("div");
+      head.className = "finding-head";
+      head.append(text("strong", item.package || item.dependency || "Package"));
+      head.append(text("span", item.id || "", "vuln-id"));
+      card.append(head);
+      card.append(text("p", item.description || "No description recorded.", "finding-text"));
+      const meta = document.createElement("div");
+      meta.className = "finding-meta";
+      [
+        ["Score", item.score || "not recorded"],
+        ["Score source", item.scoreSource || "not recorded"],
+        ["Package", item.package || item.dependency || "not recorded"],
+      ].forEach((pair) => {
+        const bit = document.createElement("div");
+        bit.append(text("dt", pair[0]), text("dd", pair[1]));
+        meta.append(bit);
+      });
+      card.append(meta);
+      return card;
+    }
+
+    function findingsSection(findings) {
+      const section = document.createElement("section");
+      section.append(withIcon("alert", "Findings", "h2"));
+      const groups = document.createElement("div");
+      groups.className = "finding-groups";
+      ["direct", "transitive"].forEach((relationship) => {
+        const column = document.createElement("section");
+        column.className = "finding-relationship";
+        column.append(text("h3", relationship));
+        ["production", "dev"].forEach((scope) => {
+          const block = document.createElement("div");
+          block.className = "finding-scope";
+          block.append(text("h4", scope));
+          const items = (findings || []).filter((item) => {
+            return (item.relationship || "direct") === relationship && (item.scope || "production") === scope;
+          });
+          if (!items.length) block.append(text("p", "No findings.", "empty"));
+          items.forEach((item) => block.append(findingCard(item)));
+          column.append(block);
+        });
+        groups.append(column);
+      });
+      section.append(groups);
+      return section;
+    }
+
+    function identityLine(scan) {
+      const row = document.createElement("div");
+      row.className = "identity";
+      row.append(
+        withIcon("commit", "Branch " + (scan.branch || "not recorded"), "span"),
+        withIcon("commit", scan.revision ? "Revision " + scan.revision : "Revision not recorded", "span")
+      );
+      return row;
     }
 
     function scoreSection(lines, available) {
@@ -442,6 +534,8 @@
       );
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
+      detail.append(identityLine(scan));
+      detail.append(findingsSection(scan.findings || []));
       const section = document.createElement("section");
       section.append(withIcon("package", "Dependencies", "h2"));
       const list = document.createElement("ul");
@@ -464,6 +558,9 @@
 
     function render() {
       document.getElementById("notice").textContent = state.history.notice || "";
+      if (!state.selected && state.history.scans.length) {
+        state.selected = state.history.scans[state.history.scans.length - 1].id;
+      }
       renderTimeline();
       const scan = state.history.scans.find((item) => item.id === state.selected) || state.history.scans[0];
       const drift = state.history.drifts.find((item) => item.after === scan.id);

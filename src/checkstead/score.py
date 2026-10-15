@@ -56,6 +56,12 @@ class FindingLine:
     location: str = ""
     package_name: str = ""
     package_version: str = ""
+    description: str = ""
+
+    def package(self) -> str:
+        if self.package_name and self.package_version:
+            return f"{self.package_name}@{self.package_version}"
+        return self.package_name or self.dependency
 
     def report(self) -> str:
         if self.choice is None:
@@ -66,10 +72,12 @@ class FindingLine:
             vector = self.choice.vector or "none"
             source = self.choice.source or "none"
         kev = "yes" if self.kev else "no"
+        package = self.package().replace(" ", "")
         return (
             f"finding: {self.identifier} cvss={version} score={score} "
             f"source={source} vector={vector} enrichment={self.enrichment} "
             f"kev={kev} dependency={self.dependency} "
+            f"package={package} "
             f"relationship={self.relationship} scope={self.scope}"
         )
 
@@ -90,6 +98,16 @@ class ScoreResult:
     lines: list[str]
     failures: list[str]
     findings: list[FindingLine]
+
+
+def short_description(value: object, limit: int = 240) -> str:
+    """One line from the vulnerability text already in the engine report."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _number(value: float) -> str:
@@ -236,6 +254,11 @@ def findings_from_report(payload: dict, policy: str, roles=None) -> list[Finding
         relationship, scope = _role_for(deps[key], roles)
         identity = ecosystem_identity(deps[key])
         package_name, package_version = identity if identity else ("", "")
+        description = ""
+        for record in records:
+            description = short_description(record.get("description"))
+            if description:
+                break
         lines.append(
             FindingLine(
                 key[0],
@@ -248,6 +271,7 @@ def findings_from_report(payload: dict, policy: str, roles=None) -> list[Finding
                 _location(deps[key]),
                 package_name,
                 package_version,
+                description,
             )
         )
     return lines
@@ -290,10 +314,43 @@ def evaluate_report(
         fail_on_kev=fail_on_kev,
         fail_unscored=fail_unscored,
     )
-    report = [finding.report() for finding in findings]
-    if not report:
-        report = ["findings: none"]
-    return ScoreResult(report, failures, findings)
+    return ScoreResult(grouped_finding_lines(findings), failures, findings)
+
+
+_GROUP_ORDER = (
+    ("direct", "production"),
+    ("direct", "dev"),
+    ("transitive", "production"),
+    ("transitive", "dev"),
+)
+
+
+def grouped_finding_lines(findings: list[FindingLine]) -> list[str]:
+    """Separate direct from transitive, and production from dev."""
+    buckets: dict[tuple[str, str], list[FindingLine]] = {}
+    for finding in findings:
+        buckets.setdefault((finding.relationship, finding.scope), []).append(finding)
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    ordered = list(_GROUP_ORDER)
+    ordered.extend(key for key in buckets if key not in _GROUP_ORDER)
+    for key in ordered:
+        if key in seen:
+            continue
+        seen.add(key)
+        group = buckets.get(key) or []
+        if not group:
+            continue
+        relationship, scope = key
+        lines.append(f"{relationship}:")
+        lines.append(f"{scope}:")
+        for finding in group:
+            lines.append(finding.report())
+            if finding.description:
+                lines.append(f"description: {finding.description}")
+    if not lines:
+        return ["findings: none"]
+    return lines
 
 
 def policy_failures(

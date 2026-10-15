@@ -27,13 +27,16 @@ runs:
         INPUT_PROJECT: ${{ inputs.project }}
         INPUT_OUTPUT: ${{ inputs.output }}
         INPUT_CONFIG: ${{ inputs.config }}
-        INPUT_BRANCH: ${{ github.head_ref || (github.ref_type == 'branch' && github.ref_name) || '' }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        GITHUB_SHA: ${{ github.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
         docker build -t checkstead-action -f "$GITHUB_ACTION_PATH/Dockerfile" "$GITHUB_ACTION_PATH"
+        author_name="$(git -c safe.directory='*' -C "$GITHUB_WORKSPACE" log -1 --format='%an' "$GITHUB_SHA" 2>/dev/null || true)"
+        author_email="$(git -c safe.directory='*' -C "$GITHUB_WORKSPACE" log -1 --format='%ae' "$GITHUB_SHA" 2>/dev/null || true)"
         if [[ -n "${PR_NUMBER:-}" && -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
           work="${RUNNER_TEMP:-/tmp}/checkstead-pr-${PR_NUMBER}"
           rm -rf "$work"
@@ -68,8 +71,17 @@ runs:
             cfg="${INPUT_CONFIG#./}"
             scan_args+=(--config "/head/${cfg}")
           fi
-          if [[ -n "${INPUT_BRANCH:-}" ]]; then
-            scan_args+=(--branch "$INPUT_BRANCH")
+          if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+            scan_args+=(--branch "$GITHUB_REF_NAME")
+          fi
+          if [[ -n "${GITHUB_SHA:-}" ]]; then
+            scan_args+=(--revision "$GITHUB_SHA")
+          fi
+          if [[ -n "$author_name" ]]; then
+            scan_args+=(--author "$author_name")
+          fi
+          if [[ -n "$author_email" ]]; then
+            scan_args+=(--author-email "$author_email")
           fi
           mkdir -p "${GITHUB_WORKSPACE}/${INPUT_OUTPUT}"
           docker run --rm \
@@ -77,6 +89,10 @@ runs:
             -v "$work/base:/base" \
             -v "${GITHUB_WORKSPACE}/${INPUT_OUTPUT}:/out" \
             -w /head \
+            -e GITHUB_REF_NAME \
+            -e GITHUB_SHA \
+            -e CHECKSTEAD_AUTHOR="$author_name" \
+            -e CHECKSTEAD_AUTHOR_EMAIL="$author_email" \
             checkstead-action "${scan_args[@]}"
         else
           docker run --rm \
@@ -86,7 +102,10 @@ runs:
             -e INPUT_PROJECT \
             -e INPUT_OUTPUT \
             -e INPUT_CONFIG \
-            -e INPUT_BRANCH \
+            -e GITHUB_REF_NAME \
+            -e GITHUB_SHA \
+            -e CHECKSTEAD_AUTHOR="$author_name" \
+            -e CHECKSTEAD_AUTHOR_EMAIL="$author_email" \
             checkstead-action
         fi
     - name: Comment on the pull request

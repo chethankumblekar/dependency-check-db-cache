@@ -30,10 +30,12 @@ def _document(findings: list[FindingLine], project: str | None) -> dict:
     for finding in findings:
         if finding.identifier not in seen:
             seen.add(finding.identifier)
+            summary = finding.description or finding.identifier
             rules.append(
                 {
                     "id": finding.identifier,
-                    "shortDescription": {"text": finding.identifier},
+                    "shortDescription": {"text": summary},
+                    "fullDescription": {"text": summary},
                     "helpUri": "https://github.com/chethankumblekar/dependency-check-db-cache",
                 }
             )
@@ -62,12 +64,16 @@ def _result(finding: FindingLine, project: str | None) -> dict:
     score = f"{finding.choice.value:.1f}" if finding.choice is not None else "0.0"
     relationship = finding.relationship
     scope = finding.scope
+    package = finding.package()
     text = (
         f"{finding.identifier} on {finding.dependency} "
         f"({relationship}, {scope}). "
+        f"package {package}. "
         f"cvss {finding.choice.version if finding.choice else 'none'} "
         f"score {score if finding.choice else 'none'} source {source}"
     )
+    if finding.description:
+        text = f"{text}. {finding.description}"
     if project:
         text = f"{project}: {text}"
     return {
@@ -84,6 +90,9 @@ def _result(finding: FindingLine, project: str | None) -> dict:
         "properties": {
             "relationship": relationship,
             "scope": scope,
+            "groups": [relationship, scope],
+            "package": package,
+            "description": finding.description,
             "scoreSource": source,
             "security-severity": score,
         },

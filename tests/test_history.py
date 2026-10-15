@@ -207,6 +207,8 @@ class HistoryTests(TestCase):
         self.assertIn("branch-group", page)
         self.assertIn("function branchGroups", page)
         self.assertIn("scan.branch", page)
+        self.assertIn("finding-groups", page)
+        self.assertIn("findingsSection", page)
 
     def test_a_scan_records_the_git_branch(self) -> None:
         import os

@@ -97,6 +97,27 @@ class CommitTests(TestCase):
         self.assertEqual(lookup_branch(repo), current)
         subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True)
         self.assertEqual(lookup_branch(repo), "feature")
+        seen: list[list[str]] = []
+
+        def fake_run(args, **_kwargs):
+            seen.append(list(args))
+
+            class _Completed:
+                returncode = 0
+                stdout = "Ada Lovelace\x00ada@example.com\n"
+
+            return _Completed()
+
+        import checkstead.commit as commit_module
+
+        original = commit_module.subprocess.run
+        commit_module.subprocess.run = fake_run
+        try:
+            self.assertEqual(lookup_commit(revision, repo), ("Ada Lovelace", "ada@example.com"))
+        finally:
+            commit_module.subprocess.run = original
+        self.assertIn("safe.directory=*", seen[0])
+        self.assertIn(f"safe.directory={repo}", seen[0])
 
 
 class SsoTests(TestCase):

@@ -126,7 +126,7 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 ## Screenshots
 
-The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the findings list and the score source are empty on purpose.
+The pictures are the timeline server, signed in against the two fixture scans that ship in `ui/scans`. Both scans used the same snapshot. Finding analysis did not run, so the direct, transitive, production, and dev groups are empty on purpose. These fixture scans have no `branch:` line, so the detail says the branch is not recorded.
 
 On localhost, the first person uses **Sign in on this computer**. GitHub and Microsoft sign-in stay off until their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
 
@@ -400,7 +400,11 @@ jobs:
           project: my-service
 ```
 
-On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base. The report keeps direct or transitive, production or dev, and the score source.
+The Action passes `GITHUB_REF_NAME` and `GITHUB_SHA` into the scan. `checkstead.txt` records them as `branch:` and `revision:`, and records `author:` and `author-email:` for that commit. Git inside the container is run with `safe.directory`, so a different user on the runner workspace does not drop the branch, the commit, or the author. The timeline groups scans by the `branch:` line in `checkstead.txt`. It does not read a side file for that metadata.
+
+On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base.
+
+Findings in `checkstead.txt` are separate groups: direct and transitive, and production and dev. Each vulnerability has a `description:` line, plus the score, the score source, and the package. The timeline shows those groups. The SARIF result carries the same description, score, score source, and package.
 
 ### Pull requests
 
@@ -460,9 +464,9 @@ Open http://127.0.0.1:8765/. The page reads `ui/scans`. Pass `--scans` to point 
 
 The two reports already in `ui/scans` are a pair of fixture scans on the same snapshot (`2026-10-06T01:02:03Z`, engine 13.0.0). Dependency-Check 13.0.0 identified the jars in evidence-collection mode: guava 31.1-jre and commons-lang3 3.12.0, then guava 32.1.3-jre and gson 2.10.1. Those jars are the published Maven Central artifacts. Finding analysis did not run, because that needs the NVD snapshot and this checkout does not contain one. The findings list and the score-source field are empty. Suppressions and false positives are empty on purpose.
 
-A scan records a revision when you pass `--revision`. When that revision is a commit in the tree you scanned, the report also names the person git recorded as the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
+A scan records a revision when you pass `--revision`, and the GitHub Action passes `GITHUB_SHA`. When that revision is a commit git can see, the report also names the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
 
-A scan records the git branch of the tree it scanned, or the branch you pass with `--branch` when the checkout is detached. The timeline groups scans into one section per branch. Drift is the change from the previous scan on that same branch.
+A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. A finding's description, score, score source, and package are on the scan, in direct and transitive groups and in production and dev groups.
 
 ## Server
 

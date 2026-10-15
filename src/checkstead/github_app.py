@@ -550,12 +550,23 @@ def install_url(data_dir: Path) -> str:
 def _shell(title: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         f"<title>{escape(title)}</title>"
-        "<style>body{font:16px/1.45 ui-sans-serif,sans-serif;background:#f6f3ec;"
-        "color:#1c1915;margin:0}main{max-width:42rem;margin:0 auto;padding:32px 24px}"
-        "a,button{color:inherit}button{font:inherit;padding:8px 12px}"
-        "input{font:inherit;padding:8px;width:100%;max-width:24rem}"
-        "p,li{max-width:68ch}</style>"
+        "<style>"
+        "body{font:16px/1.5 ui-sans-serif,sans-serif;background:#f3f0e8;color:#1c1915;margin:0}"
+        "main{max-width:40rem;margin:48px auto;padding:32px;background:#fffcf7;"
+        "border:1px solid #e4dcd0;border-radius:18px;"
+        "box-shadow:0 18px 50px rgba(28,25,21,.06)}"
+        "h1{font:650 32px/1.1 ui-sans-serif,sans-serif;letter-spacing:-.03em;margin:0 0 16px}"
+        "p,li{max-width:68ch}a{color:inherit}"
+        "button{font:inherit;padding:10px 16px;border:0;border-radius:999px;"
+        "background:#1c1915;color:#fffcf7;cursor:pointer}"
+        "fieldset{border:1px solid #e4dcd0;border-radius:14px;padding:16px;display:grid;gap:10px}"
+        "legend{padding:0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase}"
+        "label{display:flex;gap:8px;align-items:center}"
+        "input[type=text],input:not([type]){font:inherit;padding:10px 12px;width:100%;"
+        "max-width:24rem;border:1px solid #e4dcd0;border-radius:10px}"
+        "</style>"
         f"<main><h1>{escape(title)}</h1>{body}</main></html>"
     )
 

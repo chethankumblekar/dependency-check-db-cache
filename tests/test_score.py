@@ -63,10 +63,11 @@ class ScoreTests(TestCase):
             payload, policy="prefer-newest", threshold=9, fail_on_kev=False, fail_unscored=False
         )
         self.assertEqual(result.failures, [])
-        self.assertIn("cvss=3.1 score=7.5 source=NVD", result.lines[0])
-        self.assertIn("enrichment=present", result.lines[0])
-        self.assertIn("kev=no", result.lines[0])
-        self.assertIn("vector=CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", result.lines[0])
+        finding = next(line for line in result.lines if line.startswith("finding:"))
+        self.assertIn("cvss=3.1 score=7.5 source=NVD", finding)
+        self.assertIn("enrichment=present", finding)
+        self.assertIn("kev=no", finding)
+        self.assertIn("vector=CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", finding)
 
     def test_highest_uses_the_larger_score_from_any_source(self) -> None:
         payload = _report(
@@ -88,8 +89,9 @@ class ScoreTests(TestCase):
         result = evaluate_report(
             payload, policy="prefer-newest", threshold=None, fail_on_kev=False, fail_unscored=False
         )
-        self.assertIn("score=6.5 source=cna@example.com", result.lines[0])
-        self.assertIn("enrichment=no-cpe-no-nvd-score", result.lines[0])
+        finding = next(line for line in result.lines if line.startswith("finding:"))
+        self.assertIn("score=6.5 source=cna@example.com", finding)
+        self.assertIn("enrichment=no-cpe-no-nvd-score", finding)
         self.assertEqual(result.failures, [])
 
     def test_kev_below_the_threshold_stays_a_finding(self) -> None:
@@ -98,7 +100,7 @@ class ScoreTests(TestCase):
             payload, policy="prefer-newest", threshold=9, fail_on_kev=False, fail_unscored=False
         )
         self.assertEqual(quiet.failures, [])
-        self.assertIn("kev=yes", quiet.lines[0])
+        self.assertIn("kev=yes", next(line for line in quiet.lines if line.startswith("finding:")))
         failing = evaluate_report(
             payload, policy="prefer-newest", threshold=9, fail_on_kev=True, fail_unscored=False
         )
@@ -112,7 +114,7 @@ class ScoreTests(TestCase):
         shown = evaluate_report(
             payload, policy="prefer-newest", threshold=0, fail_on_kev=False, fail_unscored=False
         )
-        self.assertIn("score=none", shown.lines[0])
+        self.assertIn("score=none", next(line for line in shown.lines if line.startswith("finding:")))
         self.assertEqual(shown.failures, [])
         failing = evaluate_report(
             payload, policy="prefer-newest", threshold=0, fail_on_kev=False, fail_unscored=True
@@ -305,3 +307,26 @@ class ScoreTests(TestCase):
         dev_finding = next(item for item in scan.findings if item.identifier == "GHSA-next")
         self.assertEqual(dev_finding.scope, "production")
         self.assertNotEqual(dev_finding.scope, real_finding.scope)
+
+    def test_findings_are_grouped_and_each_one_has_a_description(self) -> None:
+        vulnerability = _vuln("CVE-2020-8908", "NVD", _v3(5.5), cpe=False)
+        vulnerability["description"] = "  A temp directory creation vulnerability exists in Guava.  "
+        payload = _report(vulnerability)
+        result = evaluate_report(
+            payload, policy="prefer-newest", threshold=None, fail_on_kev=False, fail_unscored=False
+        )
+        self.assertEqual(result.lines[0], "direct:")
+        self.assertEqual(result.lines[1], "production:")
+        self.assertIn("package=example.jar", result.lines[2])
+        self.assertTrue(any(line == "description: A temp directory creation vulnerability exists in Guava." for line in result.lines))
+        self.assertNotIn("transitive:", result.lines)
+        sarif_path = write_sarif(ROOT / "build" / "tests" / "described" / "out", result.findings, "sample")
+        document = json.loads(sarif_path.read_text(encoding="utf-8"))
+        result_row = document["runs"][0]["results"][0]
+        self.assertEqual(result_row["properties"]["groups"], ["direct", "production"])
+        self.assertIn("A temp directory creation vulnerability exists in Guava.", result_row["message"]["text"])
+        self.assertEqual(
+            document["runs"][0]["tool"]["driver"]["rules"][0]["shortDescription"]["text"],
+            "A temp directory creation vulnerability exists in Guava.",
+        )
+        self.assertNotIn("services.nvd.nist.gov", sarif_path.read_text(encoding="utf-8"))

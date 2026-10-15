@@ -88,6 +88,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         base=[Path(path) for path in args.base],
         pull_request=args.pull_request or None,
         branch=args.branch or None,
+        author=args.author or None,
+        author_email=args.author_email or None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -129,6 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--branch",
         help="Git branch recorded on the report. Defaults to the branch of the scanned tree.",
     )
+    scan.add_argument("--author", help="Commit author recorded on the report.")
+    scan.add_argument("--author-email", help="Commit author email recorded on the report.")
     scan.add_argument(
         "--dry-run",
         action="store_true",

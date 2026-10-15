@@ -20,7 +20,18 @@ fi
 if [[ -n "${INPUT_BASE:-}" ]]; then
   args+=(--base "$INPUT_BASE")
 fi
-if [[ -n "${INPUT_BRANCH:-}" ]]; then
+if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+  args+=(--branch "$GITHUB_REF_NAME")
+elif [[ -n "${INPUT_BRANCH:-}" ]]; then
   args+=(--branch "$INPUT_BRANCH")
+fi
+if [[ -n "${GITHUB_SHA:-}" ]]; then
+  args+=(--revision "$GITHUB_SHA")
+fi
+if [[ -n "${CHECKSTEAD_AUTHOR:-}" ]]; then
+  args+=(--author "$CHECKSTEAD_AUTHOR")
+fi
+if [[ -n "${CHECKSTEAD_AUTHOR_EMAIL:-}" ]]; then
+  args+=(--author-email "$CHECKSTEAD_AUTHOR_EMAIL")
 fi
 exec checkstead "${args[@]}"

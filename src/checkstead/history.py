@@ -33,6 +33,9 @@ class Finding:
     score_source_present: bool
     relationship: str | None = None
     scope: str | None = None
+    description: str | None = None
+    score: str | None = None
+    package: str | None = None
 
 
 @dataclass
@@ -103,13 +106,32 @@ def _finding(dependency_name: str, vulnerability: dict) -> Finding:
         present = False
         source = None
     source_text = source.strip() if isinstance(source, str) and source.strip() else None
+    scores = _cvss_scores(vulnerability)
+    score = None
+    for version in ("4", "3", "2"):
+        if version in scores:
+            score = scores[version]
+            break
+    description = _short_text(vulnerability.get("description"))
     return Finding(
         dependency=dependency_name,
         identifier=str(vulnerability.get("name") or vulnerability.get("id") or ""),
-        cvss=_cvss_scores(vulnerability),
+        cvss=scores,
         score_source=source_text,
         score_source_present=present,
+        description=description or None,
+        score=score,
+        package=dependency_name or None,
     )
+
+
+def _short_text(value: object, limit: int = 240) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _dependency(raw: dict) -> Dependency:
@@ -174,12 +196,24 @@ def parse_finding_line(line: str) -> dict[str, str] | None:
     return fields
 
 
+def _report_findings(text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in text.splitlines():
+        fields = parse_finding_line(line)
+        if fields is not None:
+            current = fields
+            rows.append(fields)
+            continue
+        stripped = line.strip()
+        if current is not None and stripped.startswith("description:"):
+            current["description"] = stripped.split(":", 1)[1].strip()
+    return rows
+
+
 def _classified(findings: list[Finding], report_text: str) -> list[Finding]:
     grouped: dict[str, list[dict[str, str]]] = {}
-    for line in report_text.splitlines():
-        fields = parse_finding_line(line)
-        if fields is None:
-            continue
+    for fields in _report_findings(report_text):
         grouped.setdefault(fields["identifier"], []).append(fields)
     classified: list[Finding] = []
     for finding in findings:
@@ -201,6 +235,7 @@ def _classified(findings: list[Finding], report_text: str) -> list[Finding]:
         if source and source != "none":
             present = True
             score_source = source
+        description = chosen.get("description") or finding.description
         classified.append(
             Finding(
                 dependency=finding.dependency,
@@ -210,6 +245,9 @@ def _classified(findings: list[Finding], report_text: str) -> list[Finding]:
                 score_source_present=present,
                 relationship=chosen.get("relationship") or None,
                 scope=chosen.get("scope") or None,
+                description=description or None,
+                score=chosen.get("score") or finding.score,
+                package=chosen.get("package") or chosen.get("dependency") or finding.package,
             )
         )
     return classified
@@ -261,6 +299,8 @@ def _same_finding(left: Finding, right: Finding) -> bool:
         and left.score_source == right.score_source
         and left.relationship == right.relationship
         and left.scope == right.scope
+        and left.description == right.description
+        and left.score == right.score
     )
 
 
@@ -317,6 +357,12 @@ def _finding_json(item: Finding) -> dict:
         payload["relationship"] = item.relationship
     if item.scope:
         payload["scope"] = item.scope
+    if item.description:
+        payload["description"] = item.description
+    if item.score:
+        payload["score"] = item.score
+    if item.package:
+        payload["package"] = item.package
     return payload
 
 

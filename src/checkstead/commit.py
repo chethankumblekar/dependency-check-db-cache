@@ -10,19 +10,33 @@ import subprocess
 from pathlib import Path
 
 
-def lookup_branch(start: Path) -> str | None:
-    """The git branch of this tree. A detached HEAD or a tree without git records none."""
-    directory = start if start.is_dir() else start.parent
+def _git(directory: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+    """Run git in directory. safe.directory lets a container user read the checkout."""
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(directory), "rev-parse", "--abbrev-ref", "HEAD"],
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={directory}",
+                "-c",
+                "safe.directory=*",
+                "-C",
+                str(directory),
+                *args,
+            ],
             capture_output=True,
             text=True,
             check=False,
         )
     except OSError:
         return None
-    if completed.returncode != 0:
+
+
+def lookup_branch(start: Path) -> str | None:
+    """The git branch of this tree. A detached HEAD or a tree without git records none."""
+    directory = start if start.is_dir() else start.parent
+    completed = _git(directory, "rev-parse", "--abbrev-ref", "HEAD")
+    if completed is None or completed.returncode != 0:
         return None
     name = (completed.stdout or "").strip()
     if not name or name == "HEAD" or any(char in name for char in "\r\n\x00"):
@@ -34,16 +48,8 @@ def lookup_commit(revision: str, start: Path) -> tuple[str, str] | None:
     if not revision or any(char in revision for char in "\r\n\x00"):
         return None
     directory = start if start.is_dir() else start.parent
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(directory), "log", "-1", "--format=%an%x00%ae", revision],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if completed.returncode != 0:
+    completed = _git(directory, "log", "-1", "--format=%an%x00%ae", revision)
+    if completed is None or completed.returncode != 0:
         return None
     name, separator, email = completed.stdout.strip().partition("\x00")
     if not separator:

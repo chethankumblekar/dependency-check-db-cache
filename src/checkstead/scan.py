@@ -229,6 +229,15 @@ def build_scan_command(
     return command
 
 
+def _one_line(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    return text[:limit]
+
+
 def _load_engine_payload(engine_report: Path) -> dict:
     if not engine_report.is_file():
         return {}
@@ -355,6 +364,8 @@ def run_scan(
     base: list[Path] | None = None,
     pull_request: str | None = None,
     branch: str | None = None,
+    author: str | None = None,
+    author_email: str | None = None,
 ) -> ScanResult:
     base_paths = list(base or [])
     for scan in scans:
@@ -370,13 +381,15 @@ def run_scan(
         )
     engine_path = resolve_engine(engine)
     project_name = project or scans[0].name
-    author = None
-    author_email = None
-    if revision:
+    revision = _one_line(revision, 80)
+    author_name = _one_line(author, 200)
+    author_mail = _one_line(author_email, 200)
+    if revision and not (author_name and author_mail):
         found = lookup_commit(revision, scans[0])
         if found:
-            author, author_email = found
-    branch_name = (branch or "").strip() or lookup_branch(scans[0])
+            author_name = author_name or _one_line(found[0], 200)
+            author_mail = author_mail or _one_line(found[1], 200)
+    branch_name = _one_line(branch, 200) or lookup_branch(scans[0])
     out_dir.mkdir(parents=True, exist_ok=True)
     private = resolve_private_suppressions(private_suppressions, suppression_base or Path.cwd())
     suppressions: list[Path] = []
@@ -417,8 +430,8 @@ def run_scan(
         snapshot.checksum,
         project_name,
         revision,
-        author,
-        author_email,
+        author_name,
+        author_mail,
         header + ["findings: none"],
         pull_request,
         branch_name,
@@ -464,8 +477,8 @@ def run_scan(
             snapshot.checksum,
             project_name,
             revision,
-            author,
-            author_email,
+            author_name,
+            author_mail,
             score_policy,
             threshold,
             fail_on_kev,
