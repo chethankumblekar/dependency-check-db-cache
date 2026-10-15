@@ -103,16 +103,31 @@ def default_config() -> Config:
     )
 
 
-def load_config(path: Path | None, cwd: Path | None = None) -> Config:
-    """Resolve config from --config, ./checkstead.yml, the image file, then the default."""
+def load_config(
+    path: Path | None,
+    cwd: Path | None = None,
+    scan_roots: list[Path] | None = None,
+) -> Config:
+    """Resolve config from --config, the working directory, the scanned project, then the image file.
+
+    The working directory does not have to be the project. A checkstead.yml beside
+    a scanned directory is used when the working directory has none.
+    """
     cwd = cwd or Path.cwd()
     candidates: list[Path] = []
     if path is not None:
         candidates.append(path)
     else:
         candidates.append(cwd / "checkstead.yml")
+        for root in scan_roots or []:
+            directory = root if root.is_dir() else root.parent
+            candidates.append(directory / "checkstead.yml")
         candidates.append(IMAGE_CONFIG)
+    seen: list[Path] = []
     for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.append(candidate)
         if candidate.is_file():
             return parse_config_text(candidate.read_text(encoding="utf-8"), candidate)
     if path is not None:

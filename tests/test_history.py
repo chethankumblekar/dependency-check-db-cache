@@ -137,3 +137,29 @@ class HistoryTests(TestCase):
         self.assertEqual(changed[0]["before"]["version"], "31.1-jre")
         self.assertEqual(changed[0]["after"]["version"], "32.1.3-jre")
         self.assertFalse(payload["drifts"][0]["scores"]["available"])
+        self.assertEqual(payload["scans"][0]["scoreLines"], [])
+
+    def test_a_score_line_names_version_score_and_source(self) -> None:
+        root = ROOT / "build" / "tests" / "score-line"
+        if root.exists():
+            import shutil
+            shutil.rmtree(root)
+        directory = root / "01"
+        directory.mkdir(parents=True)
+        (directory / "checkstead.txt").write_text(
+            "engine: 13.0.0\n"
+            "snapshot: 2026-10-06T01:02:03Z\n"
+            "checksum: sha256:abc\n"
+            "project: scored\n"
+            "notice: This product uses data from the NVD API but is not endorsed or certified by the NVD.\n"
+            "finding: CVE-2020-8908 cvss=3 score=5.5 source=NVD vector=none enrichment=present kev=no dependency=guava-16.0.1.jar\n",
+            encoding="utf-8",
+        )
+        (directory / "dependency-check-report.json").write_text('{"dependencies": []}\n', encoding="utf-8")
+        scan = load_scan(directory)
+        self.assertEqual(
+            scan.score_lines,
+            ["finding: CVE-2020-8908 cvss=3 score=5.5 source=NVD vector=none enrichment=present kev=no dependency=guava-16.0.1.jar"],
+        )
+        payload = history_payload([scan])
+        self.assertEqual(payload["scans"][0]["scoreLines"], scan.score_lines)

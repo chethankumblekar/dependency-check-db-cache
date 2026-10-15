@@ -13,21 +13,43 @@ Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 
 ## Setup
 
+One command. No sudo. Python, Java, and Dependency-Check that already run stay in place. The command works from any directory and puts `checkstead` on your user PATH.
+
+macOS:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
 ```
 
-Run that command again when a finished scan still exits 14. Python, Java, and the engine stay in place.
+Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.ps1 | iex
+```
+
+Run the command for your system again when a finished scan still exits 14.
 
 ## Run
 
-Open a new terminal.
+Open a new terminal. The working directory can be any directory.
 
 ```bash
 checkstead scan --scan . --project my-service
 ```
 
-Reports are written to `checkstead-report/`.
+Reports are written to `checkstead-report/`. A `checkstead.yml` beside the scanned project is used when the current directory has none. An empty private suppression file does not fail the scan.
+
+```bash
+checkstead ui
+```
+
+The local server listens on http://127.0.0.1:8765/. Scans are read from `./ui/scans` when that directory exists, otherwise from the user install.
 
 A project virtualenv has its own `checkstead`. Install into that environment, then run the same command:
 
@@ -65,7 +87,7 @@ The website address is taken from that API URL. `https://api.github.com` uses `h
 
 An organization owner connects GitHub from that page:
 
-1. Run the command above from the directory that contains `checkstead.yml` when that file sets the score policy.
+1. Run the local server from any directory. When that directory contains `checkstead.yml`, organization scans use its score policy. A scan of a project uses the `checkstead.yml` beside that project when the server's directory has none.
 2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
 3. Open http://127.0.0.1:8765/github.
 4. Enter the organization login and create the GitHub App. The browser opens GitHub so the organization owner can confirm the app. The app asks to read repository contents and metadata.

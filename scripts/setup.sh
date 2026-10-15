@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
-# Install Checkstead for a Mac user under $HOME/checkstead.
+# Install Checkstead under $HOME/checkstead on macOS or Linux.
 # A second run leaves Python, java, the pinned engine, and the package in place.
 # This script does not call the NVD and does not publish a database.
+# Windows uses scripts/setup.ps1.
 set -euo pipefail
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "On Windows, open PowerShell and run: irm https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.ps1 | iex" >&2
+    exit 1
+    ;;
+esac
 
 ROOT="$HOME/checkstead"
 PACKAGE_URL="https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
@@ -63,25 +71,49 @@ find_pinned_engine() {
   return 1
 }
 
-require_mac() {
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "Installing Python or a JDK this way needs macOS." >&2
-    exit 1
-  fi
+python_triple() {
+  local os arch
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$os:$arch" in
+    Darwin:arm64|Darwin:aarch64) echo "aarch64-apple-darwin" ;;
+    Darwin:x86_64) echo "x86_64-apple-darwin" ;;
+    Linux:aarch64|Linux:arm64) echo "aarch64-unknown-linux-gnu" ;;
+    Linux:x86_64) echo "x86_64-unknown-linux-gnu" ;;
+    *)
+      echo "Installing Python this way needs macOS or Linux. On Windows, run scripts/setup.ps1." >&2
+      return 1
+      ;;
+  esac
+}
+
+jdk_platform() {
+  local os arch platform jdk_arch
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$os" in
+    Darwin) platform=mac ;;
+    Linux) platform=linux ;;
+    *)
+      echo "Installing a JDK this way needs macOS or Linux. On Windows, run scripts/setup.ps1." >&2
+      return 1
+      ;;
+  esac
+  case "$arch" in
+    arm64|aarch64) jdk_arch=aarch64 ;;
+    x86_64) jdk_arch=x64 ;;
+    *)
+      echo "Unsupported architecture: $arch" >&2
+      return 1
+      ;;
+  esac
+  echo "${platform}/${jdk_arch}"
 }
 
 install_python() {
-  local arch url tmp
-  require_mac
-  case "$(uname -m)" in
-    arm64|aarch64) arch=aarch64 ;;
-    x86_64) arch=x86_64 ;;
-    *)
-      echo "Unsupported architecture: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
-  url="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15+20261013-${arch}-apple-darwin-install_only.tar.gz"
+  local triple url tmp
+  triple=$(python_triple)
+  url="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15+20261013-${triple}-install_only.tar.gz"
   tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/python.tar.gz" "$url"
   tar -xzf "$tmp/python.tar.gz" -C "$tmp"
@@ -93,17 +125,9 @@ install_python() {
 }
 
 install_jdk() {
-  local arch url tmp found home
-  require_mac
-  case "$(uname -m)" in
-    arm64|aarch64) arch=aarch64 ;;
-    x86_64) arch=x64 ;;
-    *)
-      echo "Unsupported architecture: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
-  url="https://api.adoptium.net/v3/binary/latest/21/ga/mac/${arch}/jdk/hotspot/normal/eclipse"
+  local platform url tmp found home
+  platform=$(jdk_platform)
+  url="https://api.adoptium.net/v3/binary/latest/21/ga/${platform}/jdk/hotspot/normal/eclipse"
   tmp=$(mktemp -d)
   curl -fsSL -L -o "$tmp/jdk.tgz" "$url"
   tar -xzf "$tmp/jdk.tgz" -C "$tmp"
@@ -223,7 +247,7 @@ EOF
 
 ensure_path() {
   local profile changed=0
-  for profile in "$HOME/.zprofile" "$HOME/.zshrc"; do
+  for profile in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
     if [[ -f "$profile" ]] && grep -F "$PATH_MARKER" "$profile" >/dev/null 2>&1; then
       continue
     fi
@@ -239,7 +263,7 @@ ensure_path() {
 
 ensure_jdk_shell() {
   local profile changed=0
-  for profile in "$HOME/.zprofile" "$HOME/.zshrc"; do
+  for profile in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
     if [[ -f "$profile" ]] && grep -F "$JDK_MARKER" "$profile" >/dev/null 2>&1; then
       continue
     fi
@@ -301,6 +325,9 @@ checkstead_current() {
     return 0
   fi
   if ! grep -q -- '--disableYarnAudit' "$scan"; then
+    return 1
+  fi
+  if ! grep -q 'dependency-check.bat' "$scan"; then
     return 1
   fi
   local score github

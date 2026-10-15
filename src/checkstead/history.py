@@ -47,6 +47,7 @@ class Scan:
     findings: list[Finding]
     has_dependency_report: bool
     has_score_source: bool
+    score_lines: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -145,8 +146,14 @@ def load_engine_report(path: Path) -> tuple[list[Dependency], list[Finding], boo
     return dependencies, findings, has_score_source
 
 
+def score_lines_from_report(text: str) -> list[str]:
+    """The product score lines: version, score, and source."""
+    return [line.strip() for line in text.splitlines() if line.startswith("finding:")]
+
+
 def load_scan(directory: Path) -> Scan:
-    header = parse_header((directory / "checkstead.txt").read_text(encoding="utf-8"))
+    report_text = (directory / "checkstead.txt").read_text(encoding="utf-8")
+    header = parse_header(report_text)
     report = directory / "dependency-check-report.json"
     dependencies, findings, has_score_source = load_engine_report(report)
     return Scan(
@@ -163,6 +170,7 @@ def load_scan(directory: Path) -> Scan:
         findings=findings,
         has_dependency_report=report.is_file(),
         has_score_source=has_score_source,
+        score_lines=score_lines_from_report(report_text),
     )
 
 
@@ -251,6 +259,7 @@ def history_payload(scans: list[Scan]) -> dict:
                 "authorEmail": scan.author_email,
                 "hasDependencyReport": scan.has_dependency_report,
                 "hasScoreSource": scan.has_score_source,
+                "scoreLines": list(scan.score_lines),
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],
                 "findings": [_finding_json(item) for item in scan.findings],
             }

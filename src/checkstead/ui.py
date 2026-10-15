@@ -48,11 +48,36 @@ COOKIE = "checkstead_session"
 MAX_BODY = 8192
 
 
-def default_scans_dir() -> Path:
-    local = Path.cwd() / "ui" / "scans"
+def choose_scans_dir(cwd: Path, packaged: Path, home: Path) -> Path:
+    """Prefer ./ui/scans, then the checkout's scans, then the user install.
+
+    The command can be started from any directory. checkstead setup: scans in the user install.
+    """
+    local = cwd / "ui" / "scans"
     if local.is_dir():
         return local
-    return Path(__file__).resolve().parents[2] / "ui" / "scans"
+    if packaged.is_dir():
+        return packaged
+    return home / "scans"
+
+
+def default_scans_dir() -> Path:
+    from checkstead.scan import home_root
+
+    return choose_scans_dir(
+        Path.cwd(),
+        Path(__file__).resolve().parents[2] / "ui" / "scans",
+        home_root(),
+    )
+
+
+def prepare_scans_dir(path: Path, explicit: bool) -> Path:
+    if path.is_dir():
+        return path
+    if explicit or path.exists():
+        raise ChecksteadError(f"Scan directory not found: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def default_data_dir() -> Path:

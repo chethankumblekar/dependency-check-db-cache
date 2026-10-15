@@ -15,7 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.errors import ChecksteadError  # noqa: E402
-from checkstead.scan import SETUP_COMMAND, command_environment, resolve_engine, run_scan  # noqa: E402
+from checkstead.config import load_config  # noqa: E402
+from checkstead.scan import SETUP_COMMAND, WINDOWS_SETUP_COMMAND, command_environment, resolve_engine, run_scan  # noqa: E402
+from checkstead.suppressions import resolve_private_suppressions  # noqa: E402
+from checkstead.ui import choose_scans_dir, prepare_scans_dir  # noqa: E402
 from checkstead.snapshot import Snapshot  # noqa: E402
 
 SETUP = ROOT / "scripts" / "setup.sh"
@@ -293,6 +296,81 @@ class SetupTests(TestCase):
         message = str(caught.exception)
         self.assertIn(SETUP_COMMAND, message)
         self.assertNotIn("exited 1", message)
+
+    def test_linux_python_install_is_not_a_mac_build(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-linux-python"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        log = root / "curl.log"
+        _write(bindir / "curl", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_CURL_LOG\"\nexit 1\n")
+        _write(bindir / "java", "#!/bin/sh\nexit 0\n")
+        for name in ("python3", "python3.11", "python3.12", "python3.13", "python"):
+            _write(bindir / name, "#!/bin/sh\nexit 1\n")
+        env = self._env(home, bindir)
+        env["SETUP_CURL_LOG"] = str(log)
+        completed = subprocess.run(
+            ["bash", str(SETUP)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        recorded = log.read_text(encoding="utf-8")
+        self.assertIn("x86_64-unknown-linux-gnu-install_only.tar.gz", recorded)
+        self.assertNotIn("apple-darwin", recorded)
+        self.assertNotIn("services.nvd.nist.gov", recorded)
+        script = SETUP.read_text(encoding="utf-8")
+        self.assertNotIn("needs macOS.", script)
+        self.assertNotIn("sudo", script)
+        windows = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+        self.assertIn("x86_64-pc-windows-msvc", windows)
+        self.assertIn("dependency-check.bat", windows)
+        self.assertIn("SetEnvironmentVariable", windows)
+        self.assertNotIn("sudo", windows)
+        self.assertNotIn("services.nvd.nist.gov", windows)
+        self.assertNotIn("nvdApiKey", windows)
+        self.assertIn(WINDOWS_SETUP_COMMAND, (ROOT / "README.md").read_text(encoding="utf-8"))
+
+    def test_a_scan_from_another_directory_uses_the_project_file(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-any-directory"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        project = root / "project"
+        elsewhere = root / "elsewhere"
+        project.mkdir(parents=True)
+        elsewhere.mkdir()
+        (project / "empty.xml").write_text("<suppressions></suppressions>\n", encoding="utf-8")
+        (project / "checkstead.yml").write_text(
+            "scorePolicy: highest\nprivateSuppressions: empty.xml\n",
+            encoding="utf-8",
+        )
+        config = load_config(None, elsewhere, [project])
+        self.assertEqual(config.score_policy, "highest")
+        self.assertEqual(config.source, project / "checkstead.yml")
+        self.assertIsNone(resolve_private_suppressions("empty.xml", config.source.parent))
+        explicit = load_config(project / "checkstead.yml", elsewhere, [root])
+        self.assertEqual(explicit.source, project / "checkstead.yml")
+        home = root / "home"
+        packaged = root / "missing-packaged"
+        created = prepare_scans_dir(choose_scans_dir(elsewhere, packaged, home / "checkstead"), explicit=False)
+        self.assertEqual(created, home / "checkstead" / "scans")
+        self.assertTrue(created.is_dir())
+        with self.assertRaises(ChecksteadError):
+            prepare_scans_dir(elsewhere / "absent", explicit=True)
+
+    def test_engine_on_windows_is_the_batch_file_when_it_is_the_one_present(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-windows-engine"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bat = home / "checkstead" / "dependency-check" / "bin" / "dependency-check.bat"
+        _write(bat, "@echo off\r\n")
+        with mock_env(HOME=str(home)):
+            self.assertEqual(resolve_engine(), bat)
+        java = home / "checkstead" / "jdk" / "bin" / "java.exe"
+        _write(java, "#!/bin/sh\nexit 0\n")
+        forced = command_environment({"USERPROFILE": str(home), "PATH": str(root / "empty")})
+        self.assertEqual(forced["JAVA_HOME"], str(home / "checkstead" / "jdk"))
 
     def test_engine_skips_yarn_audit_when_yarn_does_not_print_a_version(self) -> None:
         root = ROOT / "build" / "tests" / "setup-yarn-wrapper"

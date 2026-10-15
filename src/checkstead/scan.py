@@ -45,7 +45,25 @@ def scrub_environment(source: dict[str, str]) -> dict[str, str]:
 
 def home_root(env: dict[str, str] | None = None) -> Path:
     source = env if env is not None else os.environ
-    return Path(source.get("HOME") or str(Path.home())) / "checkstead"
+    home = source.get("HOME") or source.get("USERPROFILE") or str(Path.home())
+    return Path(home) / "checkstead"
+
+
+def engine_filenames() -> tuple[str, ...]:
+    """dependency-check.bat is the Windows launcher. The shell script is the Unix one."""
+    if os.name == "nt":
+        return (
+            "dependency-check.bat",
+            "dependency-check.cmd",
+            "dependency-check.sh",
+            "dependency-check",
+        )
+    return (
+        "dependency-check.sh",
+        "dependency-check",
+        "dependency-check.bat",
+        "dependency-check.cmd",
+    )
 
 
 def resolve_engine(explicit: Path | None = None) -> Path:
@@ -54,13 +72,25 @@ def resolve_engine(explicit: Path | None = None) -> Path:
     env = os.environ.get("CHECKSTEAD_ENGINE")
     if env:
         return Path(env)
-    bundled = home_root() / "dependency-check" / "bin" / "dependency-check.sh"
-    if bundled.is_file():
-        return bundled
-    found = shutil.which("dependency-check.sh") or shutil.which("dependency-check")
-    if found:
-        return Path(found)
-    return Path("/opt/dependency-check/bin/dependency-check.sh")
+    bundled = home_root() / "dependency-check" / "bin"
+    for name in engine_filenames():
+        candidate = bundled / name
+        if candidate.is_file():
+            return candidate
+    for name in engine_filenames():
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    return Path("/opt/dependency-check/bin") / engine_filenames()[0]
+
+
+def bundled_java(env: dict[str, str] | None = None) -> Path | None:
+    directory = home_root(env) / "jdk" / "bin"
+    for name in ("java", "java.exe"):
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def java_ready(env: dict[str, str] | None = None) -> bool:
@@ -83,6 +113,15 @@ def java_ready(env: dict[str, str] | None = None) -> bool:
 SETUP_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.sh | bash"
 )
+WINDOWS_SETUP_COMMAND = (
+    "irm https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/setup.ps1 | iex"
+)
+
+
+def setup_hint() -> str:
+    if os.name == "nt":
+        return WINDOWS_SETUP_COMMAND
+    return SETUP_COMMAND
 
 
 def command_environment(source: dict[str, str]) -> dict[str, str]:
@@ -90,11 +129,11 @@ def command_environment(source: dict[str, str]) -> dict[str, str]:
     env = scrub_environment(source)
     if java_ready(env):
         return env
-    java = home_root(env) / "jdk" / "bin" / "java"
-    if not java.is_file():
+    java = bundled_java(env)
+    if java is None:
         raise ChecksteadError(
             "Java is not available. "
-            f"Run {SETUP_COMMAND}"
+            f"Run {setup_hint()}"
         )
     env["JAVA_HOME"] = str(java.parent.parent)
     env["PATH"] = str(java.parent) + os.pathsep + env.get("PATH", "")
@@ -257,6 +296,7 @@ def run_scan(
     fail_on_kev: bool = False,
     fail_unscored: bool = False,
     private_suppressions: str = "",
+    suppression_base: Path | None = None,
 ) -> ScanResult:
     for scan in scans:
         if not scan.exists():
@@ -275,7 +315,7 @@ def run_scan(
         if found:
             author, author_email = found
     out_dir.mkdir(parents=True, exist_ok=True)
-    private = resolve_private_suppressions(private_suppressions, Path.cwd())
+    private = resolve_private_suppressions(private_suppressions, suppression_base or Path.cwd())
     suppressions: list[Path] = []
     public = public_suppression_file()
     if public is not None:

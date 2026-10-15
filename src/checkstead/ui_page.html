@@ -376,14 +376,29 @@
       findings.append(findingList);
       detail.append(findings);
 
+      detail.append(scoreSection(scan.scoreLines || [], drift.scores.available));
+    }
+
+    function scoreSection(lines, available) {
       const scores = document.createElement("section");
       scores.append(withIcon("gauge", "CVSS and score source", "h2"));
-      if (!drift.scores.available) {
+      if (lines.length) {
+        const list = document.createElement("ul");
+        lines.forEach((line) => {
+          const row = document.createElement("li");
+          row.className = "row";
+          row.textContent = line.replace(/^finding:\s*/, "");
+          list.append(row);
+        });
+        scores.append(list);
+        return scores;
+      }
+      if (!available) {
         scores.append(text("p", "No score source in these reports. A phase 1 report does not carry one yet.", "empty"));
       } else {
         scores.append(text("p", "Score source is present on at least one finding. Changes are listed with the findings above.", "empty"));
       }
-      detail.append(scores);
+      return scores;
     }
 
     function renderScan(scan) {
@@ -412,6 +427,7 @@
       }
       section.append(list);
       detail.append(section);
+      detail.append(scoreSection(scan.scoreLines || [], scan.hasScoreSource));
     }
 
     function render() {

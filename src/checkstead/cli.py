@@ -42,11 +42,12 @@ def _cmd_version(_args: argparse.Namespace) -> int:
 
 
 def _cmd_ui(args: argparse.Namespace) -> int:
-    from checkstead.ui import default_data_dir, default_scans_dir, serve
+    from checkstead.ui import default_data_dir, default_scans_dir, prepare_scans_dir, serve
 
-    scans = Path(args.scans) if args.scans else default_scans_dir()
-    if not scans.is_dir():
-        raise ChecksteadError(f"Scan directory not found: {scans}")
+    scans = prepare_scans_dir(
+        Path(args.scans) if args.scans else default_scans_dir(),
+        explicit=bool(args.scans),
+    )
     data = Path(args.data) if args.data else default_data_dir()
     serve(scans, args.host, args.port, data)
     return 0
@@ -64,10 +65,12 @@ def _cmd_write_manifest(args: argparse.Namespace) -> int:
 def _cmd_scan(args: argparse.Namespace) -> int:
     if not args.scan:
         raise ChecksteadError("Pass at least one --scan path.")
-    config = load_config(Path(args.config) if args.config else None, Path.cwd())
+    scans = [Path(scan) for scan in args.scan]
+    config = load_config(Path(args.config) if args.config else None, Path.cwd(), scans)
     project = args.project or None
+    suppression_base = config.source.parent if config.source is not None else Path.cwd()
     result = run_scan(
-        [Path(scan) for scan in args.scan],
+        scans,
         project=project,
         config_snapshot_url=config.snapshot_url,
         out_dir=Path(args.out),
@@ -81,7 +84,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         fail_on_kev=config.fail_on_kev,
         fail_unscored=config.fail_unscored,
         private_suppressions=config.private_suppressions,
+        suppression_base=suppression_base,
     )
+    for line in result.report_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("finding:"):
+            print(line)
     print(f"report: {result.report_path}")
     return 0
 
