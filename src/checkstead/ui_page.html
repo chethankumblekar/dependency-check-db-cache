@@ -97,43 +97,104 @@
     .row { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); }
     .identity { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 0; }
     .identity span { color: var(--ink); font-size: 14px; }
-    .finding-filters { display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 0 0 16px; }
+    body.app { height: 100vh; overflow: hidden; }
+    body.app header { padding-top: 16px; padding-bottom: 0; }
+    body.app .notice { margin-top: 4px; }
+    body.app main {
+      height: calc(100vh - 118px);
+      padding-top: 12px;
+      padding-bottom: 16px;
+      overflow: hidden;
+    }
+    body.app .timeline { min-height: 0; overflow: auto; }
+    .scan-view {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      padding: 16px 18px;
+    }
+    .scan-view > h2 { margin-bottom: 4px; }
+    .scan-view .meta, .scan-view .empty { margin: 2px 0; }
+    .scan-view .identity { margin-top: 4px; }
+    .finding-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin: 10px 0 8px;
+    }
+    .finding-filters { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 0; }
     .finding-filters div { display: flex; flex-wrap: wrap; gap: 6px; }
     .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-    .finding-pager { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 10px; }
-    .finding-pager button:disabled { opacity: 0.45; cursor: not-allowed; }
     .finding-count { margin: 0; color: var(--muted); }
-    .finding-window {
-      max-height: calc(100vh - 220px);
-      overflow: auto;
+    .finding-split {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(220px, 0.9fr) minmax(240px, 1.15fr);
+      gap: 12px;
     }
-    .finding-list { display: grid; gap: 4px; }
+    .finding-window {
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+    }
+    .finding-list { display: grid; gap: 0; }
     .finding-list li + li { margin-top: 0; }
-    .finding-row { border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+    .finding-row { border: 0; border-radius: 0; background: transparent; border-bottom: 1px solid var(--line); }
     .finding-row > button {
       display: grid;
-      grid-template-columns: 3rem minmax(8.5rem, 1.05fr) minmax(8rem, 1.5fr) 6.4rem 6.4rem minmax(3.4rem, 0.55fr) 1rem;
+      grid-template-columns: 2.5rem minmax(6.5rem, 0.9fr) minmax(0, 1.4fr);
       gap: 8px;
       align-items: center;
       width: 100%;
-      padding: 7px 10px;
+      padding: 5px 10px;
       border: 0;
-      border-radius: 10px;
+      border-radius: 0;
       background: transparent;
       color: inherit;
-      font: inherit;
+      font: 13px/1.3 ui-sans-serif, "Segoe UI", sans-serif;
       text-align: left;
       cursor: pointer;
     }
+    .finding-row > button[aria-current="true"] { background: #efe8dc; }
     .finding-row > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
     .finding-score { font-variant-numeric: tabular-nums; font-weight: 650; }
     .vuln-id, .finding-package { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vuln-id { font: 600 13px/1.3 ui-monospace, monospace; }
     .finding-kind, .finding-source { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-    .finding-chevron { justify-self: end; transition: transform 120ms ease; }
-    .finding-row.open .finding-chevron { transform: rotate(90deg); }
+    .finding-selected {
+      min-height: 0;
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #faf7f2;
+    }
+    .finding-selected h3 {
+      margin: 0;
+      font: 650 22px/1.2 ui-sans-serif, "Segoe UI", sans-serif;
+      letter-spacing: -0.02em;
+      text-transform: none;
+      color: var(--ink);
+    }
     .finding-text { margin: 0; }
-    .finding-detail { display: grid; gap: 8px; padding: 0 12px 12px; }
+    .fold { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+    .fold summary {
+      cursor: pointer;
+      color: var(--muted);
+      font: 650 12px/1.3 ui-sans-serif, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .fold[open] { min-height: 0; max-height: 34%; overflow: auto; }
     .finding-cvss { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; color: var(--muted); font-size: 13px; }
     .finding-cvss div { display: flex; gap: 6px; }
     .finding-cvss dt, .finding-cvss dd { margin: 0; }
@@ -178,8 +239,10 @@
     td button { margin-right: 8px; }
     #gate, #admin { max-width: 1180px; margin: 0 auto; padding: 8px 32px 64px; }
     @media (max-width: 800px) {
-      main { grid-template-columns: 1fr; }
-      .finding-row > button { grid-template-columns: 3rem minmax(7rem, 1fr) minmax(6rem, 1.2fr) auto auto auto 1rem; }
+      main, body.app main { grid-template-columns: 1fr; height: auto; }
+      body.app { height: auto; overflow: auto; }
+      .finding-split { grid-template-columns: 1fr; }
+      .finding-window { max-height: 40vh; }
       header, main, #gate, #admin { padding-left: 16px; padding-right: 16px; }
       .timeline { padding-right: 0; }
     }
@@ -281,9 +344,7 @@
       openFinding: null,
       findingRelationship: "",
       findingScope: "",
-      findingPage: 0,
     };
-    const findingPageSize = 20;
 
     function text(tag, value, className) {
       const node = document.createElement(tag);
@@ -370,7 +431,6 @@
             state.selected = scan.id;
             state.openKey = null;
             state.openFinding = null;
-            state.findingPage = 0;
             render();
           });
           section.append(button);
@@ -406,27 +466,14 @@
       });
     }
 
-    function renderDrift(scan, drift) {
-      const detail = document.getElementById("detail");
-      const before = state.history.scans.find((item) => item.id === drift.before);
-      detail.replaceChildren(
-        withIcon("diff", "Drift", "h2"),
-        text("p", scanName(before) + " to " + scanName(scan), "meta"),
-        withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line")
-      );
-      const committer = committerLabel(scan);
-      if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
-      detail.append(identityLine(scan));
-
-      const dependencies = document.createElement("section");
-      dependencies.append(withIcon("package", "Dependencies", "h2"));
-      const depList = document.createElement("ul");
+    function dependencyChanges(drift) {
+      const list = document.createElement("ul");
       const buckets = drift.dependencies;
       if (!buckets.added.length && !buckets.removed.length && !buckets.changed.length) {
-        depList.append(text("li", "No dependency changes.", "empty"));
+        list.append(text("li", "No dependency changes.", "empty"));
       }
-      addRows(depList, buckets.added, "added", "Added");
-      addRows(depList, buckets.removed, "removed", "Removed");
+      addRows(list, buckets.added, "added", "Added");
+      addRows(list, buckets.removed, "removed", "Removed");
       buckets.changed.forEach((change) => {
         const key = change.before.name;
         const row = document.createElement("li");
@@ -449,38 +496,56 @@
           ].join("\n");
           row.append(extra);
         }
-        depList.append(row);
+        list.append(row);
       });
-      dependencies.append(depList);
-      detail.append(dependencies);
-
-      const findings = document.createElement("section");
-      findings.append(withIcon("alert", "Findings", "h2"));
-      const findingList = document.createElement("ul");
-      const found = drift.findings;
-      const findingCount = found.added.length + found.removed.length + found.changed.length;
-      if (!findingCount) {
-        findingList.append(text("li", "No findings were added or removed between the two scans.", "empty"));
-      }
-      ["added", "removed"].forEach((kind) => {
-        found[kind].forEach((item) => {
-          const row = document.createElement("li");
-          row.className = "row " + kind;
-          row.append(withIcon(driftIcons[kind], kind, "div", "tag"), text("div", findingLabel(item)));
-          findingList.append(row);
-        });
-      });
-      findings.append(findingList);
-      detail.append(findings);
-      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
+      return list;
     }
 
-    function findingLabel(item) {
-      const parts = [item.package || item.dependency, item.id];
-      if (item.description) parts.push(item.description);
-      if (item.score) parts.push("score " + item.score);
-      if (item.scoreSource) parts.push("source " + item.scoreSource);
-      return parts.filter(Boolean).join(" ");
+    function driftSummary(drift) {
+      const dependencies = drift.dependencies;
+      const dependencyCount = dependencies.added.length + dependencies.removed.length + dependencies.changed.length;
+      const found = drift.findings;
+      const findingCount = found.added.length + found.removed.length + found.changed.length;
+      const findingText = findingCount
+        ? findingCount + " finding changes"
+        : "No findings were added or removed between the two scans.";
+      return "Drift. " + findingText + " " + dependencyCount + " dependency changes.";
+    }
+
+    function dependencyInventory(scan) {
+      const list = document.createElement("ul");
+      if (!scan.hasDependencyReport) {
+        list.append(text("li", "This scan has no Dependency-Check dependency report.", "empty"));
+      } else if (!scan.dependencies.length) {
+        list.append(text("li", "The engine report lists no dependencies.", "empty"));
+      } else {
+        scan.dependencies.forEach((item) => {
+          const row = document.createElement("li");
+          row.className = "row";
+          row.textContent = dependencyLine(item);
+          list.append(row);
+        });
+      }
+      return list;
+    }
+
+    function renderDrift(scan, drift) {
+      const detail = document.getElementById("detail");
+      detail.className = "panel scan-view";
+      const before = state.history.scans.find((item) => item.id === drift.before);
+      detail.replaceChildren(
+        withIcon("diff", "Drift", "h2"),
+        text("p", scanName(before) + " to " + scanName(scan), "meta"),
+        withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line")
+      );
+      const committer = committerLabel(scan);
+      if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
+      detail.append(identityLine(scan));
+      const items = visibleFindings(scan.findings || []);
+      detail.append(findingToolbar(items.length));
+      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
+      detail.append(disclosure(driftSummary(drift), dependencyChanges(drift)));
+      detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
     }
 
     function findingRank(item) {
@@ -518,7 +583,7 @@
           ["transitive", "Transitive"],
         ], state.findingRelationship, (value) => {
           state.findingRelationship = value;
-          state.findingPage = 0;
+          state.openFinding = null;
           render();
         }),
         filterGroup("Scope", [
@@ -527,7 +592,7 @@
           ["dev", "Dev"],
         ], state.findingScope, (value) => {
           state.findingScope = value;
-          state.findingPage = 0;
+          state.openFinding = null;
           render();
         })
       );
@@ -554,15 +619,46 @@
       });
     }
 
-    function findingDetail(item, lines) {
-      const detail = document.createElement("div");
-      detail.className = "finding-detail";
-      detail.append(text("p", item.description || "No description recorded.", "finding-text"));
+    function findingRow(item) {
+      const key = findingKey(item);
+      const selected = state.openFinding === key;
+      const row = document.createElement("li");
+      row.className = "finding-row";
+      const button = document.createElement("button");
+      button.type = "button";
+      if (selected) button.setAttribute("aria-current", "true");
+      button.append(
+        text("span", item.score || "—", "finding-score"),
+        text("span", item.id || "—", "vuln-id"),
+        text("span", item.package || item.dependency || "—", "finding-package")
+      );
+      button.addEventListener("click", () => {
+        state.openFinding = key;
+        render();
+      });
+      row.append(button);
+      return row;
+    }
+
+    function selectedFinding(item, lines) {
+      const pane = document.createElement("article");
+      pane.className = "finding-selected";
+      if (!item) {
+        pane.append(text("p", "No findings.", "empty"));
+        return pane;
+      }
+      const title = document.createElement("h3");
+      title.textContent = (item.score || "—") + "  " + (item.id || "—");
+      pane.append(title);
+      pane.append(text("p", item.package || item.dependency || "—", "meta"));
+      pane.append(text("p", item.description || "No description recorded.", "finding-text"));
       const fields = parseScoreLine(scoreLineFor(item, lines) || "");
-      const pairs = [];
-      if (fields.cvss || fields.vector) pairs.push(["CVSS", [fields.cvss, fields.vector].filter(Boolean).join(" ")]);
-      if (fields.kev && fields.kev !== "no") pairs.push(["KEV", fields.kev]);
-      if (!pairs.length) return detail;
+      const pairs = [
+        ["Score source", item.scoreSource || "—"],
+        ["Relationship", item.relationship || "direct"],
+        ["Scope", item.scope || "production"],
+        ["CVSS", [fields.cvss, fields.vector].filter(Boolean).join(" ") || item.score || "—"],
+      ];
       const meta = document.createElement("dl");
       meta.className = "finding-cvss";
       pairs.forEach((pair) => {
@@ -570,76 +666,11 @@
         bit.append(text("dt", pair[0]), text("dd", pair[1]));
         meta.append(bit);
       });
-      detail.append(meta);
-      return detail;
+      pane.append(meta);
+      return pane;
     }
 
-    function findingRow(item, lines) {
-      const key = findingKey(item);
-      const open = state.openFinding === key;
-      const row = document.createElement("li");
-      row.className = "finding-row" + (open ? " open" : "");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.setAttribute("aria-expanded", open ? "true" : "false");
-      const chevron = icon("chevron");
-      chevron.classList.add("finding-chevron");
-      button.append(
-        text("span", item.score || "—", "finding-score"),
-        text("span", item.id || "—", "vuln-id"),
-        text("span", item.package || item.dependency || "—", "finding-package"),
-        text("span", item.relationship || "direct", "finding-kind"),
-        text("span", item.scope || "production", "finding-kind"),
-        text("span", item.scoreSource || "—", "finding-source"),
-        chevron
-      );
-      button.addEventListener("click", () => {
-        state.openFinding = open ? null : key;
-        render();
-      });
-      row.append(button);
-      if (open) row.append(findingDetail(item, lines));
-      return row;
-    }
-
-    function findingPager(total) {
-      const bar = document.createElement("div");
-      bar.className = "finding-pager";
-      const pages = Math.max(1, Math.ceil(total / findingPageSize));
-      if (state.findingPage > pages - 1) state.findingPage = 0;
-      const start = state.findingPage * findingPageSize;
-      const end = Math.min(total, start + findingPageSize);
-      bar.append(text("p", total ? (start + 1) + "–" + end + " of " + total : "No findings.", "finding-count"));
-      if (total > findingPageSize) {
-        const previous = document.createElement("button");
-        previous.type = "button";
-        previous.className = "quiet";
-        previous.textContent = "Previous";
-        previous.disabled = state.findingPage === 0;
-        previous.addEventListener("click", () => {
-          state.findingPage -= 1;
-          state.openFinding = null;
-          render();
-        });
-        const next = document.createElement("button");
-        next.type = "button";
-        next.className = "quiet";
-        next.textContent = "Next";
-        next.disabled = end >= total;
-        next.addEventListener("click", () => {
-          state.findingPage += 1;
-          state.openFinding = null;
-          render();
-        });
-        bar.append(previous, next);
-      }
-      return {bar, start, end};
-    }
-
-    function findingsSection(findings, lines) {
-      const section = document.createElement("section");
-      section.append(withIcon("alert", "Findings", "h2"));
-      section.append(findingFilters());
+    function visibleFindings(findings) {
       const items = (findings || []).filter((item) => {
         const relationship = item.relationship || "direct";
         const scope = item.scope || "production";
@@ -648,18 +679,43 @@
         return true;
       });
       items.sort((a, b) => findingRank(b) - findingRank(a) || String(a.id || "").localeCompare(String(b.id || "")));
-      const pager = findingPager(items.length);
-      section.append(pager.bar);
+      if (!items.some((item) => findingKey(item) === state.openFinding)) {
+        state.openFinding = items.length ? findingKey(items[0]) : null;
+      }
+      return items;
+    }
+
+    function findingsSection(findings, lines) {
+      const section = document.createElement("section");
+      section.className = "finding-split";
+      const items = visibleFindings(findings);
+      const chosen = items.find((item) => findingKey(item) === state.openFinding) || null;
       const findingWindow = document.createElement("div");
       findingWindow.className = "finding-window";
       if (items.length) {
         const list = document.createElement("ul");
         list.className = "finding-list";
-        items.slice(pager.start, pager.end).forEach((item) => list.append(findingRow(item, lines)));
+        items.forEach((item) => list.append(findingRow(item)));
         findingWindow.append(list);
       }
-      section.append(findingWindow);
+      section.append(findingWindow, selectedFinding(chosen, lines));
       return section;
+    }
+
+    function findingToolbar(total) {
+      const bar = document.createElement("div");
+      bar.className = "finding-toolbar";
+      bar.append(findingFilters(), text("p", total + (total === 1 ? " finding" : " findings"), "finding-count"));
+      return bar;
+    }
+
+    function disclosure(summary, node) {
+      const details = document.createElement("details");
+      details.className = "fold";
+      const label = document.createElement("summary");
+      label.textContent = summary;
+      details.append(label, node);
+      return details;
     }
 
     function identityLine(scan) {
@@ -679,6 +735,7 @@
 
     function renderScan(scan) {
       const detail = document.getElementById("detail");
+      detail.className = "panel scan-view";
       detail.replaceChildren(
         withIcon("package", scanName(scan), "h2"),
         withIcon("clock", "Snapshot " + scan.snapshot + " · engine " + scan.engine, "p", "meta meta-line"),
@@ -687,24 +744,10 @@
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
       detail.append(identityLine(scan));
+      const items = visibleFindings(scan.findings || []);
+      detail.append(findingToolbar(items.length));
       detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
-      const section = document.createElement("section");
-      section.append(withIcon("package", "Dependencies", "h2"));
-      const list = document.createElement("ul");
-      if (!scan.hasDependencyReport) {
-        list.append(text("li", "This scan has no Dependency-Check dependency report.", "empty"));
-      } else if (!scan.dependencies.length) {
-        list.append(text("li", "The engine report lists no dependencies.", "empty"));
-      } else {
-        scan.dependencies.forEach((item) => {
-          const row = document.createElement("li");
-          row.className = "row";
-          row.textContent = dependencyLine(item);
-          list.append(row);
-        });
-      }
-      section.append(list);
-      detail.append(section);
+      detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
       if (!(scan.scoreLines || []).length) {
         const note = scoreNote(scan.hasScoreSource);
         if (note) detail.append(note);
@@ -762,6 +805,7 @@
     }
 
     function showSignedOut() {
+      document.body.classList.remove("app");
       show("gate", true);
       show("admin", false);
       show("who", false);
@@ -772,6 +816,7 @@
     }
 
     function showApp() {
+      document.body.classList.add("app");
       const user = session.user;
       show("gate", false);
       const who = document.getElementById("who");
@@ -786,6 +831,7 @@
     }
 
     function showTimeline() {
+      document.body.classList.add("app");
       show("admin", false);
       document.querySelector("main").hidden = false;
     }
@@ -869,6 +915,7 @@
     });
 
     document.getElementById("show-admin").addEventListener("click", async () => {
+      document.body.classList.remove("app");
       document.querySelector("main").hidden = true;
       show("admin", true);
       fillProviders(document.getElementById("add-provider"), true);
