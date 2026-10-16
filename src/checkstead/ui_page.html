@@ -119,24 +119,17 @@
     .scan-view .identity { margin-top: 4px; }
     .finding-toolbar {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: 8px 16px;
       align-items: center;
-      justify-content: space-between;
       margin: 10px 0 8px;
     }
-    .finding-filters { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 0; }
-    .finding-filters div { display: flex; flex-wrap: wrap; gap: 6px; }
+    .finding-filters { display: flex; flex-wrap: nowrap; gap: 12px 20px; margin: 0; }
+    .finding-filters div { display: flex; flex-wrap: nowrap; gap: 6px; }
     .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
-    .finding-count { margin: 0; color: var(--muted); }
-    .finding-split {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-columns: minmax(220px, 0.9fr) minmax(240px, 1.15fr);
-      gap: 12px;
-    }
+    .finding-count { margin: 0 0 0 auto; color: var(--muted); white-space: nowrap; }
     .finding-window {
+      flex: 1;
       min-height: 0;
       overflow: auto;
       border: 1px solid var(--line);
@@ -148,7 +141,7 @@
     .finding-row { border: 0; border-radius: 0; background: transparent; border-bottom: 1px solid var(--line); }
     .finding-row > button {
       display: grid;
-      grid-template-columns: 2.5rem minmax(6.5rem, 0.9fr) minmax(0, 1.4fr);
+      grid-template-columns: 2.5rem 9.2rem minmax(0, 1fr) 6.4rem 6.2rem;
       gap: 8px;
       align-items: center;
       width: 100%;
@@ -167,25 +160,9 @@
     .vuln-id, .finding-package { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vuln-id { font: 600 13px/1.3 ui-monospace, monospace; }
     .finding-kind, .finding-source { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-    .finding-selected {
-      min-height: 0;
-      overflow: auto;
-      display: grid;
-      align-content: start;
-      gap: 10px;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: #faf7f2;
-    }
-    .finding-selected h3 {
-      margin: 0;
-      font: 650 22px/1.2 ui-sans-serif, "Segoe UI", sans-serif;
-      letter-spacing: -0.02em;
-      text-transform: none;
-      color: var(--ink);
-    }
+    .finding-extra { display: grid; gap: 2px; padding: 0 10px 8px 2.6rem; }
     .finding-text { margin: 0; }
+    .finding-extra .finding-source { margin: 0; text-transform: none; letter-spacing: 0; font-size: 13px; }
     .fold { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
     .fold summary {
       cursor: pointer;
@@ -195,11 +172,6 @@
       text-transform: uppercase;
     }
     .fold[open] { min-height: 0; max-height: 34%; overflow: auto; }
-    .finding-cvss { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; color: var(--muted); font-size: 13px; }
-    .finding-cvss div { display: flex; gap: 6px; }
-    .finding-cvss dt, .finding-cvss dd { margin: 0; }
-    .finding-cvss dt { font-weight: 650; color: var(--ink); }
-    .finding-cvss dd { font-family: ui-monospace, monospace; word-break: break-all; }
     .tag { font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
     .added .tag { color: var(--added); }
     .removed .tag { color: var(--removed); }
@@ -241,8 +213,9 @@
     @media (max-width: 800px) {
       main, body.app main { grid-template-columns: 1fr; height: auto; }
       body.app { height: auto; overflow: auto; }
-      .finding-split { grid-template-columns: 1fr; }
-      .finding-window { max-height: 40vh; }
+      .finding-toolbar, .finding-filters, .finding-filters div { flex-wrap: wrap; }
+      .finding-row > button { grid-template-columns: 2.5rem minmax(7rem, 1fr) minmax(0, 1.2fr) auto auto; }
+      .finding-window { max-height: 40vh; flex: none; }
       header, main, #gate, #admin { padding-left: 16px; padding-right: 16px; }
       .timeline { padding-right: 0; }
     }
@@ -543,7 +516,7 @@
       detail.append(identityLine(scan));
       const items = visibleFindings(scan.findings || []);
       detail.append(findingToolbar(items.length));
-      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
+      detail.append(findingsSection(scan.findings || []));
       detail.append(disclosure(driftSummary(drift), dependencyChanges(drift)));
       detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
     }
@@ -599,26 +572,6 @@
       return bar;
     }
 
-    function parseScoreLine(line) {
-      const body = String(line || "").replace(/^finding:\s*/, "");
-      const fields = {};
-      body.split(/\s+/).slice(1).forEach((token) => {
-        const split = token.indexOf("=");
-        if (split > 0) fields[token.slice(0, split)] = token.slice(split + 1);
-      });
-      return fields;
-    }
-
-    function scoreLineFor(item, lines) {
-      const id = item.id || "";
-      const dependency = item.dependency || "";
-      return (lines || []).find((line) => {
-        const body = String(line).replace(/^finding:\s*/, "");
-        if (!body.startsWith(id + " ")) return false;
-        return !dependency || body.includes("dependency=" + dependency);
-      });
-    }
-
     function findingRow(item) {
       const key = findingKey(item);
       const selected = state.openFinding === key;
@@ -630,44 +583,23 @@
       button.append(
         text("span", item.score || "—", "finding-score"),
         text("span", item.id || "—", "vuln-id"),
-        text("span", item.package || item.dependency || "—", "finding-package")
+        text("span", item.package || item.dependency || "—", "finding-package"),
+        text("span", item.relationship || "direct", "finding-kind"),
+        text("span", item.scope || "production", "finding-kind")
       );
       button.addEventListener("click", () => {
         state.openFinding = key;
         render();
       });
       row.append(button);
-      return row;
-    }
-
-    function selectedFinding(item, lines) {
-      const pane = document.createElement("article");
-      pane.className = "finding-selected";
-      if (!item) {
-        pane.append(text("p", "No findings.", "empty"));
-        return pane;
+      if (selected) {
+        const extra = document.createElement("div");
+        extra.className = "finding-extra";
+        extra.append(text("p", item.description || "No description recorded.", "finding-text"));
+        extra.append(text("p", "Score source " + (item.scoreSource || "—"), "finding-source"));
+        row.append(extra);
       }
-      const title = document.createElement("h3");
-      title.textContent = (item.score || "—") + "  " + (item.id || "—");
-      pane.append(title);
-      pane.append(text("p", item.package || item.dependency || "—", "meta"));
-      pane.append(text("p", item.description || "No description recorded.", "finding-text"));
-      const fields = parseScoreLine(scoreLineFor(item, lines) || "");
-      const pairs = [
-        ["Score source", item.scoreSource || "—"],
-        ["Relationship", item.relationship || "direct"],
-        ["Scope", item.scope || "production"],
-        ["CVSS", [fields.cvss, fields.vector].filter(Boolean).join(" ") || item.score || "—"],
-      ];
-      const meta = document.createElement("dl");
-      meta.className = "finding-cvss";
-      pairs.forEach((pair) => {
-        const bit = document.createElement("div");
-        bit.append(text("dt", pair[0]), text("dd", pair[1]));
-        meta.append(bit);
-      });
-      pane.append(meta);
-      return pane;
+      return row;
     }
 
     function visibleFindings(findings) {
@@ -685,21 +617,17 @@
       return items;
     }
 
-    function findingsSection(findings, lines) {
-      const section = document.createElement("section");
-      section.className = "finding-split";
-      const items = visibleFindings(findings);
-      const chosen = items.find((item) => findingKey(item) === state.openFinding) || null;
+    function findingsSection(findings) {
       const findingWindow = document.createElement("div");
       findingWindow.className = "finding-window";
+      const items = visibleFindings(findings);
       if (items.length) {
         const list = document.createElement("ul");
         list.className = "finding-list";
         items.forEach((item) => list.append(findingRow(item)));
         findingWindow.append(list);
       }
-      section.append(findingWindow, selectedFinding(chosen, lines));
-      return section;
+      return findingWindow;
     }
 
     function findingToolbar(total) {
@@ -746,7 +674,7 @@
       detail.append(identityLine(scan));
       const items = visibleFindings(scan.findings || []);
       detail.append(findingToolbar(items.length));
-      detail.append(findingsSection(scan.findings || [], scan.scoreLines || []));
+      detail.append(findingsSection(scan.findings || []));
       detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
       if (!(scan.scoreLines || []).length) {
         const note = scoreNote(scan.hasScoreSource);
