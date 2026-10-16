@@ -128,41 +128,62 @@
     .finding-filters div { display: flex; flex-wrap: nowrap; gap: 6px; }
     .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
     .finding-count { margin: 0 0 0 auto; color: var(--muted); white-space: nowrap; }
+    .finding-block {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
     .finding-window {
       flex: 1;
       min-height: 0;
       overflow: auto;
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 8px;
       background: var(--card);
     }
-    .finding-list { display: grid; gap: 0; }
-    .finding-list li + li { margin-top: 0; }
-    .finding-row { border: 0; border-radius: 0; background: transparent; border-bottom: 1px solid var(--line); }
-    .finding-row > button {
-      display: grid;
-      grid-template-columns: 2.5rem 9.2rem minmax(0, 1fr) 6.4rem 6.2rem;
-      gap: 8px;
-      align-items: center;
-      width: 100%;
-      padding: 5px 10px;
+    table.finding-table { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+    .finding-table th, .finding-table td {
+      padding: 4px 8px;
+      vertical-align: middle;
+      white-space: nowrap;
+      border-bottom: 1px solid var(--line);
+    }
+    .finding-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f6f1e8;
+      font: 650 11px/1.2 ui-sans-serif, sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .finding-table th button {
+      display: inline;
+      width: auto;
+      margin: 0;
+      padding: 0;
       border: 0;
       border-radius: 0;
-      background: transparent;
+      background: none;
       color: inherit;
-      font: 13px/1.3 ui-sans-serif, "Segoe UI", sans-serif;
-      text-align: left;
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
       cursor: pointer;
     }
-    .finding-row > button[aria-current="true"] { background: #efe8dc; }
-    .finding-row > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-    .finding-score { font-variant-numeric: tabular-nums; font-weight: 650; }
-    .vuln-id, .finding-package { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .vuln-id { font: 600 13px/1.3 ui-monospace, monospace; }
-    .finding-kind, .finding-source { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-    .finding-extra { display: grid; gap: 2px; padding: 0 10px 8px 2.6rem; }
-    .finding-text { margin: 0; }
-    .finding-extra .finding-source { margin: 0; text-transform: none; letter-spacing: 0; font-size: 13px; }
+    .finding-table td { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+    .finding-table tbody tr { cursor: pointer; }
+    .finding-table tbody tr[aria-selected="true"] td { background: #efe8dc; }
+    .finding-table .finding-score { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .finding-table .vuln-id { font: 600 12px/1.3 ui-monospace, monospace; }
+    .finding-description {
+      margin: 6px 0 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .fold { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
     .fold summary {
       cursor: pointer;
@@ -214,7 +235,6 @@
       main, body.app main { grid-template-columns: 1fr; height: auto; }
       body.app { height: auto; overflow: auto; }
       .finding-toolbar, .finding-filters, .finding-filters div { flex-wrap: wrap; }
-      .finding-row > button { grid-template-columns: 2.5rem minmax(7rem, 1fr) minmax(0, 1.2fr) auto auto; }
       .finding-window { max-height: 40vh; flex: none; }
       header, main, #gate, #admin { padding-left: 16px; padding-right: 16px; }
       .timeline { padding-right: 0; }
@@ -317,6 +337,8 @@
       openFinding: null,
       findingRelationship: "",
       findingScope: "",
+      findingSort: "score",
+      findingSortDescending: true,
     };
 
     function text(tag, value, className) {
@@ -572,33 +594,50 @@
       return bar;
     }
 
+    const findingColumns = [
+      ["score", "Score"],
+      ["id", "Vulnerability"],
+      ["package", "Package"],
+      ["relationship", "Relationship"],
+      ["scope", "Scope"],
+      ["scoreSource", "Source"],
+    ];
+
+    function findingField(item, key) {
+      if (key === "score") return item.score || "";
+      if (key === "package") return item.package || item.dependency || "";
+      if (key === "scoreSource") return item.scoreSource || "";
+      if (key === "relationship") return item.relationship || "direct";
+      if (key === "scope") return item.scope || "production";
+      return item.id || "";
+    }
+
+    function sortByColumn(key) {
+      if (state.findingSort === key) state.findingSortDescending = !state.findingSortDescending;
+      else {
+        state.findingSort = key;
+        state.findingSortDescending = key === "score";
+      }
+      render();
+    }
+
     function findingRow(item) {
       const key = findingKey(item);
       const selected = state.openFinding === key;
-      const row = document.createElement("li");
-      row.className = "finding-row";
-      const button = document.createElement("button");
-      button.type = "button";
-      if (selected) button.setAttribute("aria-current", "true");
-      button.append(
-        text("span", item.score || "—", "finding-score"),
-        text("span", item.id || "—", "vuln-id"),
-        text("span", item.package || item.dependency || "—", "finding-package"),
-        text("span", item.relationship || "direct", "finding-kind"),
-        text("span", item.scope || "production", "finding-kind")
-      );
-      button.addEventListener("click", () => {
+      const row = document.createElement("tr");
+      if (selected) row.setAttribute("aria-selected", "true");
+      findingColumns.forEach((column) => {
+        const cell = document.createElement("td");
+        const value = findingField(item, column[0]) || "—";
+        if (column[0] === "score") cell.className = "finding-score";
+        if (column[0] === "id") cell.className = "vuln-id";
+        cell.textContent = value;
+        row.append(cell);
+      });
+      row.addEventListener("click", () => {
         state.openFinding = key;
         render();
       });
-      row.append(button);
-      if (selected) {
-        const extra = document.createElement("div");
-        extra.className = "finding-extra";
-        extra.append(text("p", item.description || "No description recorded.", "finding-text"));
-        extra.append(text("p", "Score source " + (item.scoreSource || "—"), "finding-source"));
-        row.append(extra);
-      }
       return row;
     }
 
@@ -610,7 +649,14 @@
         if (state.findingScope && scope !== state.findingScope) return false;
         return true;
       });
-      items.sort((a, b) => findingRank(b) - findingRank(a) || String(a.id || "").localeCompare(String(b.id || "")));
+      items.sort((a, b) => {
+        const ranked = findingRank(b) - findingRank(a);
+        const delta = state.findingSort === "score"
+          ? (state.findingSortDescending ? ranked : -ranked)
+          : String(findingField(a, state.findingSort)).localeCompare(String(findingField(b, state.findingSort)));
+        const directed = state.findingSort === "score" ? delta : (state.findingSortDescending ? -delta : delta);
+        return directed || String(a.id || "").localeCompare(String(b.id || ""));
+      });
       if (!items.some((item) => findingKey(item) === state.openFinding)) {
         state.openFinding = items.length ? findingKey(items[0]) : null;
       }
@@ -618,16 +664,40 @@
     }
 
     function findingsSection(findings) {
+      const wrap = document.createElement("div");
+      wrap.className = "finding-block";
       const findingWindow = document.createElement("div");
       findingWindow.className = "finding-window";
       const items = visibleFindings(findings);
-      if (items.length) {
-        const list = document.createElement("ul");
-        list.className = "finding-list";
-        items.forEach((item) => list.append(findingRow(item)));
-        findingWindow.append(list);
-      }
-      return findingWindow;
+      const table = document.createElement("table");
+      table.className = "finding-table";
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      findingColumns.forEach((column) => {
+        const cell = document.createElement("th");
+        cell.setAttribute("scope", "col");
+        const active = state.findingSort === column[0];
+        if (active) cell.setAttribute("aria-sort", state.findingSortDescending ? "descending" : "ascending");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = column[1] + (active ? (state.findingSortDescending ? " ↓" : " ↑") : "");
+        button.addEventListener("click", () => sortByColumn(column[0]));
+        cell.append(button);
+        headRow.append(cell);
+      });
+      head.append(headRow);
+      const body = document.createElement("tbody");
+      items.forEach((item) => body.append(findingRow(item)));
+      table.append(head, body);
+      findingWindow.append(table);
+      const chosen = items.find((item) => findingKey(item) === state.openFinding);
+      const description = document.createElement("p");
+      description.className = "finding-description";
+      description.textContent = chosen
+        ? (chosen.description || "No description recorded.")
+        : "No findings.";
+      wrap.append(findingWindow, description);
+      return wrap;
     }
 
     function findingToolbar(total) {
