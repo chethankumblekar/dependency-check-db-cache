@@ -1,4 +1,8 @@
-FROM eclipse-temurin:24-jre-noble
+# 24-jre-noble (sha256:b416d02335e702b0403ff280de9475a3348e29382285969c9d4e17862ce632e7)
+# still ships openssl 3.0.13-0ubuntu3.5. 25-jre-noble ships 3.0.13-0ubuntu3.16,
+# which is the Ubuntu fix for CVE-2026-45447 and CVE-2026-84782.
+# engine.version stays 13.0.0. The Dependency-Check jars are unchanged.
+FROM eclipse-temurin:25-jre-noble@sha256:3f2223fe04b750aa5a8179e29b5c9a1ddf7665fc9bb08bfe11ad01d143bc13a5
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

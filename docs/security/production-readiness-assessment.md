@@ -285,11 +285,12 @@ it does not call Checkstead production-ready.
   Loopback peers still may. Local sign-in is unchanged: peer address only.
 - CI installs `.[dev]` and checks action pin format instead of a frozen SHA.
 - The server image has a health check for `/api/health`. The scanner image
-  removes pip, curl, and unzip after the build. Neither image was built in
-  this workspace: `docker` is absent and `scripts/scan-images.sh` exited 2.
-  Pull request run
-  [39277737619](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39277737619)
-  built both images. The failing Trivy steps on that run succeeded. The
-  report-only scanner artifact still lists four fixed High operating-system
-  findings in OpenSSL and six High findings in Dependency-Check jars. Those
-  are outside the failing gates and are not suppressed.
+  removes pip, curl, and unzip after the build. A later local
+  `bash scripts/scan-images.sh` against `eclipse-temurin:25-jre-noble`
+  exited 0. The report-only scanner file no longer listed the four High
+  OpenSSL findings. It still listed six High Dependency-Check jar findings.
+  Those were not suppressed, and `engine.version` stayed `13.0.0`.
+  Checkstead is not production-ready. The attested digests to verify are in
+  [Supply chain and provenance](supply-chain-and-provenance.md). The images
+  from run 39260814721 still have no GitHub attestation and were not
+  republished.

@@ -139,7 +139,7 @@ except ChecksteadError as exc:
 path.write_text(json.dumps(signed, indent=2) + "\n", encoding="utf-8")
 print(f"signature: {signed['signature']['keyId']}")
 PY
-  AUTH_NOTE="Signed with the key id in manifest.json. The public key is pinned in this repository. This is not a second publisher."
+  AUTH_NOTE="Signed with the key id in manifest.json. snapshot_trust.json is not updated by this job. Clients with an empty trust file still accept the checksum and do not treat this signature as verified. Pin the public key only after this signed release exists. The signature is not a second publisher."
 fi
 
 cat > "${WORK}/notes.md" <<EOF

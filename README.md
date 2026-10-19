@@ -342,10 +342,16 @@ The scanner image runs as root by default so this mounted-directory command can 
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. The publish job also asks GitHub for an attestation that `gh attestation verify` can check. Images published before that step exist, and `gh attestation verify` of those digests returned HTTP 404 on 19 October 2026. The commands and the digests are in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md). Pin a published image by its digest when you need a fixed build:
+The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. Pin the attested digests from commit `c5b1707a34f7cbce1004fcee097e4b99f68ddb90`. `gh attestation verify` exited 0 for both. Older digests from run 39260814721 have no GitHub attestation. Do not point a current tag at those images. The detail is in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md).
 
 ```bash
-docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272 \
+  --repo chethankumblekar/dependency-check-db-cache
+
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7 \
+  --repo chethankumblekar/dependency-check-db-cache
 ```
 
 [CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push.

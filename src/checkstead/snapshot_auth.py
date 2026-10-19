@@ -153,7 +153,12 @@ def verify_manifest(manifest: dict, trust: TrustStore | None = None) -> Authenti
         return Authenticity("unsigned", "")
     key = store.keys.get(parsed["keyId"])
     if key is None:
-        raise SnapshotRefused(f"Snapshot signature key {parsed['keyId']} is not pinned.")
+        # A signature is not authenticity until a trust root is configured.
+        # Refusing it here would break checksummed scans the day the publisher
+        # starts signing, which is before the public key can be pinned.
+        if signature_required(store):
+            raise SnapshotRefused(f"Snapshot signature key {parsed['keyId']} is not pinned.")
+        return Authenticity("unsigned", "")
     published = _snapshot_day(manifest.get("snapshotTime"))
     if key.not_after is not None and published > key.not_after:
         raise SnapshotRefused(
@@ -171,18 +176,27 @@ def sign_manifest(
     key_id: str,
     trust: TrustStore | None = None,
 ) -> dict:
-    """Sign a parsed manifest. The private key must match a current pinned key."""
+    """Sign a parsed manifest.
+
+    An empty trust file is allowed. The updater has to be able to sign the
+    next snapshot before that public key is pinned, because pinning first
+    makes every current unsigned cache fail. When the key id is already
+    pinned, it must be ``current`` and the private key must match it.
+    """
     store = trust if trust is not None else load_trust()
-    key = store.keys.get(key_id)
-    if key is None or key.status != "current":
-        raise ChecksteadError(f"Snapshot signing key {key_id} is not a current pinned key.")
     if "PRIVATE KEY" not in private_pem:
         raise ChecksteadError("Snapshot signing key is not a private key.")
+    pinned = store.keys.get(key_id)
+    if pinned is not None and pinned.status != "current":
+        raise ChecksteadError(f"Snapshot signing key {key_id} is not a current pinned key.")
     unsigned = {field: manifest[field] for field in SIGNED_FIELDS}
     payload = canonical_payload(unsigned)
     signature = _openssl_sign(private_pem, payload)
-    if not _openssl_verify(key.public_pem, payload, signature):
-        raise ChecksteadError("Snapshot signing key does not match the pinned public key.")
+    check_pem = pinned.public_pem if pinned is not None else _public_pem(private_pem)
+    if not _openssl_verify(check_pem, payload, signature):
+        if pinned is not None:
+            raise ChecksteadError("Snapshot signing key does not match the pinned public key.")
+        raise ChecksteadError("Snapshot signing key could not be checked.")
     signed = dict(unsigned)
     signed["signature"] = {
         "keyId": key_id,
@@ -199,6 +213,17 @@ def _snapshot_day(value: object) -> date:
         return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").date()
     except ValueError as exc:
         raise SnapshotRefused("Snapshot manifest time must be UTC, like 2026-10-06T01:00:00Z.") from exc
+
+
+def _public_pem(private_pem: str) -> str:
+    with tempfile.TemporaryDirectory() as tmp:
+        key_path = Path(tmp) / "key.pem"
+        key_path.write_text(private_pem, encoding="utf-8")
+        key_path.chmod(0o600)
+        completed = _openssl("pkey", "-in", str(key_path), "-pubout")
+        if completed.returncode != 0 or b"PUBLIC KEY" not in completed.stdout:
+            raise ChecksteadError("Snapshot signing key is not a private key.")
+        return completed.stdout.decode("ascii")
 
 
 def _openssl_sign(private_pem: str, payload: bytes) -> bytes:

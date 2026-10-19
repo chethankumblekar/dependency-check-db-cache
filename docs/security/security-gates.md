@@ -36,14 +36,14 @@ failing language-package scan. It is not a CVE id exception.
 
 `scripts/scan-images.sh` runs the same gates locally. It exits 2 when
 `docker` or `trivy` is not installed. That exit means the scan did not run.
-On 19 October 2026, after Docker and Trivy 0.70.0 were installed in this
-workspace, the command exited 0. The failing gates were clean. The
-report-only scanner file `build/trivy/scanner.json` still listed 4 fixed
-High OpenSSL findings and 6 High Dependency-Check jar findings. Those were
-not suppressed. An extra report-only scan of the server image, outside the
-script, listed 61 High and 2 unfixed Critical operating-system findings.
-The failing server gate ignores unfixed Critical findings, so that command
-still exited 0.
+On 19 October 2026 the same command was run again after the scanner base
+moved to `eclipse-temurin:25-jre-noble` (`openssl` 3.0.13-0ubuntu3.16).
+It exited 0. The failing gates were clean. `build/trivy/scanner.json` listed
+no OpenSSL findings and still listed 6 High Dependency-Check jar findings
+(Jackson 2.22.1 and jsoup 1.23.1). Those jars stay. Clearing them would mean
+changing `engine.version` without a release-note and snapshot check, or
+adding a suppression. Neither was done. `dependency-check-cli version`
+inside that image reported 13.0.0.
 
 Pull-request runs set `cancel-in-progress` so a newer push replaces the
 previous one. A push to the default branch, including image publish, does not

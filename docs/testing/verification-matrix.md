@@ -41,7 +41,7 @@ The unit tests serve fixtures on `127.0.0.1`. They do not call
 | Check | Why it is not a pass |
 | --- | --- |
 | `bash scripts/scan-images.sh` | `docker` and `trivy` are not installed here. The script exits 2 in that case. Pull-request CI builds the images and runs Trivy. Exit 2 is not a pass. |
-| A pushed image digest and its GitHub attestation | `gh attestation verify` of the images from run 39260814721 returned HTTP 404. Registry BuildKit attestations were present. `scripts/verify-published-images.py` exits 3 in that case. Exit 3 is not a pass. This change does not push a new image. |
+| A pushed image digest and its GitHub attestation | `gh attestation verify` of `checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272` and `checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7` (commit `c5b1707`) exited 0. The older digests from run 39260814721 still return HTTP 404. Do not republish those images. |
 | The real NVD update | The updater needs `NVD_API_KEY` and is not part of the unit suite. |
 | A full Dependency-Check analysis of this repository | That needs a published snapshot and the engine. The unit suite uses fixtures. |
 

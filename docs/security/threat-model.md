@@ -44,21 +44,23 @@ it. That proves the zip matches the manifest. It does not prove a second party
 signed the snapshot.
 
 The client can also verify an Ed25519 signature over those manifest fields
-when `signature` is present. The trust root is the public keys in
-`src/checkstead/snapshot_trust.json`. That file currently pins no keys. A
-published snapshot is therefore unsigned, and the scan reports
-`snapshot-authenticity: unsigned`. An empty trust file does not fail a
-checksummed snapshot. Pinning any public key, or setting
-`CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`, refuses a missing signature.
-An unknown key or a bad signature is a failure either way. A signature made
-by a key pinned in this repository is still the same publisher: someone who
-can change the pinned key and the release can sign. Someone who can only
-upload a release, and does not have `CHECKSTEAD_SNAPSHOT_SIGNING_KEY`,
-cannot. Rotation is a pull request that adds the new public key as `current`
-and marks the old key `retired` with `notAfter`. Ship that pin before signing
-with the new key, and publish a signed snapshot in the same cutover. Do not
-commit the private key. Older unsigned caches are refused once the pin is in
-the client.
+when `signature` is present and a trust root is configured. The trust root is
+the public keys in `src/checkstead/snapshot_trust.json`. That file currently
+pins no keys. With an empty trust file, a checksummed snapshot still scans.
+A signature the client cannot check is reported as `unsigned`. It does not
+fail the scan, and it is not treated as verified. Pinning any public key, or
+setting `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`, refuses a missing
+signature and refuses a key id that is not pinned. A bad signature from a
+pinned key is a failure. A signature made by a key pinned in this repository
+is still the same publisher: someone who can change the pinned key and the
+release can sign. Someone who can only upload a release, and does not have
+`CHECKSTEAD_SNAPSHOT_SIGNING_KEY`, cannot. The updater can sign before the
+public key is pinned. Pin that key only after a signed `db-YYYY-MM-DD`
+release exists. Pinning first refuses the unsigned caches already in use.
+Rotation adds the new public key as `current` and marks the old key
+`retired` with `notAfter`. Ship that pin before signing with the new key.
+Do not commit the private key. Older unsigned caches are refused once the
+pin is in the client.
 
 The Dependency-Check CLI zip is a different download. `scripts/install-engine.sh`,
 `scripts/setup.sh`, and `scripts/setup.ps1` verify the detached signature with

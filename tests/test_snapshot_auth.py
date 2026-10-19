@@ -121,6 +121,16 @@ class SignatureTests(TestCase):
             verify_manifest(foreign, self.trust)
         self.assertIn("not pinned", str(mismatch.exception))
 
+    def test_a_signature_can_be_made_before_the_client_pins_the_key(self) -> None:
+        manifest = sign_manifest(self._manifest("early"), self.private, "2026-10", _trust())
+        self.assertEqual(manifest["signature"]["keyId"], "2026-10")
+        self.assertEqual(verify_manifest(manifest, _trust()).status, "unsigned")
+        self.assertEqual(verify_manifest(manifest, self.trust).status, "signed")
+        os.environ["CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE"] = "1"
+        with self.assertRaises(SnapshotRefused) as required:
+            verify_manifest(manifest, _trust())
+        self.assertIn("not pinned", str(required.exception))
+
     def test_a_retired_key_verifies_until_not_after(self) -> None:
         retired = _trust(_entry("2026-10", self.public, status="retired", not_after="2026-10-06"))
         manifest = sign_manifest(self._manifest(), self.private, "2026-10", self.trust)
