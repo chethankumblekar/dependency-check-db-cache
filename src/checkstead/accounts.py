@@ -8,6 +8,7 @@ users after the identity provider has authenticated them.
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 import sqlite3
 import threading
@@ -68,6 +69,8 @@ class AccountStore:
                 );
                 """
             )
+        if self.path.exists():
+            os.chmod(self.path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=5)

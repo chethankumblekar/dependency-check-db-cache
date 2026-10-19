@@ -47,6 +47,22 @@ need the new manifest.
 
 The key is not in the workflow log. Do not add `echo "$NVD_API_KEY"`.
 
+## The scan says the snapshot signature is missing
+
+The trust file has a public key, or `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`
+is set, and the manifest has no signature. An empty `snapshot_trust.json`
+does not do this. Check `checkstead doctor` for `snapshot-signature: required`.
+Leave the trust file empty until a maintainer signs `db-YYYY-MM-DD`. Do not
+commit a private key to make the message go away.
+
+## GitHub or Entra sign-in says to set CHECKSTEAD_PUBLIC_BASE
+
+The TCP peer is not loopback, which is what the server container sees for a
+browser on the host. Set `CHECKSTEAD_PUBLIC_BASE` to the origin in the OAuth
+app, for example `http://127.0.0.1:8765` for Compose on the laptop or
+`https://checkstead.example` behind TLS. The `Host` header is not used for
+that peer.
+
 ## The timeline asks anyone who can connect to become administrator
 
 You published the server port and left `CHECKSTEAD_LOCAL=1`. Compose binds
@@ -58,6 +74,21 @@ reachable on the host's addresses. Use `-p 127.0.0.1:8765:8765`, or set
 Accounts live in `CHECKSTEAD_DATA` or `~/.local/share/checkstead`. In the
 server image that directory is `/var/lib/checkstead`. Copy that volume to
 back it up. Scans in the container are `/var/lib/checkstead/scans`.
+`accounts.sqlite` is mode `0600`. A backup is a copy of the volume, not a
+dump of session tokens into a log.
+
+## Roll back a deploy
+
+Stop the new container and start the previous image digest. Compose uses
+`:latest`, which moves, so record the digest before you pull. Account and
+scan volumes are separate from the image. Leave them in place unless the
+new version wrote data you need to discard. Do not delete `db-YYYY-MM-DD`
+to roll back a scan. Remove `~/.cache/checkstead/<UTC date>/` when a client
+must fetch the manifest you intend to keep. To roll back application code,
+revert the merge commit on `main`. Do not force-push. Image publish runs on
+the default branch after that revert. A snapshot signing key, once pinned,
+stays in the client that has the pin. Removing the key from
+`snapshot_trust.json` is what turns unsigned snapshots back on.
 
 ## Docker build of the scanner fails on the engine signature
 

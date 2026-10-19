@@ -47,28 +47,37 @@ The client can also verify an Ed25519 signature over those manifest fields
 when `signature` is present. The trust root is the public keys in
 `src/checkstead/snapshot_trust.json`. That file currently pins no keys. A
 published snapshot is therefore unsigned, and the scan reports
-`snapshot-authenticity: unsigned`. An unknown key, a bad signature, or a
-missing signature when `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` is a
-failure. A signature made by a key pinned in this repository is still the
-same publisher: someone who can change the pinned key and the release can
-sign. Someone who can only upload a release, and does not have
-`CHECKSTEAD_SNAPSHOT_SIGNING_KEY`, cannot. Rotation is a pull request that
-adds the new public key as `current` and marks the old key `retired` with
-`notAfter`. Ship that pin before signing with the new key. Do not commit the
-private key.
+`snapshot-authenticity: unsigned`. An empty trust file does not fail a
+checksummed snapshot. Pinning any public key, or setting
+`CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`, refuses a missing signature.
+An unknown key or a bad signature is a failure either way. A signature made
+by a key pinned in this repository is still the same publisher: someone who
+can change the pinned key and the release can sign. Someone who can only
+upload a release, and does not have `CHECKSTEAD_SNAPSHOT_SIGNING_KEY`,
+cannot. Rotation is a pull request that adds the new public key as `current`
+and marks the old key `retired` with `notAfter`. Ship that pin before signing
+with the new key, and publish a signed snapshot in the same cutover. Do not
+commit the private key. Older unsigned caches are refused once the pin is in
+the client.
 
-The Dependency-Check CLI zip is a different download. `scripts/install-engine.sh`
-verifies the detached signature with the public key in
-`scripts/keys/dependency-check-release.asc` and requires fingerprint
-`259A55407DD6C00299E6607EFFDE55BE73A2D1ED` (Jeremy Long
+The Dependency-Check CLI zip is a different download. `scripts/install-engine.sh`,
+`scripts/setup.sh`, and `scripts/setup.ps1` verify the detached signature with
+the public key in `scripts/keys/dependency-check-release.asc` and require
+fingerprint `259A55407DD6C00299E6607EFFDE55BE73A2D1ED` (Jeremy Long
 `<jeremy.long@gmail.com>` on the Ubuntu keyserver). The installed
-`dependency-check.sh --version` must report the pin. A checksum file sitting
-next to the zip is not treated as that proof.
+`dependency-check.sh` or `dependency-check.bat` must report the pin. A checksum
+file sitting next to the zip is not treated as that proof. The Linux and macOS
+script was executed against a bad signature and against a throwaway signed
+zip. The Windows script was reviewed and not executed here.
 
 ## What the client refuses
 
 - Any URL whose host is `services.nvd.nist.gov`, including after a redirect
   (`src/checkstead/http.py`).
+- Link-local addresses (including `169.254.169.254` and an IPv4-mapped form),
+  multicast, unspecified addresses, all-digit hosts, and
+  `metadata.google.internal`. Private addresses stay allowed for a GitHub
+  Enterprise host.
 - Cleartext HTTP to a host other than `localhost`, `127.0.0.1`, or `::1`.
 - `file://` and any URL that contains userinfo.
 - A manifest whose format, engine, timestamp, checksum, or database name is
@@ -153,7 +162,20 @@ The entrypoint and `checkstead ui` warn when `CHECKSTEAD_LOCAL=1` and the
 listen address is not loopback.
 
 Session cookies are `HttpOnly` and `SameSite=Lax`. They are marked `Secure`
-only when `CHECKSTEAD_COOKIE_SECURE=1`.
+only when `CHECKSTEAD_COOKIE_SECURE=1`. Responses set `X-Content-Type-Options`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
+`Content-Security-Policy: frame-ancestors 'none'`.
+
+OAuth and the GitHub App manifest use `CHECKSTEAD_PUBLIC_BASE` when it is set,
+and ignore `Host`. When it is unset, only a loopback peer may supply `Host`.
+A remote peer without that variable gets an error instead of a redirect.
+`/api/health` returns `{"ok": true}` with no session. It does not expose
+accounts. The account database file is mode `0600`.
+
+The server image starts as root so the entrypoint can `chown` a new volume
+and `su` to `checkstead`. A process that is already non-root skips `chown`.
+`docker-compose.yml` sets `no-new-privileges:true` and still publishes
+`127.0.0.1:8765:8765`. That Compose file was not started in this workspace.
 
 ## What this project does not guarantee
 

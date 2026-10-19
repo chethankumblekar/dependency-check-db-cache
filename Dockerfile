@@ -34,9 +34,17 @@ RUN ENGINE_VERSION_FILE=/tmp/engine.version \
 
 COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src
+# pip, curl, and unzip are build tools. The scan does not need them, and the
+# server image already drops pip so Trivy does not see its vendored packages.
+# The virtualenv keeps checkstead. Do not put pip back into this image.
 RUN python3 -m venv /opt/checkstead-venv \
     && /opt/checkstead-venv/bin/pip install --no-cache-dir /opt/checkstead-src \
-    && ln -sf /opt/checkstead-venv/bin/checkstead /usr/local/bin/checkstead
+    && /opt/checkstead-venv/bin/python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
+    && rm -f /opt/checkstead-venv/bin/pip /opt/checkstead-venv/bin/pip3 /opt/checkstead-venv/bin/pip3.* \
+    && ln -sf /opt/checkstead-venv/bin/checkstead /usr/local/bin/checkstead \
+    && apt-get update \
+    && apt-get purge -y python3-pip curl unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/checkstead-entry
 COPY checkstead.yml /etc/checkstead/checkstead.yml

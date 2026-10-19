@@ -17,6 +17,14 @@ listed as product versions.
 - Shows findings in one table on the timeline. The groups are Direct ·
   Production, Direct · Dev, Transitive · Production, and Transitive · Dev. A
   path inside `node_modules` is the package name.
+- Verifies the Dependency-Check release signature in the Linux, macOS, and
+  Windows setup scripts, with the same fingerprint as the image installer.
+- Refuses an unsigned snapshot once a public key is pinned, and keeps
+  checksummed offline scans working while `snapshot_trust.json` is empty.
+- Ignores `Host` for OAuth when the TCP peer is not loopback. Set
+  `CHECKSTEAD_PUBLIC_BASE` for a remote origin.
+- Pins GitHub Actions by commit SHA without copying each SHA into the unit
+  test. CI installs the dev extra from `pyproject.toml`.
 - Signs a person in on localhost with **Sign in on this computer**. That
   sign-in does not use an OAuth app. It uses the TCP peer address.
   `CHECKSTEAD_LOCAL=1` is the Compose bootstrap. `CHECKSTEAD_LOCAL=0` turns

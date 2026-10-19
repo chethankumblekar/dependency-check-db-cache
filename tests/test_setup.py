@@ -448,3 +448,21 @@ class SetupTests(TestCase):
             "https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
         )
         self.assertLess(readme.index(install), architecture)
+
+    def test_linux_macos_and_windows_installers_pin_the_engine_fingerprint(self) -> None:
+        fingerprint = "259A55407DD6C00299E6607EFFDE55BE73A2D1ED"
+        shell = SETUP.read_text(encoding="utf-8")
+        windows = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+        installer = (ROOT / "scripts" / "install-engine.sh").read_text(encoding="utf-8")
+        for script in (shell, windows, installer):
+            self.assertIn(fingerprint, script)
+        shell_fn = shell.split("install_engine()", 1)[1].split("ensure_engine_wrapper()", 1)[0]
+        self.assertLess(shell_fn.index("gpg --batch --verify"), shell_fn.index('"$python" "$archive_py"'))
+        installer_fn = installer.split("gpg --batch --import", 1)[1]
+        self.assertLess(installer_fn.index("gpg --batch --verify"), installer_fn.index('python3 "$ARCHIVE"'))
+        engine = windows.split("function Install-Engine", 1)[1].split("function ", 1)[0]
+        self.assertLess(engine.index("gpg --batch --verify"), engine.index("dependency-check.bat"))
+        self.assertNotIn("Expand-Archive", engine)
+        self.assertIn("The release signature does not verify", engine)
+        self.assertIn("gpg is required", shell)
+        self.assertIn("gpg is required", windows)

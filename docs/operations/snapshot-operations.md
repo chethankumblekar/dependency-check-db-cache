@@ -94,10 +94,10 @@ To add a key:
 1. On a machine that is not CI, run `openssl genpkey -algorithm ED25519 -out snapshot-signing-key.pem` and `openssl pkey -in snapshot-signing-key.pem -pubout`.
 2. Add the public PEM to `snapshot_trust.json` with a new `id`, `"status": "current"`, and no `notAfter`. Open a pull request. Do not commit the private PEM.
 3. Store the private PEM in the GitHub secret `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id in the repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID`. Only `update-snapshot.yml` receives them.
-4. The next new `db-YYYY-MM-DD` release is signed. Clients that have the pin verify it. Older unsigned snapshots stay usable.
-5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A client that does not know the key id refuses the signature.
+4. The next new `db-YYYY-MM-DD` release is signed. Clients that have the pin verify it. An unsigned manifest is refused once any key is pinned, including a checksummed cache from before the pin. Publish the signed snapshot before you ship the pin, or leave the trust file empty.
+5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A client that does not know the key id refuses the signature. A retired key still verifies snapshots on or before `notAfter`. It cannot sign a new manifest.
 
-A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses an unsigned manifest. Leave it unset while the trust file is empty, or every scan fails closed.
+A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses an unsigned manifest even when the trust file is empty. Leave that variable unset, and leave the trust file empty, while published snapshots are unsigned. Existing offline scans of those checksummed snapshots keep working. Do not generate a production key in CI and do not commit a private key.
 
 ## Freshness
 

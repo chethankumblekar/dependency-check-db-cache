@@ -16,6 +16,7 @@ build green.
 | Scanner image, fixed Critical operating-system packages | The image job fails | Trivy `vuln-type: os`, `severity: CRITICAL`, `ignore-unfixed: true`, `exit-code: "1"` |
 | Scanner image, including Dependency-Check jars | Report only. The artifact is `trivy-scanner` | Trivy `exit-code: "0"`, `severity: CRITICAL,HIGH` |
 | Image push | Does not run on a pull request | `images` job has `push: false` and `contents: read` only |
+| CodeQL | The `Analyze` job fails, and the main ruleset rejects the merge when a High alert or an error alert is open | `.github/workflows/codeql.yml` runs on `pull_request` and on `push` to `main`. `codeql-action/analyze` uploads SARIF (`upload: true`) |
 
 Language packages are dependencies this repository chooses (`certifi` and the
 image's Python packages). High and Critical findings fail, including unfixed
@@ -35,10 +36,24 @@ failing language-package scan. It is not a CVE id exception.
 
 `scripts/scan-images.sh` runs the same gates locally. It exits 2 when
 `docker` or `trivy` is not installed. That exit means the scan did not run.
-On 19 October 2026 that local command exited 2. The same gates then ran in
-pull request
-[39263737597](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39263737597)
-and the image jobs succeeded.
+On 19 October 2026, after Docker and Trivy 0.70.0 were installed in this
+workspace, the command exited 0. The failing gates were clean. The
+report-only scanner file `build/trivy/scanner.json` still listed 4 fixed
+High OpenSSL findings and 6 High Dependency-Check jar findings. Those were
+not suppressed. An extra report-only scan of the server image, outside the
+script, listed 61 High and 2 unfixed Critical operating-system findings.
+The failing server gate ignores unfixed Critical findings, so that command
+still exited 0.
+
+Pull-request runs set `cancel-in-progress` so a newer push replaces the
+previous one. A push to the default branch, including image publish, does not
+cancel an in-progress run.
+
+Action `uses` lines are commit SHAs. The unit test checks the pin format and
+that both image jobs share one `docker/build-push-action` SHA. It does not
+copy a SHA into the test, so a reviewed Dependabot update of qemu, CodeQL
+upload-sarif, ruff, or build does not fail for a stale hardcoded pin. Ruff
+and build versions are the pins in `pyproject.toml`. CI installs `.[dev]`.
 
 ## Push and workflow dispatch
 
@@ -46,9 +61,11 @@ and the image jobs succeeded.
 is the default branch or a `v*` tag. It has `packages: write`,
 `id-token: write`, and `attestations: write`. It pushes the tags, sets
 `provenance: true` and `sbom: true` on the BuildKit build, and then runs
-`actions/attest-build-provenance` so `gh attestation verify` can check the
-digest. The verify step in that job has not run for this change, because a
-pull request does not publish.
+`actions/attest-build-provenance` with `push-to-registry: true` so
+`gh attestation verify` can check the digest. The action defaults that input
+to false, which does not attach the statement to the image. The verify step
+in that job has not run for this change, because a pull request does not
+publish.
 
 BuildKit attestations on the image index are a different store from GitHub's
 attestation API. Both are described in

@@ -267,3 +267,29 @@ the two digests from run 39260814721 exited 3.
 3. Add a tested non-root scanner path that still supports
    `docker run -v "$PWD:/work" -w /work`, for example by documenting a
    `--user` invocation only after a build in an environment that has Docker.
+
+## Enterprise hardening follow-up
+
+This section is the later pass. It does not replace the findings above, and
+it does not call Checkstead production-ready.
+
+- `scripts/setup.sh` and `scripts/setup.ps1` now require the same engine
+  fingerprint as `scripts/install-engine.sh`, and they extract with
+  `archive.py` only after `gpg --verify`. The shell path was executed with a
+  bad signature and with a throwaway key. `pwsh` was not installed, so the
+  Windows script was not executed.
+- An empty `snapshot_trust.json` still accepts a checksummed unsigned
+  snapshot. Any pinned key, or `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`,
+  refuses a missing signature. No production key was created.
+- Remote OAuth uses `CHECKSTEAD_PUBLIC_BASE` and does not trust `Host`.
+  Loopback peers still may. Local sign-in is unchanged: peer address only.
+- CI installs `.[dev]` and checks action pin format instead of a frozen SHA.
+- The server image has a health check for `/api/health`. The scanner image
+  removes pip, curl, and unzip after the build. Neither image was built in
+  this workspace: `docker` is absent and `scripts/scan-images.sh` exited 2.
+  Pull request run
+  [39277737619](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39277737619)
+  built both images. The failing Trivy steps on that run succeeded. The
+  report-only scanner artifact still lists four fixed High operating-system
+  findings in OpenSSL and six High findings in Dependency-Check jars. Those
+  are outside the failing gates and are not suppressed.

@@ -547,6 +547,13 @@ class Phase1Tests(TestCase):
             ensure_allowed("https://services.nvd.nist.gov/rest/json/cves/2.0")
         with self.assertRaises(RefusedHost):
             ensure_allowed("https://user:password@github.com/manifest.json")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("https://169.254.169.254/latest/meta-data")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("https://[::ffff:169.254.169.254]/latest/meta-data")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("https://metadata.google.internal/computeMetadata/v1/")
+        ensure_allowed("https://10.0.0.8/manifest.json")
 
     def test_doctor_prints_the_pin_and_hides_secret_values(self) -> None:
         env = os.environ.copy()
@@ -579,6 +586,12 @@ class Phase1Tests(TestCase):
         self.assertEqual(manifest["checksum"], hashlib.sha256(blob.read_bytes()).hexdigest())
         parsed = parse_manifest((root / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(parsed["engineVersion"], PIN)
+        payload = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        for name in ("http:evil", "../escape.zip", "zip?x=1", "a/b.zip", ""):
+            forged = dict(payload)
+            forged["database"] = name
+            with self.assertRaises(SnapshotRefused):
+                parse_manifest(json.dumps(forged))
 
     def test_scan_environment_drops_the_api_key(self) -> None:
         cleaned = scrub_environment({"PATH": "/usr/bin", "NVD_API_KEY": "secret", "NVD_APIKEY": "secret"})
@@ -708,9 +721,9 @@ class Phase1Tests(TestCase):
         self.assertNotRegex(script, r"NVD_API_KEY=[A-Za-z0-9]")
         self.assertNotIn("NVD_API_KEY", action)
         self.assertNotIn("nvdApiKey", action)
-        self.assertIn(
-            "github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311",
+        self.assertRegex(
             action,
+            r"uses: github/codeql-action/upload-sarif@[0-9a-f]{40} # v\d",
         )
         self.assertIn("${{ inputs.output }}/checkstead.sarif", action)
         self.assertNotIn("services.nvd.nist.gov", action)

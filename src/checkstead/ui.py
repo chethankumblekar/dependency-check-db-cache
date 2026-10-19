@@ -191,6 +191,9 @@ def bind_server(
             parsed = urlsplit(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
+            if path == "/api/health":
+                self._json(200, {"ok": True})
+                return
             if path in {"/", "/index.html"}:
                 self._send(200, "text/html; charset=utf-8", PAGE.read_bytes())
                 return
@@ -351,7 +354,7 @@ def bind_server(
             host = self.headers.get("Host", "")
             try:
                 state = new_state()
-                location = authorize_url(kind, public_base(host), state)
+                location = authorize_url(kind, public_base(host, self.client_address[0]), state)
             except AuthError as exc:
                 self._page(404, str(exc))
                 return
@@ -368,7 +371,11 @@ def bind_server(
                 self._page(400, "Sign-in could not be confirmed. Start again.")
                 return
             try:
-                identity = exchange(kind, code, public_base(self.headers.get("Host", "")))
+                identity = exchange(
+                    kind,
+                    code,
+                    public_base(self.headers.get("Host", ""), self.client_address[0]),
+                )
                 token, _user = store.sign_in(identity)
             except (AuthError, AccountError) as exc:
                 self._page(getattr(exc, "status", 401), str(exc))
@@ -421,7 +428,7 @@ def bind_server(
                 page = begin_manifest(
                     store.data_dir,
                     str(fields.get("login") or fields.get("organization") or ""),
-                    public_base(self.headers.get("Host", "")),
+                    public_base(self.headers.get("Host", ""), self.client_address[0]),
                     state,
                     github_transport,
                     chosen,
@@ -580,11 +587,18 @@ def bind_server(
                 return None
             return {key: values[0] if values else "" for key, values in parsed.items()}
 
+        def _common_headers(self) -> None:
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("Cache-Control", "no-store")
+
         def _redirect(self, location: str) -> None:
             self.send_response(302)
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
-            self.send_header("Cache-Control", "no-store")
+            self._common_headers()
             self.end_headers()
 
         def _html(self, status: int, page: str, cookie: str | None = None) -> None:
@@ -592,7 +606,7 @@ def bind_server(
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self._common_headers()
             if cookie:
                 self.send_header("Set-Cookie", cookie)
             self.end_headers()
@@ -658,7 +672,7 @@ def bind_server(
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self._common_headers()
             if cookie:
                 self.send_header("Set-Cookie", cookie)
             self.end_headers()
@@ -668,6 +682,7 @@ def bind_server(
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            self._common_headers()
             self.end_headers()
             self.wfile.write(body)
 

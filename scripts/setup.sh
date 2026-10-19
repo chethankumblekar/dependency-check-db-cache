@@ -18,6 +18,11 @@ PIN_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-
 PATH_MARKER="# checkstead setup: user install on PATH"
 PATH_LINE='export PATH="$HOME/checkstead/bin:$PATH"'
 JDK_MARKER="# checkstead setup: bundled JDK"
+# Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
+# ENGINE_KEY_FINGERPRINT overrides it only for the installer tests.
+ENGINE_FPR_DEFAULT=259A55407DD6C00299E6607EFFDE55BE73A2D1ED
+ENGINE_KEY_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/keys/dependency-check-release.asc"
+ENGINE_ARCHIVE_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/src/checkstead/archive.py"
 
 python_ok() {
   local bin=$1
@@ -145,11 +150,52 @@ install_jdk() {
 }
 
 install_engine() {
-  local url tmp src candidate
+  local url tmp src candidate key_file archive_py expected_fpr fpr script_dir
+  if ! command -v gpg >/dev/null 2>&1; then
+    echo "Refusing to install. gpg is required to verify the Dependency-Check signature." >&2
+    exit 1
+  fi
+  expected_fpr=${ENGINE_KEY_FINGERPRINT:-$ENGINE_FPR_DEFAULT}
   url="https://github.com/dependency-check/DependencyCheck/releases/download/v${PIN}/dependency-check-${PIN}-release.zip"
   tmp=$(mktemp -d)
+  cleanup_engine() { rm -rf "$tmp"; unset GNUPGHOME; }
+  trap cleanup_engine RETURN
   curl -fsSL -o "$tmp/dc.zip" "$url"
-  unzip -q "$tmp/dc.zip" -d "$tmp/unpacked"
+  curl -fsSL -o "$tmp/dc.zip.asc" "${url}.asc"
+  script_dir=""
+  if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  fi
+  if [[ -n "${ENGINE_PUBLIC_KEY:-}" ]]; then
+    key_file=$ENGINE_PUBLIC_KEY
+  elif [[ -n "$script_dir" && -f "$script_dir/keys/dependency-check-release.asc" ]]; then
+    key_file=$script_dir/keys/dependency-check-release.asc
+  else
+    curl -fsSL -o "$tmp/dependency-check-release.asc" "$ENGINE_KEY_URL"
+    key_file=$tmp/dependency-check-release.asc
+  fi
+  if [[ -n "$script_dir" && -f "$script_dir/../src/checkstead/archive.py" ]]; then
+    archive_py=$script_dir/../src/checkstead/archive.py
+  else
+    curl -fsSL -o "$tmp/archive.py" "$ENGINE_ARCHIVE_URL"
+    archive_py=$tmp/archive.py
+  fi
+  GNUPGHOME="$tmp/gnupg"
+  export GNUPGHOME
+  mkdir -p "$GNUPGHOME"
+  chmod 700 "$GNUPGHOME"
+  gpg --batch --import "$key_file" >/dev/null
+  fpr=$(gpg --batch --with-colons --show-keys "$key_file" | awk -F: '/^fpr:/ {print $10; exit}')
+  if [[ "$fpr" != "$expected_fpr" ]]; then
+    echo "Refusing engine key. Expected fingerprint ${expected_fpr} but found ${fpr:-none}." >&2
+    exit 1
+  fi
+  if ! gpg --batch --verify "$tmp/dc.zip.asc" "$tmp/dc.zip" >"$tmp/gpg.out" 2>&1; then
+    echo "Refusing the downloaded engine. The release signature does not verify." >&2
+    exit 1
+  fi
+  mkdir -p "$tmp/unpacked"
+  "$python" "$archive_py" "$tmp/dc.zip" "$tmp/unpacked"
   src=""
   for candidate in "$tmp/unpacked"/dependency-check*; do
     if [[ -d "$candidate" && -f "$candidate/bin/dependency-check.sh" ]]; then
@@ -165,9 +211,9 @@ install_engine() {
   rm -rf "$ROOT/dependency-check"
   mkdir -p "$ROOT"
   mv "$src" "$ROOT/dependency-check"
-  rm -rf "$tmp"
   if ! engine_reports_pin "$ROOT/dependency-check/bin/dependency-check.sh"; then
     echo "Refusing the downloaded engine. Expected ${PIN}." >&2
+    rm -rf "$ROOT/dependency-check"
     exit 1
   fi
   echo "Installed Dependency-Check ${PIN} under $ROOT/dependency-check"
@@ -277,6 +323,7 @@ ensure_jdk_shell() {
   fi
 }
 
+run_setup() {
 mkdir -p "$ROOT"
 
 if python=$(select_python); then
@@ -369,4 +416,11 @@ if [[ "${CHECKSTEAD_LOCAL:-}" == "1" ]]; then
   echo "Checkstead is ready."
 else
   echo "Open a new terminal, then run: checkstead scan --scan . --project my-service"
+fi
+}
+
+# A sourced script defines the functions for tests. An executed script, including
+# `curl | bash` where BASH_SOURCE is empty, runs the install.
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_setup
 fi

@@ -13,7 +13,7 @@ Checkstead is not an OWASP project and does not speak for OWASP or NIST.
 
 ## Setup
 
-One command. No sudo. Python, Java, and Dependency-Check that already run stay in place. The command works from any directory and puts `checkstead` on your user PATH.
+One command. No sudo. Python, Java, and Dependency-Check that already run stay in place. The command works from any directory and puts `checkstead` on your user PATH. Installing Dependency-Check needs `gpg`. The script checks the release signature against fingerprint `259A55407DD6C00299E6607EFFDE55BE73A2D1ED` before it unpacks the zip.
 
 macOS:
 
@@ -541,7 +541,7 @@ GitHub and Microsoft sign-in work only when the server variables are set. Leave 
 | `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Microsoft Entra client secret |
 | `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
 
-The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
+The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Set `CHECKSTEAD_PUBLIC_BASE` to that origin. A remote connection does not use the `Host` header as the origin. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
 
 `CHECKSTEAD_GITHUB_ORG` is optional. When set, only members of that GitHub organization can use the GitHub button.
 
@@ -570,7 +570,7 @@ Put the server behind TLS when it is not on your own machine, and set `CHECKSTEA
 ## Develop
 
 ```bash
-python3 -m pip install ruff==0.14.2 build==1.3.0 certifi
+python3 -m pip install '.[dev]'
 bash scripts/self-test.sh
 ```
 
