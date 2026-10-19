@@ -33,12 +33,20 @@ loopback, which is how the tests serve fixtures.
 The database snapshot is integrity-checked against its manifest. That check
 does not prove a second party published the zip. If the manifest carries a
 signature, the client checks it against `src/checkstead/snapshot_trust.json`.
-That file pins no key yet, so current snapshots are unsigned. Set
-`CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` only after a key is pinned and the
-publisher is signing. The Dependency-Check CLI zip is checked with the
-vendored release key in `scripts/keys/dependency-check-release.asc` before it
-is installed. The fingerprint pinned in `scripts/install-engine.sh` is
-`259A55407DD6C00299E6607EFFDE55BE73A2D1ED`.
+That file pins no key yet, so current snapshots stay unsigned and a
+checksummed offline cache still scans. Pinning any public key, or setting
+`CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`, refuses a manifest with no
+signature. A signature made by a key in this repository is the same publisher,
+not an independent one. Do not commit a private key.
+
+The Dependency-Check CLI zip is checked with the vendored release key in
+`scripts/keys/dependency-check-release.asc` before it is installed.
+`scripts/install-engine.sh`, `scripts/setup.sh`, and `scripts/setup.ps1` pin
+the fingerprint `259A55407DD6C00299E6607EFFDE55BE73A2D1ED`.
+
+Remote sign-in does not trust the `Host` header. Set `CHECKSTEAD_PUBLIC_BASE`
+to the origin clients use. A loopback peer may still use `Host`, which is the
+laptop server.
 
 The timeline's localhost sign-in uses the TCP peer address. `Host`,
 `X-Forwarded-For`, `Forwarded`, and `X-Real-IP` are not proof that the client

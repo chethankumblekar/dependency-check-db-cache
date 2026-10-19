@@ -286,3 +286,73 @@ class EngineInstallTests(TestCase):
         self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
         self.assertFalse((root / "escape.txt").exists())
         self.assertFalse(Path("/tmp/escape.txt").exists())
+
+    def _setup(self, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        script = root / "run-setup.sh"
+        lines = [
+            "set -euo pipefail",
+            f"source {ROOT / 'scripts' / 'setup.sh'}",
+            f"PIN={env['PIN']}",
+            f"ROOT={root / 'home' / 'checkstead'}",
+            f"python={env['python']}",
+            "install_engine",
+        ]
+        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return subprocess.run(
+            ["bash", str(script)],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_setup_sh_refuses_a_signature_that_does_not_verify(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-engine-bad-signature"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        root.mkdir(parents=True)
+        archive = root / "dc.zip"
+        archive.write_bytes(b"not a signed zip")
+        signature = root / "dc.zip.asc"
+        signature.write_text("not a signature\n", encoding="utf-8")
+        stub = root / "bin"
+        stub.mkdir()
+        _curl_stub(stub, archive, signature)
+        env = os.environ.copy()
+        env["PIN"] = "13.0.0"
+        env["python"] = "/usr/bin/python3"
+        env["PATH"] = str(stub) + os.pathsep + "/usr/bin:/bin"
+        env.pop("ENGINE_PUBLIC_KEY", None)
+        env.pop("ENGINE_KEY_FINGERPRINT", None)
+        completed = self._setup(root, env)
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        self.assertIn("does not verify", completed.stderr)
+        self.assertIn("259A55407DD6C00299E6607EFFDE55BE73A2D1ED", (ROOT / "scripts" / "setup.sh").read_text())
+        self.assertFalse((root / "home" / "checkstead" / "dependency-check").exists())
+
+    def test_setup_sh_installs_a_signed_engine(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-engine-signed"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "gnupg"
+        public_key = root / "key.asc"
+        fingerprint = _generate_key(home, public_key)
+        archive = root / "dc.zip"
+        _engine_zip(archive, "Dependency-Check Core version 9.9.9")
+        signature = root / "dc.zip.asc"
+        _sign(home, archive, signature)
+        stub = root / "bin"
+        stub.mkdir()
+        _curl_stub(stub, archive, signature)
+        env = os.environ.copy()
+        env["PIN"] = "9.9.9"
+        env["python"] = "/usr/bin/python3"
+        env["ENGINE_PUBLIC_KEY"] = str(public_key)
+        env["ENGINE_KEY_FINGERPRINT"] = fingerprint
+        env["PATH"] = str(stub) + os.pathsep + "/usr/bin:/bin"
+        completed = self._setup(root, env)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Installed Dependency-Check 9.9.9", completed.stdout)
+        binary = root / "home" / "checkstead" / "dependency-check" / "bin" / "dependency-check.sh"
+        self.assertTrue(binary.is_file())
+        reported = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
+        self.assertIn("9.9.9", reported.stdout)

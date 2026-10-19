@@ -127,12 +127,28 @@ def signature_fields(value: object) -> dict | None:
     return {"keyId": key_id, "algorithm": ALGORITHM, "value": encoded.strip()}
 
 
+def signature_required(trust: TrustStore) -> bool:
+    """Unsigned checksummed snapshots stay valid until a trust root is configured.
+
+    ``CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`` is the explicit mode with an
+    empty trust file. Any pinned public key is also that mode: a missing
+    signature is then a failure. An empty trust file leaves the mode off.
+    """
+    if os.environ.get("CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE", "").strip() == "1":
+        return True
+    return bool(trust.keys)
+
+
 def verify_manifest(manifest: dict, trust: TrustStore | None = None) -> Authenticity:
-    """Fail closed on a bad signature. An absent signature stays unsigned."""
+    """Fail closed on a bad signature. An absent signature stays unsigned until required."""
     store = trust if trust is not None else load_trust()
     parsed = signature_fields(manifest.get("signature"))
     if parsed is None:
-        if os.environ.get("CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE", "").strip() == "1":
+        if signature_required(store):
+            if store.keys:
+                raise SnapshotRefused(
+                    "Snapshot signature is missing. This client has a snapshot trust root."
+                )
             raise SnapshotRefused("Snapshot signature is missing.")
         return Authenticity("unsigned", "")
     key = store.keys.get(parsed["keyId"])

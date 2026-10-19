@@ -10,6 +10,8 @@ services:
     environment:
       CHECKSTEAD_LOCAL: "1"
       CHECKSTEAD_SCANS: /var/lib/checkstead/scans
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: .env
         required: false

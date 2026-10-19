@@ -14,7 +14,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests cancel a superseded run. A push can be publishing images,
+  # so it is left to finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -36,7 +38,9 @@ jobs:
           java-version: "21"
 
       - name: Install lint and build tools
-        run: python3 -m pip install --disable-pip-version-check ruff==0.14.2 build==1.3.0 certifi
+        # Versions live in pyproject.toml. A reviewed bump of ruff or build
+        # updates that file; this step installs the same pins.
+        run: python3 -m pip install --disable-pip-version-check '.[dev]'
 
       - name: Lint, build, and test
         run: bash ./scripts/self-test.sh

@@ -14,14 +14,21 @@ Replace the SHA and the tag comment in the same change. Dependabot
 (`.github/dependabot.yml`) opens weekly pull requests for GitHub Actions,
 pip, Docker base images, and `integrations/maven`.
 
-Pins recorded with this change:
+The workflow file is the pin. CI checks that every `uses` line is a 40-character
+commit SHA with a tag comment. It does not freeze that SHA in a unit test, so a
+reviewed Dependabot SHA update does not fail for a second hardcoded copy.
+Actions stay pinned. A floating `@v1` tag still fails CI.
+
+Pins recorded on 19 October 2026, after the setup-python 7.0.0 and setup-node
+7.1.0 bumps. This table can lag a later Dependabot merge. Read the workflow
+for the SHA that CI actually runs:
 
 | Action | Tag | Commit |
 | --- | --- | --- |
 | `actions/checkout` | v5 | `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` |
-| `actions/setup-python` | v5 | `a26af69be951a213d495a4c3e4e4022e16d87065` |
+| `actions/setup-python` | v7.0.0 | `5fda3b95a4ea91299a34e894583c3862153e4b97` |
 | `actions/setup-java` | v5 | `b6effb05e454b25005698d916606bdc6ffcbf961` |
-| `actions/setup-node` | v4 | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+| `actions/setup-node` | v7.1.0 | `949feb2413d6458794dcd2491c4babbbce0c15c1` |
 | `actions/upload-artifact` | v4 | `ea165f8d65b6e75b540449e92b4886f43607fa02` |
 | `docker/setup-qemu-action` | v3 | `c7c53464625b32c7a7e944ae62b3e17d2b600130` |
 | `docker/setup-buildx-action` | v3 | `8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` |
@@ -39,8 +46,13 @@ Pins recorded with this change:
 `https://github.com/dependency-check/DependencyCheck/releases/download/v13.0.0/dependency-check-13.0.0-release.zip`
 
 and the sibling `.asc`. The public key is stored in this repository at
-`scripts/keys/dependency-check-release.asc`. Install refuses the key unless
-its fingerprint is `259A55407DD6C00299E6607EFFDE55BE73A2D1ED`.
+`scripts/keys/dependency-check-release.asc`. `scripts/install-engine.sh`,
+`scripts/setup.sh` (Linux and macOS, including `curl | bash`), and
+`scripts/setup.ps1` (Windows) refuse the key unless its fingerprint is
+`259A55407DD6C00299E6607EFFDE55BE73A2D1ED`. A missing `gpg` refuses the
+install. The zip is extracted with `archive.py` only after the signature
+verifies. The Windows script was not executed in this workspace (`pwsh` is
+not installed). The Linux script was.
 
 That fingerprint was taken from the Ubuntu keyserver copy of Jeremy Long's
 key (`Jeremy Long <jeremy.long@gmail.com>`), not from a checksum published

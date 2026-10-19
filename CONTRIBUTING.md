@@ -39,7 +39,7 @@ the CVE Numbering Authority, or the analyzer that produced them.
 From a checkout:
 
 ```bash
-python3 -m pip install ruff==0.14.2 build==1.3.0 certifi
+python3 -m pip install '.[dev]'
 bash scripts/self-test.sh
 ```
 

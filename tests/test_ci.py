@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from unittest import TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+_SHA_PIN = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+@[0-9a-f]{40}$")
+_PIN_COMMENT = re.compile(r"@[0-9a-f]{40}\s+#\s+v\d")
+
+
+def _assert_action_pins(test: TestCase, text: str, name: str) -> None:
+    """A reviewed SHA bump stays green. A floating tag does not."""
+    test.assertNotRegex(text, r"uses:\s+\S+@v\d", name)
+    found = False
+    for line in text.splitlines():
+        if "uses:" not in line:
+            continue
+        match = re.search(r"uses:\s+(\S+)", line)
+        test.assertIsNotNone(match, f"{name}: {line}")
+        assert match is not None
+        test.assertRegex(match.group(1), _SHA_PIN, f"{name}: {line}")
+        test.assertRegex(line, _PIN_COMMENT, f"{name}: {line}")
+        found = True
+    test.assertTrue(found, name)
 
 
 class CiTests(TestCase):
@@ -23,8 +43,9 @@ class CiTests(TestCase):
         self.assertIn("pull_request:", ci)
         self.assertIn("needs: test", ci)
         self.assertIn("bash ./scripts/self-test.sh", ci)
-        self.assertIn("ruff==0.14.2", ci)
-        self.assertIn("build==1.3.0", ci)
+        self.assertIn(".[dev]", ci)
+        self.assertNotRegex(ci, r"ruff==[0-9]")
+        self.assertNotRegex(ci, r"build==[0-9]")
         self.assertIn("packages: write", ci)
         self.assertIn("id-token: write", ci)
         self.assertIn("attestations: write", ci)
@@ -48,10 +69,11 @@ class CiTests(TestCase):
         self.assertIn("vuln-type: os", ci)
         self.assertIn("severity: CRITICAL,HIGH", ci)
         self.assertIn("ignore-unfixed: true", ci)
-        self.assertIn(
-            "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2",
+        self.assertRegex(
             ci,
+            r"actions/attest-build-provenance@[0-9a-f]{40} # v\d",
         )
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         images, _marker, publish = ci.partition("publish-images:")
         self.assertNotIn("packages: write", images)
         self.assertIn("packages: write", publish)
@@ -63,15 +85,17 @@ class CiTests(TestCase):
         self.assertIn("type=semver,pattern={{major}}.{{minor}}", ci)
         self.assertIn("value=latest,enable={{is_default_branch}}", ci)
         self.assertIn("value=engine-", ci)
-        self.assertIn("docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5", ci)
-        self.assertIn("docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0", ci)
+        self.assertRegex(ci, r"docker/metadata-action@[0-9a-f]{40} # v\d")
+        build_push = re.findall(r"docker/build-push-action@([0-9a-f]{40}) # v\d", ci)
+        self.assertEqual(len(build_push), 2)
+        self.assertEqual(build_push[0], build_push[1])
         self.assertIn("linux/amd64,linux/arm64", ci)
-        self.assertIn("docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3", ci)
-        self.assertIn("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0", ci)
+        self.assertRegex(ci, r"docker/setup-qemu-action@[0-9a-f]{40} # v\d")
+        self.assertRegex(ci, r"aquasecurity/trivy-action@[0-9a-f]{40} # v\d")
         self.assertNotRegex(ci, r"uses: .+@v\d+")
         for workflow in workflows.glob("*.yml"):
             text = workflow.read_text(encoding="utf-8")
-            self.assertNotRegex(text, r"uses: .+@v\d+", workflow.name)
+            _assert_action_pins(self, text, workflow.name)
         self.assertFalse((workflows / "update-db.yml").exists())
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         example = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -96,10 +120,9 @@ class CiTests(TestCase):
         self.assertIn("python3 -m unittest discover -s tests -v", script)
         self.assertIn("python3 -m build --wheel", script)
         self.assertIn("mvn -B -f integrations/maven/pom.xml verify", script)
-        self.assertIn("ruff==0.14.2", project)
-        self.assertIn("build==1.3.0", project)
+        self.assertRegex(project, r'"ruff==[0-9]+\.[0-9]+\.[0-9]+"')
+        self.assertRegex(project, r'"build==[0-9]+\.[0-9]+\.[0-9]+"')
         self.assertIn('dependencies = ["certifi"]', project)
-        self.assertIn("certifi", ci)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("actions/workflows/ci.yml/badge.svg?branch=main", readme)
@@ -116,12 +139,10 @@ class CiTests(TestCase):
         self.assertNotEqual((shots / "scan.png").read_bytes(), (shots / "drift.png").read_bytes())
 
     def test_build_push_action_pin_matches_both_jobs_and_the_record(self) -> None:
-        pin = "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0"
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         record = (ROOT / "docs" / "security" / "supply-chain-and-provenance.md").read_text(encoding="utf-8")
-        self.assertEqual(ci.count(pin), 2)
+        pins = re.findall(r"docker/build-push-action@([0-9a-f]{40}) # v\d", ci)
+        self.assertEqual(len(pins), 2)
+        self.assertEqual(pins[0], pins[1])
         self.assertNotIn("docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", ci)
-        self.assertIn(
-            "| `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |",
-            record,
-        )
+        self.assertIn("workflow file is the pin", record)

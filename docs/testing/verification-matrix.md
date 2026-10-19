@@ -1,9 +1,10 @@
 # Verification matrix
 
 `bash scripts/self-test.sh` is the suite CI runs before images are built. It
-lints with Ruff 0.14.2, compiles `src` and `tests`, runs `bash -n` on
-`scripts/*.sh`, runs `python3 -m unittest discover -s tests -v`, builds a
-wheel, and runs `mvn -B -f integrations/maven/pom.xml verify`.
+lints with the Ruff version pinned in `pyproject.toml`, compiles `src` and
+`tests`, runs `bash -n` on `scripts/*.sh`, runs `python3 -m unittest discover
+-s tests -v`, builds a wheel, and runs `mvn -B -f integrations/maven/pom.xml
+verify`.
 
 The unit tests serve fixtures on `127.0.0.1`. They do not call
 `services.nvd.nist.gov`. They do not create a GitHub release or push an image.
@@ -28,6 +29,12 @@ The unit tests serve fixtures on `127.0.0.1`. They do not call
 | Remote `Host` and `X-Forwarded-For` do not grant localhost sign-in | `tests/test_sso.py` |
 | Snapshot signature, tamper, missing signature, key mismatch, freshness | `tests/test_snapshot_auth.py` |
 | Scanner entrypoint creates a home for a non-root uid | `tests/test_scanner_user.py` |
+| Linux and macOS setup refuses a bad engine signature and installs a throwaway signed zip | `tests/test_engine_install.py` |
+| Windows setup script pins the same fingerprint and verifies before extract | `tests/test_setup.py` (script text; `pwsh` was not run) |
+| Unsigned checksummed cache works with an empty trust file and fails once a key is pinned | `tests/test_snapshot_auth.py` |
+| Remote `Host` is not the OAuth origin; `CHECKSTEAD_PUBLIC_BASE` is | `tests/test_sso.py` |
+| Link-local and metadata hosts are refused; a private address is not | `tests/test_phase1.py` |
+| Server entrypoint skips `chown` when the uid is not root | `tests/test_supply_chain.py` |
 
 ## Not run in this environment
 

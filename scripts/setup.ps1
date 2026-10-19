@@ -117,23 +117,75 @@ function Find-PinnedEngine {
 }
 
 function Install-Engine {
-    param([string]$Pin)
+    param([string]$Pin, [string]$Python)
+    # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
+    $ExpectedFingerprint = if ($env:ENGINE_KEY_FINGERPRINT) { $env:ENGINE_KEY_FINGERPRINT } else { "259A55407DD6C00299E6607EFFDE55BE73A2D1ED" }
+    $gpg = Get-Command gpg -ErrorAction SilentlyContinue
+    if ($null -eq $gpg) { throw "Refusing to install. gpg is required to verify the Dependency-Check signature." }
     $url = "https://github.com/dependency-check/DependencyCheck/releases/download/v$Pin/dependency-check-$Pin-release.zip"
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("checkstead-engine-" + [guid]::NewGuid().ToString("n"))
     New-Item -ItemType Directory -Path $tmp | Out-Null
-    $archive = Join-Path $tmp "dc.zip"
-    Invoke-WebRequest -Uri $url -OutFile $archive
-    Expand-Archive -Path $archive -DestinationPath (Join-Path $tmp "unpacked") -Force
-    $bat = Get-ChildItem -Path (Join-Path $tmp "unpacked") -Filter dependency-check.bat -Recurse | Select-Object -First 1
-    if ($null -eq $bat) { throw "The Dependency-Check archive did not contain bin\dependency-check.bat" }
-    $src = $bat.Directory.Parent.FullName
-    if (Test-Path (Join-Path $Root "dependency-check")) { Remove-Item -Recurse -Force (Join-Path $Root "dependency-check") }
-    New-Item -ItemType Directory -Path $Root -Force | Out-Null
-    Move-Item $src (Join-Path $Root "dependency-check")
-    Remove-Item -Recurse -Force $tmp
-    $installed = Join-Path $Root "dependency-check\bin\dependency-check.bat"
-    if (-not (Test-EnginePin $installed $Pin)) { throw "Refusing the downloaded engine. Expected $Pin." }
-    Write-Output "Installed Dependency-Check $Pin under $Root\dependency-check"
+    $previousGnupg = $env:GNUPGHOME
+    try {
+        $archive = Join-Path $tmp "dc.zip"
+        $signature = Join-Path $tmp "dc.zip.asc"
+        Invoke-WebRequest -Uri $url -OutFile $archive
+        Invoke-WebRequest -Uri ($url + ".asc") -OutFile $signature
+        $keyFile = $env:ENGINE_PUBLIC_KEY
+        $archivePy = $null
+        if ($PSCommandPath) {
+            $here = Split-Path -Parent $PSCommandPath
+            if (-not $keyFile) {
+                $localKey = Join-Path $here "keys\dependency-check-release.asc"
+                if (Test-Path -LiteralPath $localKey) { $keyFile = $localKey }
+            }
+            $localArchive = Join-Path $here "..\src\checkstead\archive.py"
+            if (Test-Path -LiteralPath $localArchive) { $archivePy = (Resolve-Path -LiteralPath $localArchive).Path }
+        }
+        if (-not $keyFile) {
+            $keyFile = Join-Path $tmp "dependency-check-release.asc"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/keys/dependency-check-release.asc" -OutFile $keyFile
+        }
+        if (-not $archivePy) {
+            $archivePy = Join-Path $tmp "archive.py"
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/src/checkstead/archive.py" -OutFile $archivePy
+        }
+        $gnupg = Join-Path $tmp "gnupg"
+        New-Item -ItemType Directory -Path $gnupg | Out-Null
+        $env:GNUPGHOME = $gnupg
+        & gpg --batch --import $keyFile 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported." }
+        $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
+        $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
+        $fpr = ""
+        if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
+        if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
+        & gpg --batch --verify $signature $archive 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify." }
+        $unpacked = Join-Path $tmp "unpacked"
+        New-Item -ItemType Directory -Path $unpacked | Out-Null
+        if ($Python -eq "py -3") {
+            & py -3 $archivePy $archive $unpacked
+        } else {
+            & $Python $archivePy $archive $unpacked
+        }
+        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The archive was rejected." }
+        $bat = Get-ChildItem -Path $unpacked -Filter dependency-check.bat -Recurse | Select-Object -First 1
+        if ($null -eq $bat) { throw "The Dependency-Check archive did not contain bin\dependency-check.bat" }
+        $src = $bat.Directory.Parent.FullName
+        if (Test-Path (Join-Path $Root "dependency-check")) { Remove-Item -Recurse -Force (Join-Path $Root "dependency-check") }
+        New-Item -ItemType Directory -Path $Root -Force | Out-Null
+        Move-Item $src (Join-Path $Root "dependency-check")
+        $installed = Join-Path $Root "dependency-check\bin\dependency-check.bat"
+        if (-not (Test-EnginePin $installed $Pin)) {
+            Remove-Item -Recurse -Force (Join-Path $Root "dependency-check")
+            throw "Refusing the downloaded engine. Expected $Pin."
+        }
+        Write-Output "Installed Dependency-Check $Pin under $Root\dependency-check"
+    } finally {
+        if ($null -eq $previousGnupg) { Remove-Item Env:GNUPGHOME -ErrorAction SilentlyContinue } else { $env:GNUPGHOME = $previousGnupg }
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force $tmp }
+    }
 }
 
 function Test-ChecksteadCurrent {
@@ -233,7 +285,7 @@ if ($Pin -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 if (Find-PinnedEngine $Pin) {
     Write-Output "Dependency-Check $Pin already present."
 } else {
-    Install-Engine $Pin
+    Install-Engine $Pin $python
 }
 
 if (Test-ChecksteadCurrent) {

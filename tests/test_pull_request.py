@@ -464,9 +464,9 @@ class PullRequestCompareTests(TestCase):
         self.assertIn("GITHUB_SHA", entry)
         self.assertIn("--revision", entry)
         self.assertNotIn("source.txt", entry)
-        self.assertIn(
-            "github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311",
+        self.assertRegex(
             action,
+            r"uses: github/codeql-action/upload-sarif@[0-9a-f]{40} # v\d",
         )
         self.assertIn("branch:", readme)
         self.assertIn("description:", readme)

@@ -63,9 +63,11 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         local_mode = "loopback-peer"
     print(f"local-sign-in: {local or 'unset'} ({local_mode})")
     from checkstead.snapshot import max_snapshot_age_days
-    from checkstead.snapshot_auth import load_trust
+    from checkstead.snapshot_auth import load_trust, signature_required
 
-    print(f"snapshot-trust-keys: {len(load_trust().keys)}")
+    trust = load_trust()
+    print(f"snapshot-trust-keys: {len(trust.keys)}")
+    print(f"snapshot-signature: {'required' if signature_required(trust) else 'optional'}")
     print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
     for name in (

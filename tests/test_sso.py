@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.commit import lookup_branch, lookup_commit  # noqa: E402
+from checkstead.identity import AuthError  # noqa: E402
+from checkstead.sso import public_base  # noqa: E402
 from checkstead.ui import _local_sign_in, bind_server  # noqa: E402
 
 
@@ -135,6 +138,8 @@ class SsoTests(TestCase):
                 "CHECKSTEAD_ENTRA_AUTHORIZE",
                 "CHECKSTEAD_ENTRA_TOKEN",
                 "CHECKSTEAD_ENTRA_USERINFO",
+                "CHECKSTEAD_PUBLIC_BASE",
+                "CHECKSTEAD_COOKIE_SECURE",
             )
         }
         for key in self._saved:
@@ -176,8 +181,11 @@ class SsoTests(TestCase):
 
     def test_localhost_sign_in_opens_the_timeline_without_oauth(self) -> None:
         os.environ.pop("CHECKSTEAD_LOCAL", None)
-        status, body, _headers = self.open("/")
+        status, body, headers = self.open("/")
         self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertIn("frame-ancestors 'none'", headers.get("Content-Security-Policy", ""))
         self.assertIn(b"Sign in on this computer", body)
         self.assertIn(b'id="sign-in-local"', body)
         self.assertNotIn(b'id="local-sign-in" hidden', body)
@@ -224,6 +232,28 @@ class SsoTests(TestCase):
         os.environ["CHECKSTEAD_LOCAL"] = "1"
         self.assertTrue(_local_sign_in("172.17.0.1", "172.17.0.1:8765"))
         os.environ.pop("CHECKSTEAD_LOCAL", None)
+        status, body, _headers = self.open("/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"ok": True})
+
+    def test_remote_host_header_is_not_the_oauth_origin(self) -> None:
+        with self.assertRaises(AuthError):
+            public_base("evil.example", "172.17.0.1")
+        with self.assertRaises(AuthError):
+            public_base("evil.example\r\nLocation: http://evil.example", "127.0.0.1")
+        self.assertEqual(public_base("127.0.0.1:8765", "127.0.0.1"), "http://127.0.0.1:8765")
+        self.assertEqual(public_base("evil.example", "127.0.0.1"), "http://evil.example")
+        os.environ["CHECKSTEAD_PUBLIC_BASE"] = "https://checkstead.example"
+        self.assertEqual(public_base("evil.example", "172.17.0.1"), "https://checkstead.example")
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_ID"] = "client-id"
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_SECRET"] = "client-secret"
+        os.environ["CHECKSTEAD_GITHUB_OAUTH"] = self.provider
+        status, _body, headers = self.open("/api/sso/github/start")
+        self.assertEqual(status, 302)
+        location = headers.get("Location")
+        self.assertIn("redirect_uri=https%3A%2F%2Fcheckstead.example%2F", location)
+        self.assertNotIn("evil.example", location)
+        self.assertNotIn("client-secret", location)
 
     def test_host_and_forwarded_headers_are_not_a_local_peer(self) -> None:
         self.addCleanup(os.environ.pop, "CHECKSTEAD_LOCAL", None)
@@ -312,6 +342,7 @@ class SsoTests(TestCase):
         self.assertIn("checkstead_session=", session)
         self.assertNotIn("client-secret", session)
         data = ROOT / "build" / "tests" / "sso" / self.id().split(".")[-1] / "accounts.sqlite"
+        self.assertEqual(stat.S_IMODE(data.stat().st_mode), 0o600)
         self.assertNotIn(b"client-secret", data.read_bytes())
         self.assertNotIn(b"from-provider", data.read_bytes())
 

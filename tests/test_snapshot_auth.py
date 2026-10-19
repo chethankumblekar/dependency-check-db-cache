@@ -92,10 +92,13 @@ class SignatureTests(TestCase):
 
     def test_missing_invalid_and_unpinned_signatures_are_refused(self) -> None:
         unsigned = self._manifest("unsigned")
-        self.assertEqual(verify_manifest(unsigned, self.trust).status, "unsigned")
+        with self.assertRaises(SnapshotRefused) as keyed:
+            verify_manifest(unsigned, self.trust)
+        self.assertIn("trust root", str(keyed.exception))
+        self.assertEqual(verify_manifest(unsigned, _trust()).status, "unsigned")
         os.environ["CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE"] = "1"
         with self.assertRaises(SnapshotRefused) as missing:
-            verify_manifest(unsigned, self.trust)
+            verify_manifest(unsigned, _trust())
         self.assertIn("missing", str(missing.exception))
         os.environ.pop("CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE", None)
 
@@ -209,11 +212,12 @@ class SignatureTests(TestCase):
         day.mkdir(parents=True)
         (day / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
         (day / "checkstead-db.zip").write_bytes(blob.read_bytes())
+        empty = _trust()
         stale = resolve_snapshot(
             "https://example.invalid/manifest.json",
             self.root / "old-cache",
             date(2026, 10, 6),
-            trust=self.trust,
+            trust=empty,
         )
         self.assertEqual(stale.freshness, "stale")
         self.assertEqual(stale.cache, "hit")
@@ -224,9 +228,35 @@ class SignatureTests(TestCase):
                 "https://example.invalid/manifest.json",
                 self.root / "old-cache",
                 date(2026, 10, 6),
-                trust=self.trust,
+                trust=empty,
             )
         self.assertIn("stale", str(raised.exception))
+
+    def test_an_unsigned_checksummed_cache_works_until_a_trust_root_exists(self) -> None:
+        blob = self.root / "plain.zip"
+        blob.write_bytes(b"checksummed\n")
+        manifest = write_manifest(blob, self.root / "plain.json", _time("2026-10-06T01:00:00Z"))
+        day = self.root / "plain-cache" / "2026-10-06"
+        day.mkdir(parents=True)
+        (day / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        (day / "checkstead-db.zip").write_bytes(blob.read_bytes())
+        kept = resolve_snapshot(
+            "https://example.invalid/manifest.json",
+            self.root / "plain-cache",
+            date(2026, 10, 6),
+            trust=_trust(),
+        )
+        self.assertEqual(kept.authenticity, "unsigned")
+        self.assertEqual(kept.cache, "hit")
+        with self.assertRaises(SnapshotRefused) as raised:
+            resolve_snapshot(
+                "https://example.invalid/manifest.json",
+                self.root / "plain-cache",
+                date(2026, 10, 6),
+                trust=self.trust,
+            )
+        self.assertIn("trust root", str(raised.exception))
+        self.assertTrue((day / "checkstead-db.zip").is_file())
 
     def test_the_updater_signs_only_when_a_key_is_configured(self) -> None:
         script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")

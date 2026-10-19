@@ -6,11 +6,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
 if ! command -v ruff >/dev/null 2>&1; then
-  echo "ruff is not on PATH. Install ruff==0.14.2 and run this again." >&2
+  echo "ruff is not on PATH. Install the dev extra from pyproject.toml and run this again." >&2
   exit 1
 fi
 if ! python3 -c "import build" >/dev/null 2>&1; then
-  echo "The build module is not installed. Install build==1.3.0 and run this again." >&2
+  echo "The build module is not installed. Install the dev extra from pyproject.toml and run this again." >&2
   exit 1
 fi
 

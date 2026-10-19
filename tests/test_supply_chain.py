@@ -61,3 +61,44 @@ class SupplyChainTests(TestCase):
         self.assertIn(warning, script)
         self.assertIn(warning, page)
         self.assertIn("127.0.0.1:8765:8765", script)
+        self.assertIn('id -u', script)
+
+    def test_server_entrypoint_drops_to_checkstead_and_skips_chown_when_not_root(self) -> None:
+        root = ROOT / "build" / "tests" / "server-entry"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        bindir = root / "bin"
+        bindir.mkdir(parents=True)
+        log = root / "log.txt"
+        (bindir / "id").write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "-u" ]; then echo 4242; exit 0; fi\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        (bindir / "chown").write_text(
+            f"#!/bin/sh\necho chown >> {log}\n",
+            encoding="utf-8",
+        )
+        (bindir / "checkstead").write_text(
+            f"#!/bin/sh\necho checkstead \"$@\" >> {log}\n",
+            encoding="utf-8",
+        )
+        for name in ("id", "chown", "checkstead"):
+            os.chmod(bindir / name, 0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(bindir) + os.pathsep + "/usr/bin:/bin"
+        env["CHECKSTEAD_DATA"] = str(root / "data")
+        env["CHECKSTEAD_SCANS"] = str(root / "scans")
+        env["CHECKSTEAD_LOCAL"] = "0"
+        completed = subprocess.run(
+            ["sh", str(ROOT / "scripts" / "server-entrypoint.sh")],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        recorded = log.read_text(encoding="utf-8")
+        self.assertNotIn("chown", recorded)
+        self.assertIn("checkstead ui --host 0.0.0.0 --port 8765", recorded)
+        self.assertIn(f"--data {root / 'data'}", recorded)

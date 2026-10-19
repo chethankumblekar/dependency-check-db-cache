@@ -40,6 +40,16 @@ pull request
 [39263737597](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39263737597)
 and the image jobs succeeded.
 
+Pull-request runs set `cancel-in-progress` so a newer push replaces the
+previous one. A push to the default branch, including image publish, does not
+cancel an in-progress run.
+
+Action `uses` lines are commit SHAs. The unit test checks the pin format and
+that both image jobs share one `docker/build-push-action` SHA. It does not
+copy a SHA into the test, so a reviewed Dependabot update of qemu, CodeQL
+upload-sarif, ruff, or build does not fail for a stale hardcoded pin. Ruff
+and build versions are the pins in `pyproject.toml`. CI installs `.[dev]`.
+
 ## Push and workflow dispatch
 
 `publish-images` runs only when the event is not a pull request and the ref

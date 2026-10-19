@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 from urllib.request import OpenerDirector
 
 from checkstead.archive import ArchiveRejected
@@ -23,6 +23,7 @@ from checkstead.http import download, read_text
 from checkstead.snapshot_auth import Authenticity, TrustStore, load_trust, signature_fields, verify_manifest
 
 SNAPSHOT_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+DATABASE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 MANIFEST_FORMAT = 1
 
 
@@ -140,7 +141,7 @@ def parse_manifest(payload: str) -> dict:
             "Snapshot manifest time must be UTC, like 2026-10-06T01:00:00Z."
         )
     database = manifest.get("database")
-    if not isinstance(database, str) or not database.strip() or "/" in database or "\\" in database:
+    if not isinstance(database, str) or not DATABASE_NAME_RE.fullmatch(database):
         raise SnapshotRefused("Snapshot manifest database name must be a file name.")
     checksum = _normalize_checksum(manifest.get("checksum"))
     parsed = {
@@ -235,7 +236,7 @@ def _resolve_snapshot(
         ) from exc
     manifest = parse_manifest(payload)
     authenticity = _accept_manifest(manifest, trust)
-    database_url = urljoin(manifest_url, manifest["database"])
+    database_url = _database_url(manifest_url, manifest["database"])
     try:
         actual = download(database_url, database_path, opener)
     except Exception:
@@ -248,6 +249,24 @@ def _resolve_snapshot(
         )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return _snapshot(manifest, database_path, data_dir, manifest_path, today, "fetched", authenticity)
+
+
+def _database_url(manifest_url: str, name: str) -> str:
+    """Join a file name onto the manifest URL and refuse a different host or scheme."""
+    resolved = urljoin(manifest_url, name)
+    base = urlsplit(manifest_url)
+    target = urlsplit(resolved)
+    same_host = (target.hostname or "").rstrip(".").lower() == (base.hostname or "").rstrip(".").lower()
+    if (
+        target.scheme != base.scheme
+        or not same_host
+        or target.username
+        or target.password
+        or target.query
+        or target.fragment
+    ):
+        raise SnapshotRefused("Snapshot database URL does not stay on the manifest host.")
+    return resolved
 
 
 def _accept_manifest(manifest: dict, trust: TrustStore | None) -> Authenticity:

@@ -16,11 +16,19 @@ import urllib.parse
 import urllib.request
 
 from checkstead.errors import ChecksteadError
+from checkstead.github_app import localhost_client
 from checkstead.http import USER_AGENT, build_opener, ensure_allowed
 from checkstead.identity import AuthError, Identity, github_api_base, github_web_base
 
 STATE_COOKIE = "checkstead_sso"
 _TENANT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$")
+_ORIGIN_HOST = re.compile(
+    r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+    r"|\d{1,3}(?:\.\d{1,3}){3}"
+    r"|\[[A-Fa-f0-9:]+\])"
+    r"(?::[0-9]{1,5})?$"
+)
 
 
 def _env(name: str) -> str:
@@ -70,10 +78,45 @@ def state_cookie(state: str) -> str:
     return "; ".join(parts)
 
 
-def public_base(host: str) -> str:
+def configured_public_base() -> str | None:
+    """Origin from CHECKSTEAD_PUBLIC_BASE, or None when the operator left it unset."""
+    raw = os.environ.get("CHECKSTEAD_PUBLIC_BASE", "").strip()
+    if not raw:
+        return None
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise AuthError("CHECKSTEAD_PUBLIC_BASE must be an http or https origin.")
+    if (
+        parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise AuthError(
+            "CHECKSTEAD_PUBLIC_BASE must be an origin, without a path, userinfo, or query."
+        )
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def public_base(host: str, peer: str | None = None) -> str:
+    """Origin for OAuth and the GitHub App manifest.
+
+    A configured CHECKSTEAD_PUBLIC_BASE wins, and the Host header is ignored.
+    Without it, only a loopback TCP peer may supply Host. A remote peer has
+    to have the origin set explicitly. Host is never proof of localhost.
+    """
+    configured = configured_public_base()
+    if configured:
+        return configured
+    if peer is not None and not localhost_client(peer):
+        raise AuthError(
+            "Set CHECKSTEAD_PUBLIC_BASE to the origin clients use. "
+            "A Host header from a remote connection is not that origin."
+        )
     scheme = "https" if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1" else "http"
     cleaned = host.split(",")[0].strip()
-    if not cleaned or any(char in cleaned for char in "\r\n "):
+    if not cleaned or any(char in cleaned for char in "\r\n\x00 ") or not _ORIGIN_HOST.fullmatch(cleaned):
         raise AuthError("The server could not tell which host to return to.")
     return f"{scheme}://{cleaned}"
 
