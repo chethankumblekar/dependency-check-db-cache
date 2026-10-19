@@ -41,6 +41,33 @@ def _cmd_version(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_doctor(_args: argparse.Namespace) -> int:
+    """Print versions and configuration. Secret values are not printed."""
+    engine = os.environ.get("CHECKSTEAD_ENGINE", "").strip()
+    data = os.environ.get("CHECKSTEAD_DATA", "").strip()
+    local = os.environ.get("CHECKSTEAD_LOCAL", "").strip()
+    print(f"checkstead: {__version__}")
+    print(f"engine-pin: {pinned_engine()}")
+    print(f"engine-path: {engine or 'unset'}")
+    if engine:
+        print(f"engine-file: {'present' if Path(engine).is_file() else 'missing'}")
+    else:
+        print("engine-file: unset")
+    print(f"cache: {default_cache_dir()}")
+    print(f"data: {data or 'unset'}")
+    print(f"local-sign-in: {local or 'unset'}")
+    print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
+    for name in (
+        "CHECKSTEAD_GITHUB_CLIENT_SECRET",
+        "CHECKSTEAD_ENTRA_CLIENT_SECRET",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ):
+        if os.environ.get(name):
+            print(f"{name}: set")
+    return 0
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     from checkstead.ui import default_data_dir, default_scans_dir, prepare_scans_dir, serve
 
@@ -155,6 +182,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     version = sub.add_parser("version", help="Print the pinned Dependency-Check release.")
     version.set_defaults(func=_cmd_version)
+
+    doctor = sub.add_parser("doctor", help="Print versions and configuration without secrets.")
+    doctor.set_defaults(func=_cmd_doctor)
     return parser
 
 

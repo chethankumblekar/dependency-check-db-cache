@@ -317,13 +317,13 @@ Add one repository secret:
 
 Do not copy a key out of another repository. Do not put this secret in a scan, a `checkstead.yml`, or an application repository.
 
-Until the secret is set, [Update database snapshot](.github/workflows/update-snapshot.yml) fails on purpose and publishes nothing. After it is set, run that workflow once, or wait for the schedule at 01:00 UTC. The job installs Dependency-Check 13.0.0, refuses the binary if it does not report that version, runs `--updateonly` with the key, and publishes a GitHub release tagged `db-YYYY-MM-DD`, marked latest. The release contains:
+Until the secret is set, [Update database snapshot](.github/workflows/update-snapshot.yml) fails on purpose and publishes nothing. After it is set, run that workflow once, or wait for the schedule at 01:00 UTC. The job installs Dependency-Check 13.0.0, checks the upstream signature, refuses the binary if it does not report that version, runs `--updateonly` with the key, and publishes a GitHub release tagged `db-YYYY-MM-DD`, marked latest. That workflow is the only publisher. It refuses to upload an empty zip or a zip whose SHA-256 does not match `manifest.json`. The release contains:
 
 - `manifest.json` — engine version, UTC timestamp, SHA-256 checksum
 - `checkstead-db.zip` — the data directory
 - `checkstead-db.zip.sha256`
 
-A second run on the same UTC day leaves that release in place and does not call NVD again. The workflow allows three hours. The first database load is large.
+A second run on the same UTC day leaves that release in place and does not call NVD again. The workflow allows three hours and does not cancel an in-progress update. The first database load is large. How a snapshot is built, cached, and refused is in [Snapshot operations](docs/operations/snapshot-operations.md).
 
 ## Container images
 
@@ -336,7 +336,13 @@ docker build -t checkstead .
 docker run --rm -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass.
+The scanner image runs as root so this mounted-directory command can write the report. The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push publishes them and asks GitHub for build provenance and an image SBOM. This repository does not treat those attestations as verified until a publish job has run. Pin a published image by its digest when you need a fixed build:
+
+```bash
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+```
+
+[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, and only on a push. A pull request builds the images and does not push.
 
 | Image | What it is |
 | --- | --- |
@@ -503,7 +509,7 @@ PYTHONPATH=src python3 -m checkstead ui
 
 Open http://127.0.0.1:8765/. Accounts are stored under `~/.local/share/checkstead`, or in the directory you pass with `--data`.
 
-The container is the same server. `Dockerfile.server` listens on every interface inside the container and turns localhost sign-in on. The published port in [`docker-compose.yml`](docker-compose.yml) is `127.0.0.1:8765`.
+The container is the same server. `Dockerfile.server` listens on every interface inside the container and turns localhost sign-in on. Docker cannot publish a port to a process that listens only on the container's loopback, so the process binds `0.0.0.0` and the published port in [`docker-compose.yml`](docker-compose.yml) is `127.0.0.1:8765`. With `CHECKSTEAD_LOCAL=1`, any client that can open that port can become the first administrator. Keep the host binding on `127.0.0.1`, or set `CHECKSTEAD_LOCAL=0` and use GitHub or Entra sign-in. The server prints that warning when it listens beyond loopback.
 
 ```bash
 docker build -f Dockerfile.server -t checkstead-server .
@@ -562,7 +568,9 @@ python3 -m pip install ruff==0.14.2 build==1.3.0 certifi
 bash scripts/self-test.sh
 ```
 
-That is the same lint, package build, unit tests, and Maven plugin tests that CI runs before it publishes images. The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded.
+That is the same lint, package build, unit tests, and Maven plugin tests that CI runs before it publishes images. The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded. `checkstead doctor` prints the pin and whether secrets are set, and it does not print the secret values.
+
+What the tests cover, and what still needs Docker, is in [Verification](docs/testing/verification-matrix.md). The trust boundaries are in [Threat model](docs/security/threat-model.md).
 
 ## License and security
 

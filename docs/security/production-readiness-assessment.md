@@ -1,0 +1,231 @@
+# Production-readiness assessment
+
+Date of this audit: 19 October 2026. Repository:
+`chethankumblekar/dependency-check-db-cache`. Product: Checkstead. Engine pin:
+Dependency-Check 13.0.0 (`engine.version`).
+
+This file records what the code did before the change, what was confirmed,
+what this change implements, and what remains. It is not a penetration test
+and it does not claim an image was published or signed.
+
+## Architecture
+
+```text
+update-snapshot.yml
+  NVD_API_KEY -> dependency-check --updateonly -> zip + manifest.json + sha256
+  -> GitHub release db-YYYY-MM-DD (marked latest)
+
+checkstead scan / GitHub Action / Maven / Gradle / Azure DevOps
+  HTTPS manifest -> SHA-256 zip -> ~/.cache/checkstead/<UTC date>/
+  -> safe_extract -> dependency-check --noupdate -> checkstead.txt + SARIF
+  -> threshold / KEV / unscored policy
+
+Dockerfile.server + docker-compose.yml
+  timeline on 0.0.0.0:8765 inside the container
+  published as 127.0.0.1:8765 on the host
+```
+
+The scan path is `src/checkstead/cli.py`, `scan.py`, `snapshot.py`, `http.py`,
+and `archive.py`. The updater is `scripts/update-snapshot.sh`. The engine
+install is `scripts/install-engine.sh`. Image publish is the `publish-images`
+job in `.github/workflows/ci.yml`, and it runs only when the event is not a
+pull request.
+
+## Existing controls that already worked
+
+These were traced in the code and covered by tests before this change:
+
+- Snapshot manifest format, engine pin, UTC timestamp, checksum shape, and
+  single-file database name (`parse_manifest`).
+- SHA-256 compared before the manifest is written on a fresh download.
+- Atomic `.partial` download, and deletion of that partial file on failure.
+- `flock` on the cache directory.
+- `services.nvd.nist.gov` refused before a connection, including a redirect.
+- Scan argv contains `--noupdate` and not `--nvdApiKey`. `NVD_API_KEY` is
+  stripped from the child environment.
+- A manifest built by engine 12.1.8 is refused before the zip is used.
+- The first verified manifest of a UTC day is reused. A later scan that day
+  does not follow a changed publication.
+- Score policy `prefer-newest` and `highest` are unchanged. Private
+  suppressions stay optional. Findings stay in four groups.
+- Server image user is `checkstead`. Compose binds `127.0.0.1:8765:8765`.
+- The last administrator cannot be removed. Session cookies are `HttpOnly`
+  and `SameSite=Lax`.
+
+## Findings
+
+### High — legacy updater published an unchecksummed database
+
+`.github/workflows/update-db.yml` was scheduled at 01:00 UTC, the same time
+as the real updater. It downloaded Dependency-Check 12.1.8, ran
+`--updateonly` with `NVD_API_KEY`, zipped the data directory, and published
+that zip with `softprops/action-gh-release` and `make_latest: "false"`.
+There was no manifest and no checksum. 12.1.8 predates the database schema
+this client accepts.
+
+**Status: fixed.** The workflow file is deleted. `tests/test_phase1.py`
+asserts it is absent and that `update-snapshot.yml` does not pin 12.1.8.
+The real updater now refuses an empty zip and a manifest checksum that does
+not match the zip, before `gh release create`.
+
+### Medium — archive extraction accepted symlink members
+
+`safe_extract` checked `..` and then called `ZipFile.extractall`. Python
+will materialize a symlink member. A symlink to a path outside the
+destination is a write outside the cache. The same helper extracts GitHub
+repository archives (`src/checkstead/github_app.py`).
+
+**Status: fixed.** `src/checkstead/archive.py` rejects absolute paths, `..`,
+NUL, and symlink targets that resolve outside the destination. It does not
+call `extractall`. Regression coverage is in `tests/test_phase1.py`.
+
+### Medium — cleartext HTTP was allowed to any host
+
+`ensure_allowed` accepted `http`, `https`, and `file`. Fixture servers use
+`http://127.0.0.1`. A snapshot URL of `http://` to any other host would have
+been fetched.
+
+**Status: fixed.** `http` is allowed only for `localhost`, `127.0.0.1`, and
+`::1`. `file://` and URLs with userinfo are refused. `https` to other hosts
+remains, because GitHub releases and the GitHub API use it. The NVD host
+stays refused on `https` as well.
+
+### Medium — the engine zip was not authenticated
+
+`scripts/install-engine.sh` downloaded the GitHub release zip and checked
+that `dependency-check.sh --version` contained the pin. It did not check a
+signature. A checksum published beside the zip would not have been an
+independent proof, and this repository does not invent one.
+
+Upstream publishes `dependency-check-13.0.0-release.zip.asc`. The signing
+key fingerprint is `259A55407DD6C00299E6607EFFDE55BE73A2D1ED`, uid
+`Jeremy Long <jeremy.long@gmail.com>` on the Ubuntu keyserver. On 19 October
+2026 the 28 MiB v13.0.0 zip from that release verified with the key now
+stored at `scripts/keys/dependency-check-release.asc` (`gpg: Good signature`).
+GnuPG also said the key is not certified in a local web of trust. The
+fingerprint pin is the control. The zip has 85 members and no symlinks.
+
+**Status: fixed in the installer.** The script imports only that key,
+requires that fingerprint, verifies the `.asc`, extracts with `archive.py`,
+and still requires `--version` to report the pin. A mismatch deletes the
+install. Tests use a generated key and do not download the upstream zip.
+
+### Medium — pull-request CI could push packages
+
+The `images` job set `packages: write` on every event, including pull
+requests. `push` was already false on pull requests, but the token
+permission was broader than the job needed. Actions were pinned to moving
+tags (`@v5`, `@v6`), not commit SHAs. `provenance` was false.
+
+**Status: fixed.** Pull-request builds are a separate job with
+`contents: read`, `push: false`, and `load: true`. The publish job runs
+only when `github.event_name != 'pull_request'` and is the job with
+`packages: write`, `id-token: write`, and `attestations: write`. It sets
+`provenance: true` and `sbom: true`. Actions used by the workflows are
+pinned to the SHAs in `docs/security/supply-chain-and-provenance.md`.
+
+### Low — scanner image runs as root
+
+`Dockerfile` has no `USER`. The documented invocation is
+`docker run -v "$PWD:/work" -w /work`. That mount is owned by the host user.
+Switching the image to a fixed user breaks that command when the directory
+is not writable by the image user. This was not changed. The Dockerfile
+comments say why. The server image was already non-root.
+
+### Low — localhost sign-in trusts every client that can connect
+
+`CHECKSTEAD_LOCAL=1` makes `_local_sign_in` return true for any client.
+The container must listen on `0.0.0.0` or Docker cannot publish the port.
+The host binding in Compose is the real control. A spoofed `Host` header is
+not. This behavior was kept so local sign-in and Compose still work. The
+entrypoint and `checkstead ui` now warn when the listen address is not
+loopback. `SECURITY.md` and the server section of the README state the
+requirement: publish `127.0.0.1:8765:8765`, or set `CHECKSTEAD_LOCAL=0`.
+
+### Informational — snapshot identity is the manifest, not a second signature
+
+Consumers verify SHA-256 against the manifest published in the same GitHub
+release. That detects corruption and a zip that does not match its manifest.
+It does not detect a maintainer, or someone with `contents: write`,
+publishing a consistent but unwanted database. That is the trust model of a
+single publisher. It is documented in the threat model. No second signature
+was invented.
+
+### Informational — same-day cache does not refresh
+
+A valid cache for the UTC day is reused even if `releases/latest` changes.
+Offline scans keep working. The tradeoff is documented in
+`docs/operations/snapshot-operations.md`. A maximum age was not added,
+because it would make a previously valid offline scan depend on the network.
+
+## Design limits that were left in place
+
+- Two local updater processes outside the workflow concurrency group can
+  race. The second `gh release create` fails. The first release remains.
+- The scanner-image Trivy result is a report (`exit-code: "0"`), not a
+  failing gate. The pinned engine ships its own jars. Failing the build on
+  those jars without a reviewed baseline would either block every pull
+  request or force an `engine.version` change. The server image fails the
+  pull request on Critical language packages.
+- Image provenance is configured for the publish job. This change does not
+  push an image, so no attestation was verified.
+- `docker` is not installed in the environment where this assessment was
+  written. `scripts/scan-images.sh` was syntax-checked by `bash -n` and was
+  not executed. Exit 2 from that script means "not run", not "clean".
+
+## External settings this audit could not see
+
+- Whether the `NVD_API_KEY` secret is present on the repository.
+- Whether the GHCR packages are public.
+- Whether a snapshot release `db-*` currently exists.
+- The result of the next pull-request Trivy run. The workflow is in CI. It
+  has not run for this commit yet.
+
+## What this change does not do
+
+- No release was published. No image tag was pushed. No force-push.
+- `engine.version` is still `13.0.0`.
+- Score policy, exit codes for policy failures, and the four finding groups
+  are unchanged.
+- No suppression file was added. Unit tests still do not call the NVD.
+- Pull request #2 was not modified. This work is a separate branch.
+
+## Tests
+
+Command: `bash scripts/self-test.sh`
+
+Result on 19 October 2026: exit 0. Ruff passed.
+`python3 -m unittest discover -s tests -v` reported `Ran 94 tests` and `OK`.
+Maven `integrations/maven/pom.xml` reported `BUILD SUCCESS` (1 test).
+`bash -n` covered `scripts/scan-images.sh` and `scripts/check-release.sh`
+as part of that command.
+
+`gpg --verify` of the real v13.0.0 zip against the vendored key succeeded
+on this machine on 19 October 2026. That download is not part of the unit
+suite.
+
+## Residual risk
+
+- The engine signing key is pinned by fingerprint. It is not in a web of
+  trust on the machine that installs it. GnuPG prints that warning and the
+  script still requires the fingerprint match and a good signature.
+- A person who can publish a GitHub release on this repository can publish
+  a snapshot whose zip matches its manifest.
+- The scanner container is root.
+- `CHECKSTEAD_LOCAL=1` on a publicly forwarded port lets the first visitor
+  become the administrator.
+- Base-image operating-system findings and Dependency-Check's bundled jars
+  are not a failing gate.
+- Provenance on the publish job is unimplemented until that job runs.
+
+## Next three improvements
+
+1. Read the pull-request `trivy-scanner` artifact and decide which
+   Dependency-Check jar findings, if any, should fail the build. Do not
+   clear them by moving `engine.version` without an upstream release.
+2. After the next authorized image publish, record the image digest in the
+   README and confirm the provenance attestation. Consumers should pin that
+   digest.
+3. Add a tested non-root scanner path that still supports
+   `docker run -v "$PWD:/work" -w /work`, for example by documenting a
+   `--user` invocation only after a build in an environment that has Docker.

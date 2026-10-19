@@ -47,6 +47,16 @@ That is the lint, package build, unit tests, and Maven plugin tests that CI
 runs. The tests publish no database and do not call the NVD. See the Develop
 section of [README.md](README.md).
 
+`bash scripts/check-release.sh` checks the release contract and writes a source
+SBOM without publishing. Image scans need Docker and Trivy, which
+`bash scripts/scan-images.sh` refuses to pretend it ran when those tools are
+absent.
+
+GitHub Actions are pinned to commit SHAs. The comment on the `uses` line is the
+release tag. Update a pin with `gh api repos/<owner>/<name>/commits/<tag> --jq .sha`,
+and change the SHA and the comment together. Dependabot opens weekly update
+requests for pip, GitHub Actions, Docker, and the Maven plugin.
+
 ## Pull requests
 
 Describe what changed and how you checked it. Use the pull request template.

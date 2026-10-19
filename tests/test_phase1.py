@@ -490,6 +490,83 @@ class Phase1Tests(TestCase):
         with self.assertRaises(SnapshotRefused):
             safe_extract(slipped, root / "data")
         self.assertFalse((root / "escape.txt").exists())
+        linked = root / "linked.zip"
+        info = zipfile.ZipInfo("escape-link")
+        info.create_system = 3
+        info.external_attr = (0o120777) << 16
+        with zipfile.ZipFile(linked, "w") as archive:
+            archive.writestr(info, b"../escape.txt")
+        with self.assertRaises(SnapshotRefused):
+            safe_extract(linked, root / "linked")
+        self.assertFalse((root / "escape.txt").is_symlink())
+        self.assertFalse((root / "linked" / "escape-link").exists())
+        absolute = root / "absolute.zip"
+        with zipfile.ZipFile(absolute, "w") as archive:
+            archive.writestr("/tmp/checkstead-absolute.txt", "nope\n")
+        with self.assertRaises(SnapshotRefused):
+            safe_extract(absolute, root / "absolute")
+        self.assertFalse(Path("/tmp/checkstead-absolute.txt").exists())
+
+    def test_cached_zip_that_does_not_match_its_manifest_is_kept_and_refused(self) -> None:
+        root = ROOT / "build" / "tests" / "stale-cache"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        day = root / "cache" / "2026-10-06"
+        day.mkdir(parents=True)
+        blob = day / "checkstead-db.zip"
+        write_zip(blob, "cached")
+        manifest = manifest_for(blob, "2026-10-06T01:02:03Z")
+        blob.write_bytes(b"corrupted")
+        (day / "manifest.json").write_bytes(manifest)
+        scan_path = root / "project"
+        scan_path.mkdir()
+        with self.assertRaises(SnapshotRefused) as raised:
+            run_scan(
+                [scan_path],
+                project="sample",
+                config_snapshot_url="https://example.invalid/manifest.json",
+                out_dir=root / "out",
+                cache_dir=root / "cache",
+                today=date(2026, 10, 6),
+                dry_run=True,
+            )
+        self.assertIn("no longer matches", str(raised.exception))
+        self.assertTrue((day / "manifest.json").is_file())
+        self.assertEqual(blob.read_bytes(), b"corrupted")
+
+    def test_cleartext_http_is_limited_to_loopback(self) -> None:
+        from checkstead.http import ensure_allowed
+
+        ensure_allowed("http://127.0.0.1:9/manifest.json")
+        ensure_allowed("http://localhost/manifest.json")
+        ensure_allowed("https://github.com/example/manifest.json")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("http://example.com/manifest.json")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("file:///tmp/manifest.json")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("https://services.nvd.nist.gov/rest/json/cves/2.0")
+        with self.assertRaises(RefusedHost):
+            ensure_allowed("https://user:password@github.com/manifest.json")
+
+    def test_doctor_prints_the_pin_and_hides_secret_values(self) -> None:
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT / "src")
+        env["NVD_API_KEY"] = "super-secret-key"
+        env["CHECKSTEAD_GITHUB_CLIENT_SECRET"] = "another-secret"
+        completed = subprocess.run(
+            [sys.executable, "-m", "checkstead", "doctor"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("engine-pin: 13.0.0", completed.stdout)
+        self.assertIn("nvd-api-key: set", completed.stdout)
+        self.assertIn("CHECKSTEAD_GITHUB_CLIENT_SECRET: set", completed.stdout)
+        self.assertNotIn("super-secret-key", completed.stdout + completed.stderr)
+        self.assertNotIn("another-secret", completed.stdout + completed.stderr)
 
     def test_manifest_writer_records_the_pin_and_checksum(self) -> None:
         root = ROOT / "build" / "tests" / "manifest"
@@ -631,7 +708,10 @@ class Phase1Tests(TestCase):
         self.assertNotRegex(script, r"NVD_API_KEY=[A-Za-z0-9]")
         self.assertNotIn("NVD_API_KEY", action)
         self.assertNotIn("nvdApiKey", action)
-        self.assertIn("github/codeql-action/upload-sarif@v3", action)
+        self.assertIn(
+            "github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311",
+            action,
+        )
         self.assertIn("${{ inputs.output }}/checkstead.sarif", action)
         self.assertNotIn("services.nvd.nist.gov", action)
         self.assertIn("checkstead", entry)
@@ -651,8 +731,11 @@ class Phase1Tests(TestCase):
         self.assertIn(snapshot, defaults)
         self.assertNotIn("github.com/chethankumblekar/checkstead/", defaults)
         self.assertIn("\n  --latest \\\n", script)
-        cache = (ROOT / ".github" / "workflows" / "update-db.yml").read_text(encoding="utf-8")
-        self.assertIn('make_latest: "false"', cache)
+        self.assertIn("Refusing to publish. The manifest checksum does not match the zip.", script)
+        self.assertFalse((ROOT / ".github" / "workflows" / "update-db.yml").exists())
+        updater = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
+        self.assertNotIn("12.1.8", updater)
+        self.assertNotIn("12.1.8", script)
 
     def _config(self, root: Path, url: str) -> Path:
         path = root / "checkstead.yml"

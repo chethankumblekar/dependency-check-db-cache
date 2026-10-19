@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import OpenerDirector
 
+from checkstead.archive import ArchiveRejected
+from checkstead.archive import safe_extract as extract_archive
 from checkstead.engine import pinned_engine
 from checkstead.errors import ChecksteadError, SnapshotRefused
 from checkstead.http import download, read_text
@@ -123,14 +125,13 @@ def _checksums_match(actual: str, expected: str) -> bool:
 
 
 def safe_extract(zip_path: Path, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    root = dest.resolve()
-    with zipfile.ZipFile(zip_path) as archive:
-        for info in archive.infolist():
-            target = (root / info.filename).resolve()
-            if target != root and root not in target.parents:
-                raise SnapshotRefused(f"Snapshot archive escapes its directory: {info.filename}")
-        archive.extractall(root)
+    """Extract a snapshot or repository zip, refusing members that escape dest."""
+    try:
+        extract_archive(zip_path, dest)
+    except ArchiveRejected as exc:
+        raise SnapshotRefused(str(exc)) from exc
+    except zipfile.BadZipFile as exc:
+        raise SnapshotRefused(f"Snapshot archive is not a zip file: {exc}") from exc
 
 
 def resolve_snapshot(

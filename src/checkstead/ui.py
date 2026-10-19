@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -654,12 +655,28 @@ def bind_server(
     return ThreadingHTTPServer((host, port), Handler)
 
 
+def warn_exposed_local_sign_in(host: str) -> None:
+    """CHECKSTEAD_LOCAL=1 trusts every client that can open the port."""
+    if os.environ.get("CHECKSTEAD_LOCAL") != "1":
+        return
+    name = host.strip().lower().strip("[]")
+    if name in {"127.0.0.1", "::1", "localhost"}:
+        return
+    print(
+        "checkstead: CHECKSTEAD_LOCAL=1 lets any client that can reach this port "
+        "become the first administrator. Publish 127.0.0.1:8765:8765, or set "
+        "CHECKSTEAD_LOCAL=0.",
+        file=sys.stderr,
+    )
+
+
 def serve(
     scans_dir: Path,
     host: str = "127.0.0.1",
     port: int = 8765,
     data_dir: Path | None = None,
 ) -> None:
+    warn_exposed_local_sign_in(host)
     server = bind_server(scans_dir, host, port, data_dir)
     shown_host, shown_port = server.server_address[:2]
     print(f"checkstead ui  http://{shown_host}:{shown_port}/")
