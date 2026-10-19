@@ -14,8 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from checkstead.release import (  # noqa: E402
+    is_release_candidate,
     moving_tags,
     parse_tag,
+    release_image,
     release_notes,
     scanner_image,
 )
@@ -43,6 +45,26 @@ class ReleaseTests(TestCase):
         )
         with self.assertRaises(ValueError):
             parse_tag("0.1.0")
+        with self.assertRaises(ValueError):
+            parse_tag("v0.1.1-rc.1")
+        self.assertTrue(is_release_candidate("v0.1.1-rc.1"))
+        self.assertFalse(is_release_candidate("v0.1.0"))
+        self.assertEqual(
+            release_image("v0.1.1-rc.1"),
+            "ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:v0.1.1-rc.1",
+        )
+        candidate = release_notes("v0.1.1-rc.1")
+        self.assertIn("release candidate", candidate)
+        self.assertIn("does not move `latest`", candidate)
+        self.assertNotIn("point at this release", candidate)
+        refused = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "move-release-tags.sh"), "v0.1.1-rc.1"],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn("does not move floating tags", refused.stderr)
 
     def test_release_notes_name_both_marketplaces_and_no_api_key(self) -> None:
         notes = release_notes("v1.2.3")
@@ -68,6 +90,8 @@ class ReleaseTests(TestCase):
                 "const args = buildArgs('/src', {scan: '.', project: 'demo', output: 'out',"
                 " config: 'checkstead.yml', image: 'ghcr.io/example/checkstead:0.1.0'});"
                 "if (args[0] !== 'run' || !args.includes('scan') || !args.includes('--scan')) process.exit(2);"
+                "if (!args.includes('--user')) process.exit(5);"
+                "if (!/^\\d+:\\d+$/.test(args[args.indexOf('--user') + 1])) process.exit(6);"
                 "if (args.some((item) => /nvd/i.test(item))) process.exit(3);"
                 "try { buildArgs('/src', {scan: '../secret', output: 'out', image: 'img'}); process.exit(4); }"
                 "catch (error) {}",
@@ -107,6 +131,10 @@ class ReleaseTests(TestCase):
             (ROOT / "integrations" / "azure-devops" / "vss-extension.json").read_text(encoding="utf-8")
         )
         self.assertIn('tags:\n      - "v[0-9]+.[0-9]+.[0-9]+"', workflow)
+        self.assertIn('"v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"', workflow)
+        self.assertIn("--prerelease", workflow)
+        self.assertIn("--latest=false", workflow)
+        self.assertIn("!contains(github.ref_name, '-rc.')", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("scripts/move-release-tags.sh", workflow)
         self.assertIn("scripts/package-azure-extension.py", workflow)

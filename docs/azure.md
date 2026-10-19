@@ -88,6 +88,7 @@ pool:
 steps:
   - script: |
       docker run --rm \
+        --user "$(id -u):$(id -g)" \
         -v "$(Build.SourcesDirectory):/work" \
         -w /work \
         ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest \

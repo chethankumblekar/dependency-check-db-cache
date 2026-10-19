@@ -23,6 +23,11 @@ class ScannerUserTests(TestCase):
         self.assertNotRegex(dockerfile, r"(?im)^(?:USER|RUN).*(?:--privileged|privileged)")
         self.assertIn("/tmp/checkstead-", entry)
         self.assertIn('id -u', entry)
+        action = (ROOT / "action.yml").read_text(encoding="utf-8")
+        azure = (ROOT / "integrations" / "azure-devops" / "task" / "index.js").read_text(encoding="utf-8")
+        self.assertEqual(action.count('--user "$(id -u):$(id -g)"'), 2)
+        self.assertIn("process.getuid", azure)
+        self.assertIn('"--user"', azure)
 
     def test_a_non_root_uid_gets_a_writable_home(self) -> None:
         root = ROOT / "build" / "tests" / "scanner-user"

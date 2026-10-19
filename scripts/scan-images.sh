@@ -4,7 +4,8 @@
 #
 # Gates, matching .github/workflows/ci.yml:
 #   language packages at HIGH or CRITICAL fail (scanner skips /opt/dependency-check)
-#   fixed operating-system CRITICAL findings fail
+#   fixed operating-system HIGH and CRITICAL findings fail
+#   unfixed operating-system findings do not fail
 # The full scanner report, including the pinned engine jars, is written and
 # does not fail this script. There is no .trivyignore.
 set -euo pipefail
@@ -34,7 +35,7 @@ trivy image \
   --output build/trivy/server-library.json \
   checkstead-server:local
 trivy image \
-  --severity CRITICAL \
+  --severity CRITICAL,HIGH \
   --vuln-type os \
   --ignore-unfixed \
   --exit-code 1 \
@@ -51,7 +52,7 @@ trivy image \
   --output build/trivy/scanner-library.json \
   checkstead:local
 trivy image \
-  --severity CRITICAL \
+  --severity CRITICAL,HIGH \
   --vuln-type os \
   --ignore-unfixed \
   --exit-code 1 \

@@ -50,6 +50,30 @@ class SupplyChainTests(TestCase):
         self.assertNotIn("docker push", images)
         self.assertIn("exit 2", images)
         self.assertIn("--exit-code 1", images)
+        self.assertIn("--severity CRITICAL,HIGH", images)
+        rollback = (ROOT / "scripts" / "rollback-image.sh").read_text(encoding="utf-8")
+        self.assertNotIn("docker push", rollback)
+        self.assertNotIn("docker tag", rollback)
+        self.assertIn("docker pull", rollback)
+        latest = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "rollback-image.sh"), "ghcr.io/example/checkstead:latest"],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(latest.returncode, 2, latest.stdout + latest.stderr)
+        self.assertIn(":latest", latest.stderr)
+        tagged = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "scripts" / "rollback-image.sh"),
+                "ghcr.io/example/checkstead:0.1.0",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(tagged.returncode, 2, tagged.stdout + tagged.stderr)
         dependabot = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
         for ecosystem in ("pip", "github-actions", "docker", "maven"):
             self.assertIn(f"package-ecosystem: {ecosystem}", dependabot)

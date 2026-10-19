@@ -268,6 +268,91 @@ class SignatureTests(TestCase):
         self.assertIn("trust root", str(raised.exception))
         self.assertTrue((day / "checkstead-db.zip").is_file())
 
+    def test_an_interrupted_cache_is_fetched_again_and_a_torn_zip_is_refused(self) -> None:
+        blob = self.root / "checkstead-db.zip"
+        blob.write_bytes(b"complete-database\n")
+        manifest = write_manifest(blob, self.root / "manifest.json", _time("2026-10-06T01:00:00Z"))
+        partial = self.root / "partial-cache" / "2026-10-06"
+        partial.mkdir(parents=True)
+        (partial / "checkstead-db.zip").write_bytes(b"partial")
+        server = _Server()
+        self.addCleanup(server.close)
+        server.manifest = json.dumps(manifest).encode("utf-8")
+        server.zip_bytes = blob.read_bytes()
+        fetched = resolve_snapshot(
+            server.manifest_url,
+            self.root / "partial-cache",
+            date(2026, 10, 6),
+            trust=_trust(),
+        )
+        self.assertEqual(fetched.cache, "fetched")
+        self.assertEqual(fetched.authenticity, "unsigned")
+        self.assertEqual((partial / "checkstead-db.zip").read_bytes(), blob.read_bytes())
+
+        torn = self.root / "torn-cache" / "2026-10-06"
+        torn.mkdir(parents=True)
+        (torn / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        (torn / "checkstead-db.zip").write_bytes(b"torn")
+        with self.assertRaises(SnapshotRefused) as raised:
+            resolve_snapshot(
+                "https://example.invalid/manifest.json",
+                self.root / "torn-cache",
+                date(2026, 10, 6),
+                trust=_trust(),
+            )
+        self.assertIn("no longer matches", str(raised.exception))
+        self.assertEqual((torn / "checkstead-db.zip").read_bytes(), b"torn")
+
+    def test_a_missing_snapshot_is_unavailable(self) -> None:
+        server = _Server()
+        self.addCleanup(server.close)
+        server.missing = True
+        with self.assertRaises(ChecksteadError) as raised:
+            resolve_snapshot(
+                server.manifest_url,
+                self.root / "missing-cache",
+                date(2026, 10, 6),
+                trust=_trust(),
+            )
+        self.assertIn("unavailable", str(raised.exception))
+
+    def test_the_pin_script_checks_a_good_signature_a_tamper_and_empty_trust(self) -> None:
+        blob = self.root / "pin.zip"
+        blob.write_bytes(b"pinned-database\n")
+        manifest = sign_manifest(
+            write_manifest(blob, self.root / "pin.json", _time("2026-10-06T01:00:00Z")),
+            self.private,
+            "2026-10",
+            self.trust,
+        )
+        manifest_path = self.root / "signed-manifest.json"
+        manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        trust_path = self.root / "trust.json"
+        trust_path.write_text(
+            json.dumps({"format": 1, "keys": [_entry("2026-10", self.public)]}) + "\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "verify-snapshot-pin.py"),
+                str(manifest_path),
+                "--trust",
+                str(trust_path),
+                "--zip",
+                str(blob),
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("verified key 2026-10", completed.stdout)
+        self.assertIn("tampered manifest refused", completed.stdout)
+        self.assertIn("missing signature refused", completed.stdout)
+        self.assertIn("empty trust accepts the manifest as unsigned", completed.stdout)
+        self.assertIn("checksum matches", completed.stdout)
+
     def test_the_updater_signs_only_when_a_key_is_configured(self) -> None:
         script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
         workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
@@ -290,6 +375,7 @@ class _Server:
         self.manifest = b""
         self.zip_bytes = b""
         self.paths: list[str] = []
+        self.missing = False
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
@@ -306,6 +392,9 @@ class _Server:
                 elif path == "/checkstead-db.zip":
                     body = outer.zip_bytes
                 else:
+                    self.send_error(404)
+                    return
+                if outer.missing:
                     self.send_error(404)
                     return
                 self.send_response(200)

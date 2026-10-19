@@ -127,11 +127,12 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
 ```
 
 That path was checked by running the entrypoint with a fake non-root `id`.
-The image itself was not built here: `docker` is not installed, so this is
-not a claim that a container scan ran. Do not add `--privileged`. Treat the
-scanner image as a build tool, not as a multi-tenant service. GitHub Actions
-and the Azure DevOps task still run the image as root, which is what lets
-them write the workspace.
+The GitHub Action and the Azure DevOps task pass the host uid and gid
+(`--user "$(id -u):$(id -g)"`, or `process.getuid()` and `process.getgid()`
+on the task). A host-mounted report is then owned by the user who started
+the container. The image default stays root for a direct `docker run` that
+does not pass `--user`. Do not add `--privileged`. Treat the scanner image
+as a build tool, not as a multi-tenant service.
 
 ## Timeline server
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 TAG = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
+RC_TAG = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$")
 SCANNER_REPOSITORY = "ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead"
 NVD_NOTICE = (
     "This product uses data from the NVD API but is not endorsed or certified by the NVD."
@@ -20,6 +21,24 @@ def parse_tag(tag: str) -> tuple[int, int, int]:
     if match is None:
         raise ValueError("The release tag must look like v1.2.3.")
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def is_release_candidate(tag: str) -> bool:
+    """A candidate tag is v1.2.3-rc.1. It is not a stable release."""
+    return RC_TAG.fullmatch(tag.strip()) is not None
+
+
+def release_image(tag: str) -> str:
+    """Image tag for a stable release or a candidate.
+
+    A candidate keeps the git tag, including the ``v`` and ``-rc.N``.
+    CI publishes that tag from ``type=ref,event=tag`` and does not also
+    publish ``latest`` or the floating minor tag.
+    """
+    cleaned = tag.strip()
+    if is_release_candidate(cleaned):
+        return f"{SCANNER_REPOSITORY}:{cleaned}"
+    return scanner_image(parse_tag(cleaned))
 
 
 def version_text(parts: tuple[int, int, int]) -> str:
@@ -36,7 +55,27 @@ def scanner_image(parts: tuple[int, int, int]) -> str:
 
 
 def release_notes(tag: str) -> str:
-    parts = parse_tag(tag)
+    cleaned = tag.strip()
+    if is_release_candidate(cleaned):
+        image = release_image(cleaned)
+        return "\n".join(
+            [
+                f"Checkstead {cleaned}",
+                "",
+                "This is a release candidate. It is not a production release.",
+                "",
+                f"The candidate scanner image is `{image}`.",
+                "Verify that image by digest after the publish job finishes.",
+                "This tag does not move `latest`, and it does not move the major or minor tags.",
+                "",
+                "The Azure DevOps extension is not packaged from this tag. "
+                "Its version is three integers, and a candidate must not replace the Marketplace listing.",
+                "",
+                NVD_NOTICE,
+                "",
+            ]
+        )
+    parts = parse_tag(cleaned)
     major, minor = moving_tags(parts)
     image = scanner_image(parts)
     return "\n".join(

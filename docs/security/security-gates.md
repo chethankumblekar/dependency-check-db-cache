@@ -11,9 +11,9 @@ build green.
 | --- | --- | --- |
 | Ruff, unit tests, wheel, Maven plugin | The `test` job fails | `bash scripts/self-test.sh` |
 | Server image, High or Critical language packages | The image job fails | Trivy `vuln-type: library`, `severity: CRITICAL,HIGH`, `ignore-unfixed: false`, `exit-code: "1"` |
-| Server image, fixed Critical operating-system packages | The image job fails | Trivy `vuln-type: os`, `severity: CRITICAL`, `ignore-unfixed: true`, `exit-code: "1"` |
+| Server image, fixed High or Critical operating-system packages | The image job fails | Trivy `vuln-type: os`, `severity: CRITICAL,HIGH`, `ignore-unfixed: true`, `exit-code: "1"` |
 | Scanner image, High or Critical language packages outside `/opt/dependency-check` | The image job fails | Trivy `skip-dirs: /opt/dependency-check`, `vuln-type: library`, `severity: CRITICAL,HIGH`, `exit-code: "1"` |
-| Scanner image, fixed Critical operating-system packages | The image job fails | Trivy `vuln-type: os`, `severity: CRITICAL`, `ignore-unfixed: true`, `exit-code: "1"` |
+| Scanner image, fixed High or Critical operating-system packages | The image job fails | Trivy `vuln-type: os`, `severity: CRITICAL,HIGH`, `ignore-unfixed: true`, `exit-code: "1"` |
 | Scanner image, including Dependency-Check jars | Report only. The artifact is `trivy-scanner` | Trivy `exit-code: "0"`, `severity: CRITICAL,HIGH` |
 | Image push | Does not run on a pull request | `images` job has `push: false` and `contents: read` only |
 | CodeQL | The `Analyze` job fails, and the main ruleset rejects the merge when a High alert or an error alert is open | `.github/workflows/codeql.yml` runs on `pull_request` and on `push` to `main`. `codeql-action/analyze` uploads SARIF (`upload: true`) |
@@ -23,10 +23,11 @@ image's Python packages). High and Critical findings fail, including unfixed
 ones, because an upgrade may be available and hiding them would not be a
 review.
 
-Operating-system findings are the base image. Fixed Critical findings fail so
-a base-image bump can clear them. Unfixed Critical and High operating-system
-findings do not fail the job: there is no patch to take, and a suppression
-file would only hide that. They still appear in the scanner report artifact.
+Operating-system findings are the base image. Fixed High and Critical
+findings fail so a base-image bump can clear them. That is the OpenSSL class
+of finding. Unfixed operating-system findings do not fail the job: there is
+no patch to take, and a suppression file would only hide that. They still
+appear when the scanner report is written with `ignore-unfixed: false`.
 
 `/opt/dependency-check` is the pinned engine distribution. Failing the build
 on a jar inside it would mean changing `engine.version` or carrying a
@@ -90,9 +91,35 @@ id, the image or package it applies to, why it cannot be fixed, and a review
 in the pull request. Do not add a Checkstead suppression file to clear a
 finding in Checkstead's own dependencies.
 
-The Dependency-Check directory skip above is the only standing exception. It
-is scoped to `/opt/dependency-check` and it does not hide the findings from
-the report artifact.
+The Dependency-Check directory skip above is a scoped exception for six High
+findings in the pinned engine jars. It is not a `.trivyignore` entry and it
+does not hide the findings from the `trivy-scanner` report.
+
+| Field | Value |
+| --- | --- |
+| Findings | CVE-2026-89407 and CVE-2026-89425 in `jackson-core` 2.22.1; CVE-2026-68497, CVE-2026-91776, and CVE-2026-91777 in `jackson-databind` 2.22.1; CVE-2026-75140 in `jsoup` 1.23.1 |
+| Scope | Scanner image, path `/opt/dependency-check` only. The failing language-package scan skips that directory. The report artifact still lists the findings. |
+| Why it cannot be fixed here | `engine.version` stays 13.0.0. These jars ship inside that Dependency-Check release. Clearing them would mean changing the engine pin without a release-note and snapshot compatibility check, or adding a suppression file. Neither is a fix. |
+| Review | 2027-01-19. Remove this exception earlier if a Dependency-Check release keeps the snapshot format and replaces these jars. |
+
+The published server image
+`ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7`
+has no fixed High or Critical operating-system finding, so that gate exits 0.
+A report with `ignore-unfixed: false` still lists unfixed findings, including
+Critical `CVE-2025-7458` in `libsqlite3-0` (status `affected`, no fixed
+version) and Critical `CVE-2023-45853` in `zlib1g` (status `will_not_fix`).
+Those stay visible and do not fail the job. There is no suppression entry.
+Review them on 2027-01-19, or earlier if the server base image publishes a
+fix. The published scanner digest
+`sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272`
+fails the fixed High operating-system gate: OpenSSL and `libssl3t64`
+3.0.13-0ubuntu3.5, `CVE-2026-45447` and `CVE-2026-84782`. That digest is not
+rebuilt. The candidate image uses `eclipse-temurin:25-jre-noble` and the
+same gate on `checkstead:local` exits 0.
+
+`scripts/rollback-image.sh` pulls one image by digest. It refuses a reference
+that names `:latest` or that is not `image@sha256:<64 hex>`. It does not tag
+`:latest` and it does not push.
 
 ## Local commands
 

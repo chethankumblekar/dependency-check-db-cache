@@ -134,9 +134,11 @@ is not writable by the image user.
 **Status: default unchanged, non-root path added.** The image creates
 uid 10001, makes the engine and virtualenv world-executable, and the
 entrypoint gives a non-root uid a writable home and cache. The secure command
-is `docker run --user "$(id -u):$(id -g)"`. GitHub Actions and Azure DevOps
-still omit `--user`, so they keep writing the workspace as root. `docker` is
-not installed in this workspace, so the image was not built or scanned here.
+is `docker run --user "$(id -u):$(id -g)"`. The GitHub Action passes that
+flag on both `docker run` lines. The Azure DevOps task passes
+`--user <uid>:<gid>` from `process.getuid()` and `process.getgid()` when
+those functions exist, which they do on the Linux agents this task targets.
+The image default stays root.
 
 ### Critical — localhost sign-in trusted the Host header
 
