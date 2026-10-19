@@ -27,7 +27,7 @@ Pins recorded with this change:
 | `docker/setup-buildx-action` | v3 | `8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` |
 | `docker/login-action` | v3 | `c94ce9fb468520275223c153574b00df6fe4bcc9` |
 | `docker/metadata-action` | v5 | `c299e40c65443455700f0fdfc63efafe5b349051` |
-| `docker/build-push-action` | v6 | `10e90e3645eae34f1e60eeb005ba3a3d33f178e8` |
+| `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |
 | `github/codeql-action/upload-sarif` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
 | `aquasecurity/trivy-action` | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
 | `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` |
