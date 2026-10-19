@@ -252,7 +252,7 @@ def findings_from_report(payload: dict, policy: str, roles=None) -> list[Finding
         kev = any(isinstance(record.get("knownExploitedVulnerability"), dict) for record in records)
         has_nvd = any(score.kind == "nvd" for score in scores)
         relationship, scope = _role_for(deps[key], roles)
-        identity = ecosystem_identity(deps[key])
+        identity = _identity(deps[key])
         package_name, package_version = identity if identity else ("", "")
         description = ""
         for record in records:
@@ -277,10 +277,38 @@ def findings_from_report(payload: dict, policy: str, roles=None) -> list[Finding
     return lines
 
 
+def _identity(dependency: dict) -> tuple[str, str] | None:
+    """Package name and version. A node_modules path is the package, not the file."""
+    found = ecosystem_identity(dependency)
+    if found is not None:
+        return found
+    return _npm_identity(dependency)
+
+
+def _npm_identity(dependency: dict) -> tuple[str, str] | None:
+    raw = str(dependency.get("filePath") or dependency.get("fileName") or "")
+    text = raw.replace("\\", "/")
+    marker = "node_modules/"
+    if marker not in text:
+        return None
+    tail = text.rsplit(marker, 1)[-1]
+    if tail.endswith("/package.json"):
+        tail = tail[: -len("/package.json")]
+    parts = [part for part in tail.split("/") if part and part != "package.json"]
+    if not parts:
+        return None
+    if parts[0].startswith("@") and len(parts) > 1:
+        name = parts[0] + "/" + parts[1]
+    else:
+        name = parts[0]
+    version = str(dependency.get("version") or "").strip()
+    return name, version
+
+
 def _role_for(dependency: dict, roles) -> tuple[str, str]:
     if roles is None or roles.empty:
         return "direct", "production"
-    identity = ecosystem_identity(dependency)
+    identity = _identity(dependency)
     if identity is None:
         return "direct", "production"
     return roles.lookup(identity[0], identity[1])
