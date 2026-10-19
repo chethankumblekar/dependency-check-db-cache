@@ -1,0 +1,22 @@
+name: Feature request
+description: A change to the existing Checkstead product.
+title: "Request: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Checkstead stays a layer in front of Dependency-Check. A request should say which current command, report, or timeline view it changes.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is missing
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change
+    validations:
+      required: true
