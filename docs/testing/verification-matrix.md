@@ -25,13 +25,16 @@ The unit tests serve fixtures on `127.0.0.1`. They do not call
 | `check-release.sh` and `scan-images.sh` do not push | `tests/test_supply_chain.py` |
 | CI permissions, SHA pins, Trivy exit codes, image tags | `tests/test_ci.py` |
 | Score policy, groups, SARIF, suppressions, accounts, SSO, pull requests | `tests/test_score.py`, `tests/test_history.py`, `tests/test_server.py`, `tests/test_accounts.py`, `tests/test_sso.py`, `tests/test_pull_request.py` |
+| Remote `Host` and `X-Forwarded-For` do not grant localhost sign-in | `tests/test_sso.py` |
+| Snapshot signature, tamper, missing signature, key mismatch, freshness | `tests/test_snapshot_auth.py` |
+| Scanner entrypoint creates a home for a non-root uid | `tests/test_scanner_user.py` |
 
 ## Not run in this environment
 
 | Check | Why it is not a pass |
 | --- | --- |
-| `bash scripts/scan-images.sh` | `docker` is not installed here. The script exits 2 in that case. Pull-request CI builds the images and runs Trivy. |
-| A pushed image digest and its provenance attestation | This change does not push an image. `provenance: true` is set on the publish job only. |
+| `bash scripts/scan-images.sh` | `docker` and `trivy` are not installed here. The script exits 2 in that case. Pull-request CI builds the images and runs Trivy. Exit 2 is not a pass. |
+| A pushed image digest and its GitHub attestation | `gh attestation verify` of the images from run 39260814721 returned HTTP 404. Registry BuildKit attestations were present. `scripts/verify-published-images.py` exits 3 in that case. Exit 3 is not a pass. This change does not push a new image. |
 | The real NVD update | The updater needs `NVD_API_KEY` and is not part of the unit suite. |
 | A full Dependency-Check analysis of this repository | That needs a published snapshot and the engine. The unit suite uses fixtures. |
 

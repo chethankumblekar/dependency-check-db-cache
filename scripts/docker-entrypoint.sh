@@ -3,6 +3,23 @@
 # A direct `docker run` can pass checkstead arguments instead.
 set -euo pipefail
 
+# Root remains the default so a host-mounted workspace is writable. A non-root
+# uid, including `docker run --user "$(id -u):$(id -g)"`, gets a HOME it can
+# write. The report is owned by whatever uid the container runs as.
+if [[ "$(id -u)" != "0" ]]; then
+  if [[ -z "${HOME:-}" || ! -w "${HOME}" ]]; then
+    HOME="/tmp/checkstead-$(id -u)"
+    export HOME
+    mkdir -p "$HOME"
+  fi
+  mkdir -p "${HOME}/.cache/checkstead"
+  if [[ -z "${TMPDIR:-}" || ! -w "${TMPDIR}" ]]; then
+    TMPDIR="${HOME}/tmp"
+    export TMPDIR
+    mkdir -p "$TMPDIR"
+  fi
+fi
+
 if [[ "${1:-}" == "scan" || "${1:-}" == "version" || "${1:-}" == "write-manifest" || "${1:-}" == "ui" || "${1:-}" == "doctor" ]]; then
   exec checkstead "$@"
 fi

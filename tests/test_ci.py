@@ -42,6 +42,20 @@ class CiTests(TestCase):
         self.assertIn("file: Dockerfile", ci)
         self.assertIn("file: Dockerfile.server", ci)
         self.assertIn("github.event_name != 'pull_request'", ci)
+        self.assertIn("github.event.repository.default_branch", ci)
+        self.assertIn("startsWith(github.ref, 'refs/tags/v')", ci)
+        self.assertIn("skip-dirs: /opt/dependency-check", ci)
+        self.assertIn("vuln-type: os", ci)
+        self.assertIn("severity: CRITICAL,HIGH", ci)
+        self.assertIn("ignore-unfixed: true", ci)
+        self.assertIn(
+            "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2",
+            ci,
+        )
+        images, _marker, publish = ci.partition("publish-images:")
+        self.assertNotIn("packages: write", images)
+        self.assertIn("packages: write", publish)
+        self.assertIn("push: false", images)
         self.assertIn("type=sha,format=long,prefix=sha-", ci)
         self.assertIn("type=ref,event=branch", ci)
         self.assertIn("type=ref,event=tag", ci)

@@ -30,6 +30,7 @@ Pins recorded with this change:
 | `docker/build-push-action` | v6 | `10e90e3645eae34f1e60eeb005ba3a3d33f178e8` |
 | `github/codeql-action/upload-sarif` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
 | `aquasecurity/trivy-action` | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
+| `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` |
 
 ## Engine
 
@@ -70,20 +71,74 @@ push an image.
 
 ## Image provenance
 
-On a push, `publish-images` sets `provenance: true` and `sbom: true`. GitHub
-Actions will attach a build provenance attestation and an image SBOM when
-that job runs. Pull requests set `provenance: false` and `push: false`.
+`publish-images` runs on the default branch and on `v*` tags. It does not
+run on a pull request. The pull-request job sets `provenance: false`,
+`push: false`, and `contents: read`.
 
-This change does not push an image and does not verify an attestation. Do
-not describe the images as signed on the strength of this document. After a
-later publish, record the image digest:
+The publish job sets BuildKit `provenance: true` and `sbom: true`, then runs
+`actions/attest-build-provenance` on the pushed digest. That second step is
+what `gh attestation verify` checks. It has not run yet for the images below.
+Do not describe those images as verified by GitHub's attestation API.
+
+### What was checked on 19 October 2026
+
+CI run [39260814721](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39260814721)
+published commit `b4606799145963d99f9837dbea953cf6dd3b77ae`. The registry
+accepted an anonymous pull. These commands were run from this workspace:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:sha-<commit>
+# Index digest recorded by that publish job.
+# checkstead        sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6
+# checkstead-server sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361
+
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6 \
+  --repo chethankumblekar/dependency-check-db-cache
+
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361 \
+  --repo chethankumblekar/dependency-check-db-cache
+
+python3 scripts/verify-published-images.py \
+  ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6 \
+  ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361
 ```
+
+`gh attestation verify` returned HTTP 404 for both digests. The GitHub
+attestation API has no statement for them. That check did not pass.
+
+The same indexes do contain BuildKit attestation manifests. Reading the
+registry blobs showed:
+
+| Image index | Attached in-toto predicate types |
+| --- | --- |
+| `checkstead` `sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6` | `https://spdx.dev/Document`, `https://slsa.dev/provenance/v1` |
+| `checkstead-server` `sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361` | The same two predicate types, once for `linux/amd64` and once for `linux/arm64` |
+
+`python3 scripts/verify-published-images.py` on both digests exited 3. Each
+`gh attestation verify` exited 1 with HTTP 404. Exit 3 is not a pass.
+
+`scripts/verify-published-images.py` exits 0 only when both the registry
+predicates and `gh attestation verify` succeed. Exit 3 means the registry
+predicates are present and the GitHub API check did not succeed. Record the
+exit code. Do not call exit 3 a pass.
+
+After the next default-branch publish, the new digest should verify with:
+
+```bash
+gh attestation verify \
+  "oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:<digest>" \
+  --repo chethankumblekar/dependency-check-db-cache
+```
+
+The signer workflow for that statement is the reusable
+`actions/attest-build-provenance` workflow, not `ci.yml` by itself. Pin the
+digest from the publish log. A moving tag such as `latest` is not that pin.
 
 ## Permissions
 
 Pull-request image builds have `contents: read` only. The publish job is the
-one with `packages: write`. Snapshot publishing stays in
-`update-snapshot.yml`, which is the only workflow that reads `NVD_API_KEY`.
+one with `packages: write`, and only on the default branch or a `v*` tag.
+Snapshot publishing stays in `update-snapshot.yml`, which is the only
+workflow that reads `NVD_API_KEY`. The snapshot signing secret, when one
+exists, is also limited to that workflow. It is not a key in this repository.

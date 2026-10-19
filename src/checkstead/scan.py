@@ -442,6 +442,12 @@ def run_scan(
     )
     print(f"engine: {snapshot.engine_version}")
     print(f"snapshot: {snapshot.snapshot_time}")
+    age = "unknown" if snapshot.age_days is None else str(snapshot.age_days)
+    print(f"snapshot-freshness: {snapshot.freshness} age={age} cache={snapshot.cache}")
+    if snapshot.signature_key_id:
+        print(f"snapshot-authenticity: {snapshot.authenticity} key={snapshot.signature_key_id}")
+    else:
+        print(f"snapshot-authenticity: {snapshot.authenticity}")
     print(f"notice: {NVD_NOTICE}")
     try:
         if dry_run:

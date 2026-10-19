@@ -118,20 +118,44 @@ def _session_cookie(token: str, max_age: int) -> str:
     return "; ".join(parts)
 
 
-def _local_sign_in(client_host: str, host_header: str) -> bool:
-    """True for the local server. A public host does not get this sign-in."""
-    if os.environ.get("CHECKSTEAD_LOCAL") == "1":
+def _local_sign_in(
+    client_host: str,
+    host_header: str = "",
+    forwarded_for: str = "",
+    forwarded: str = "",
+    real_ip: str = "",
+) -> bool:
+    """Whether this TCP peer may use localhost sign-in.
+
+    ``CHECKSTEAD_LOCAL=1`` trusts every peer that can open the port. Compose
+    uses that because the process sees the Docker bridge address, and it is
+    safe only when the published port is bound to the host loopback.
+    ``CHECKSTEAD_LOCAL=0`` disables localhost sign-in for every peer, including
+    a reverse proxy that connects from 127.0.0.1. When the variable is unset,
+    only a loopback peer address is accepted.
+
+    ``host_header``, ``forwarded_for``, ``forwarded``, and ``real_ip`` are the
+    Host, X-Forwarded-For, Forwarded, and X-Real-IP values. They are not read.
+    A client can set all of them.
+    """
+    del host_header, forwarded_for, forwarded, real_ip
+    mode = os.environ.get("CHECKSTEAD_LOCAL", "").strip()
+    if mode == "1":
         return True
-    if localhost_client(client_host):
-        return True
-    host = host_header.split(",")[0].strip().lower()
-    if host.startswith("["):
-        name = host.split("]", 1)[0].strip("[")
-    elif host.count(":") == 1:
-        name = host.split(":", 1)[0]
-    else:
-        name = host
-    return name in {"localhost", "127.0.0.1", "::1"}
+    if mode == "0":
+        return False
+    return localhost_client(client_host)
+
+
+def _request_is_local(handler: BaseHTTPRequestHandler) -> bool:
+    headers = handler.headers
+    return _local_sign_in(
+        handler.client_address[0],
+        headers.get("Host", ""),
+        headers.get("X-Forwarded-For", ""),
+        headers.get("Forwarded", ""),
+        headers.get("X-Real-IP", ""),
+    )
 
 
 def _github_cookie(state: str) -> str:
@@ -175,9 +199,7 @@ def bind_server(
                 return
             if path == "/api/sso":
                 status = sso_status()
-                status["local"] = {
-                    "enabled": _local_sign_in(self.client_address[0], self.headers.get("Host", ""))
-                }
+                status["local"] = {"enabled": _request_is_local(self)}
                 self._json(200, status)
                 return
             if path in {"/api/sso/github/start", "/api/sso/entra/start"}:
@@ -358,7 +380,7 @@ def bind_server(
             self.end_headers()
 
         def _local_session(self) -> None:
-            if not _local_sign_in(self.client_address[0], self.headers.get("Host", "")):
+            if not _request_is_local(self):
                 self._json(403, {"error": "This sign-in is only available on localhost."})
                 return
             try:

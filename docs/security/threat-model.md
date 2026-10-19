@@ -43,6 +43,20 @@ shape, the database file name, and the SHA-256 of the zip before a scan uses
 it. That proves the zip matches the manifest. It does not prove a second party
 signed the snapshot.
 
+The client can also verify an Ed25519 signature over those manifest fields
+when `signature` is present. The trust root is the public keys in
+`src/checkstead/snapshot_trust.json`. That file currently pins no keys. A
+published snapshot is therefore unsigned, and the scan reports
+`snapshot-authenticity: unsigned`. An unknown key, a bad signature, or a
+missing signature when `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` is a
+failure. A signature made by a key pinned in this repository is still the
+same publisher: someone who can change the pinned key and the release can
+sign. Someone who can only upload a release, and does not have
+`CHECKSTEAD_SNAPSHOT_SIGNING_KEY`, cannot. Rotation is a pull request that
+adds the new public key as `current` and marks the old key `retired` with
+`notAfter`. Ship that pin before signing with the new key. Do not commit the
+private key.
+
 The Dependency-Check CLI zip is a different download. `scripts/install-engine.sh`
 verifies the detached signature with the public key in
 `scripts/keys/dependency-check-release.asc` and requires fingerprint
@@ -70,17 +84,43 @@ next to the zip is not treated as that proof.
 The first successful manifest of a UTC day is the snapshot later scans that
 day will name, even if the published manifest changes. That is deliberate:
 two jobs on the same day compare the same database. A scan with a valid cache
-does not need the network. There is no maximum age that would turn an offline
-scan into a failure. A stale snapshot is therefore a policy choice of the
-publisher's schedule (01:00 UTC), not a silent refresh.
+does not need the network. A failed download is reported as unavailable and
+does not invent a database.
+
+Freshness is printed on every scan:
+
+- `current` — the manifest timestamp is the scan's UTC day or the day before
+- `aging` — older than that, up to `CHECKSTEAD_SNAPSHOT_MAX_AGE_DAYS` (default 7)
+- `stale` — older than the maximum
+
+A stale snapshot prints a warning and the scan continues, including offline.
+`CHECKSTEAD_FAIL_STALE_SNAPSHOT=1` turns that warning into `SnapshotRefused`.
+The default does not, because an offline scan of a verified cache must not
+start depending on the network. `cache=hit` means this UTC day's directory
+was reused and the client did not contact the publisher again.
 
 ## Scanner image
 
-`Dockerfile` does not set `USER`. The documented command is
-`docker run -v "$PWD:/work" -w /work`. The mount is owned by the host user.
-A fixed user inside the image cannot write that mount unless the host
-directory is writable by that user. The process is root. Treat the scanner
-image as a build tool, not as a multi-tenant service.
+`Dockerfile` does not set `USER`. The default process is root so
+`docker run -v "$PWD:/work" -w /work` can write a mount owned by the host
+user. The image also creates `checkstead` (uid 10001). The engine and the
+virtualenv are readable and executable by any uid. A non-root process gets a
+writable `HOME` and cache from `scripts/docker-entrypoint.sh`.
+
+To keep the report owned by the host user:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+  ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest \
+  scan --scan . --out checkstead-report
+```
+
+That path was checked by running the entrypoint with a fake non-root `id`.
+The image itself was not built here: `docker` is not installed, so this is
+not a claim that a container scan ran. Do not add `--privileged`. Treat the
+scanner image as a build tool, not as a multi-tenant service. GitHub Actions
+and the Azure DevOps task still run the image as root, which is what lets
+them write the workspace.
 
 ## Timeline server
 
@@ -90,11 +130,27 @@ on the container loopback. `docker-compose.yml` publishes
 `127.0.0.1:8765:8765`. That host binding is the control that keeps the port
 off the network.
 
-`CHECKSTEAD_LOCAL=1` makes `_local_sign_in` accept any client. The first
-account becomes the administrator. The entrypoint and `checkstead ui` warn
-when the process is reachable beyond loopback. A host header is not that
-control. For a remote deployment, set `CHECKSTEAD_LOCAL=0`, terminate TLS,
-and set `CHECKSTEAD_COOKIE_SECURE=1`.
+`_local_sign_in` looks at the TCP peer address. It does not look at `Host`,
+`X-Forwarded-For`, `Forwarded`, or `X-Real-IP`. A remote client that sends
+`Host: 127.0.0.1:8765` or `Host: localhost` is not local.
+
+- `CHECKSTEAD_LOCAL` unset: only a loopback peer (`127.0.0.0/8`, `::1`, or
+  an IPv4-mapped loopback address). This is the laptop command, which binds
+  `127.0.0.1`.
+- `CHECKSTEAD_LOCAL=1`: every peer that can open the port. Compose sets this
+  because the process inside the container sees the Docker bridge
+  (`172.17.0.1` or similar), not `127.0.0.1`. That is safe only while the
+  published port stays `127.0.0.1:8765:8765`. The `local` account is one
+  shared administrator: anyone who passes this check gets a session for it,
+  not only the first visitor.
+- `CHECKSTEAD_LOCAL=0`: localhost sign-in is off for every peer, including
+  loopback. Use this when a reverse proxy accepts remote traffic. The proxy's
+  connection from `127.0.0.1` must not become the administrator, and a
+  forwarded header must not either. Sign in with GitHub or Entra, terminate
+  TLS, and set `CHECKSTEAD_COOKIE_SECURE=1`.
+
+The entrypoint and `checkstead ui` warn when `CHECKSTEAD_LOCAL=1` and the
+listen address is not loopback.
 
 Session cookies are `HttpOnly` and `SameSite=Lax`. They are marked `Secure`
 only when `CHECKSTEAD_COOKIE_SECURE=1`.
@@ -108,5 +164,8 @@ only when `CHECKSTEAD_COOKIE_SECURE=1`.
 - That a GitHub tag such as `latest` on the container image is immutable.
   Pin a digest after you have inspected a published image.
 - That the scanner image has no vulnerabilities in the jars Dependency-Check
-  ships. The pull-request report records them and does not fail the build on
-  those upstream jars. See [Security gates](security-gates.md).
+  ships. The pull-request report records them. The failing gate skips
+  `/opt/dependency-check` so those upstream jars do not fail the build by
+  themselves. See [Security gates](security-gates.md).
+- That a snapshot signature is an independent publisher. No signing key is
+  pinned until `snapshot_trust.json` lists one.

@@ -31,6 +31,8 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           GH_TOKEN: ${{ github.token }}
+          CHECKSTEAD_SNAPSHOT_SIGNING_KEY: ${{ secrets.CHECKSTEAD_SNAPSHOT_SIGNING_KEY }}
+          CHECKSTEAD_SNAPSHOT_KEY_ID: ${{ vars.CHECKSTEAD_SNAPSHOT_KEY_ID }}
         run: bash ./scripts/update-snapshot.sh
 
       - name: Upload updater log

@@ -33,4 +33,4 @@ select = ["E4", "E7", "E9", "F"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-checkstead = ["engine.version", "ui_page.html", "checkstead-public.xml"]
+checkstead = ["engine.version", "ui_page.html", "checkstead-public.xml", "snapshot_trust.json"]

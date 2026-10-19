@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Build both images locally and scan them with Trivy. This does not push.
-# Exit 2 when docker or trivy is missing. The server-image library scan
-# fails the script on CRITICAL. The scanner-image report is written either way:
-# its findings are inside the pinned Dependency-Check distribution.
+# Exit 2 when docker or trivy is missing. That exit is not a clean scan.
+#
+# Gates, matching .github/workflows/ci.yml:
+#   language packages at HIGH or CRITICAL fail (scanner skips /opt/dependency-check)
+#   fixed operating-system CRITICAL findings fail
+# The full scanner report, including the pinned engine jars, is written and
+# does not fail this script. There is no .trivyignore.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,15 +27,41 @@ docker build -f Dockerfile.server -t checkstead-server:local .
 mkdir -p build/trivy
 trivy image \
   --severity CRITICAL,HIGH \
-  --exit-code 0 \
-  --format json \
-  --output build/trivy/scanner.json \
-  checkstead:local
-trivy image \
-  --severity CRITICAL \
   --vuln-type library \
+  --ignore-unfixed=false \
   --exit-code 1 \
   --format json \
   --output build/trivy/server-library.json \
   checkstead-server:local
+trivy image \
+  --severity CRITICAL \
+  --vuln-type os \
+  --ignore-unfixed \
+  --exit-code 1 \
+  --format json \
+  --output build/trivy/server-os.json \
+  checkstead-server:local
+trivy image \
+  --severity CRITICAL,HIGH \
+  --vuln-type library \
+  --skip-dirs /opt/dependency-check \
+  --ignore-unfixed=false \
+  --exit-code 1 \
+  --format json \
+  --output build/trivy/scanner-library.json \
+  checkstead:local
+trivy image \
+  --severity CRITICAL \
+  --vuln-type os \
+  --ignore-unfixed \
+  --exit-code 1 \
+  --format json \
+  --output build/trivy/scanner-os.json \
+  checkstead:local
+trivy image \
+  --severity CRITICAL,HIGH \
+  --exit-code 0 \
+  --format json \
+  --output build/trivy/scanner.json \
+  checkstead:local
 echo "Image scans wrote build/trivy/. No image was pushed."

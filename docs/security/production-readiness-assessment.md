@@ -128,28 +128,48 @@ pinned to the SHAs in `docs/security/supply-chain-and-provenance.md`.
 
 `Dockerfile` has no `USER`. The documented invocation is
 `docker run -v "$PWD:/work" -w /work`. That mount is owned by the host user.
-Switching the image to a fixed user breaks that command when the directory
-is not writable by the image user. This was not changed. The Dockerfile
-comments say why. The server image was already non-root.
+Switching the default to a fixed user breaks that command when the directory
+is not writable by the image user.
 
-### Low — localhost sign-in trusts every client that can connect
+**Status: default unchanged, non-root path added.** The image creates
+uid 10001, makes the engine and virtualenv world-executable, and the
+entrypoint gives a non-root uid a writable home and cache. The secure command
+is `docker run --user "$(id -u):$(id -g)"`. GitHub Actions and Azure DevOps
+still omit `--user`, so they keep writing the workspace as root. `docker` is
+not installed in this workspace, so the image was not built or scanned here.
 
-`CHECKSTEAD_LOCAL=1` makes `_local_sign_in` return true for any client.
-The container must listen on `0.0.0.0` or Docker cannot publish the port.
-The host binding in Compose is the real control. A spoofed `Host` header is
-not. This behavior was kept so local sign-in and Compose still work. The
-entrypoint and `checkstead ui` now warn when the listen address is not
-loopback. `SECURITY.md` and the server section of the README state the
-requirement: publish `127.0.0.1:8765:8765`, or set `CHECKSTEAD_LOCAL=0`.
+### Critical — localhost sign-in trusted the Host header
 
-### Informational — snapshot identity is the manifest, not a second signature
+`_local_sign_in("172.17.0.1", "127.0.0.1:8765")` returned true when
+`CHECKSTEAD_LOCAL` was unset. The same call with `Host: localhost` returned
+true. `tests/test_sso.py` expected that. A remote peer could send a localhost
+`Host` header and open the shared `local` administrator session.
+`CHECKSTEAD_LOCAL=0` did not stop it: that value only skipped the
+trust-every-peer branch, and the header branch still ran. The earlier note
+in this file said a spoofed Host header was not the control. That description
+did not match the code.
+
+**Status: fixed in this follow-up.** The decision uses the TCP peer, or the
+explicit `CHECKSTEAD_LOCAL` mode. `Host`, `X-Forwarded-For`, `Forwarded`, and
+`X-Real-IP` are ignored. Unset still allows a real loopback peer, so
+`checkstead ui` on `127.0.0.1` works. `CHECKSTEAD_LOCAL=1` still allows the
+Docker bridge peer, which is what Compose needs while the published port is
+`127.0.0.1:8765:8765`. `CHECKSTEAD_LOCAL=0` now disables localhost sign-in for
+every peer, including loopback, so a reverse proxy cannot mint the local
+session. Regression coverage is in `tests/test_sso.py`.
+
+### Informational — snapshot identity is the manifest, not a second publisher
 
 Consumers verify SHA-256 against the manifest published in the same GitHub
 release. That detects corruption and a zip that does not match its manifest.
-It does not detect a maintainer, or someone with `contents: write`,
-publishing a consistent but unwanted database. That is the trust model of a
-single publisher. It is documented in the threat model. No second signature
-was invented.
+The client now also verifies an Ed25519 signature when one is present, against
+keys pinned in `src/checkstead/snapshot_trust.json`. That file has no keys.
+No production private key was generated for this change, because a key created
+here would not be a maintainer-held secret. Published snapshots stay unsigned.
+`snapshot-authenticity: unsigned` is the honest status. A signature, once a
+maintainer pins a key and stores the private half as
+`CHECKSTEAD_SNAPSHOT_SIGNING_KEY`, still is not a second organization. It
+stops a release upload that does not have the signing secret.
 
 ### Informational — same-day cache does not refresh
 
@@ -162,13 +182,16 @@ because it would make a previously valid offline scan depend on the network.
 
 - Two local updater processes outside the workflow concurrency group can
   race. The second `gh release create` fails. The first release remains.
-- The scanner-image Trivy result is a report (`exit-code: "0"`), not a
-  failing gate. The pinned engine ships its own jars. Failing the build on
-  those jars without a reviewed baseline would either block every pull
-  request or force an `engine.version` change. The server image fails the
-  pull request on Critical language packages.
-- Image provenance is configured for the publish job. This change does not
-  push an image, so no attestation was verified.
+- The scanner-image report of Dependency-Check jars stays `exit-code: "0"`.
+  The failing language-package gate skips `/opt/dependency-check`. Fixed
+  Critical operating-system findings fail both images. Unfixed operating-system
+  findings do not, and they are not listed in a `.trivyignore`. This policy
+  has not been executed here: `docker` and `trivy` are not installed.
+- Image provenance for commit `b460679` was inspected. BuildKit attached SPDX
+  and SLSA provenance to the scanner index. `gh attestation verify` returned
+  HTTP 404 for both image digests. That GitHub check did not pass. The publish
+  job now runs `actions/attest-build-provenance` for later publishes. This
+  change does not push an image.
 - `docker` is not installed in the environment where this assessment was
   written. `scripts/scan-images.sh` was syntax-checked by `bash -n` and was
   not executed. Exit 2 from that script means "not run", not "clean".
@@ -204,19 +227,31 @@ as part of that command.
 on this machine on 19 October 2026. That download is not part of the unit
 suite.
 
+The follow-up on this branch ran `bash scripts/self-test.sh` again after the
+Host-header fix. Ruff passed. Unittest reported `Ran 104 tests` and `OK`.
+Maven reported `BUILD SUCCESS`. `bash scripts/scan-images.sh` exited 2
+(`docker` is not installed). `python3 scripts/verify-published-images.py` on
+the two digests from run 39260814721 exited 3.
+
 ## Residual risk
 
 - The engine signing key is pinned by fingerprint. It is not in a web of
   trust on the machine that installs it. GnuPG prints that warning and the
   script still requires the fingerprint match and a good signature.
 - A person who can publish a GitHub release on this repository can publish
-  a snapshot whose zip matches its manifest.
-- The scanner container is root.
-- `CHECKSTEAD_LOCAL=1` on a publicly forwarded port lets the first visitor
-  become the administrator.
-- Base-image operating-system findings and Dependency-Check's bundled jars
-  are not a failing gate.
-- Provenance on the publish job is unimplemented until that job runs.
+  an unsigned snapshot whose zip matches its manifest. No snapshot signing
+  key is pinned, so signature verification does not yet apply to those
+  releases.
+- The scanner container's default user is still root. `--user` is optional.
+  Actions and Azure DevOps do not pass it.
+- `CHECKSTEAD_LOCAL=1` on a publicly forwarded port lets anyone who can open
+  the port sign in as the shared `local` administrator.
+- Unfixed operating-system findings and Dependency-Check's bundled jars are
+  not a failing gate. Fixed Critical operating-system findings are. That
+  gate has not run in this workspace.
+- `gh attestation verify` does not succeed for the images published by run
+  39260814721. BuildKit attestations on those indexes were readable. The
+  GitHub attestation step is in the publish job and has not run yet.
 
 ## Next three improvements
 
