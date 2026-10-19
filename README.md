@@ -123,10 +123,15 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 - [Server](#server)
 - [Develop](#develop)
 - [License and security](#license-and-security)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 
 ## Screenshots
 
-On localhost, the first person uses **Sign in on this computer**. That button is enabled. GitHub and Microsoft stay inactive until their variables are set. An OAuth app only signs a person in. The GitHub App from `/github` reads and scans repositories. GitLab is not connected.
+On localhost, the first person uses **Sign in on this computer**. That button is enabled. GitHub and Microsoft stay inactive until their variables are set. An OAuth app only signs a person in. Local sign-in needs no OAuth app. The GitHub App from `/github` reads and scans repositories. A personal GitHub account is supported. GitLab is not connected.
+
+The timeline lists Checkstead workflow runs beside the scans when the GitHub App is installed. A run is queued, in progress, success, or failure. A run on a pull request is labeled with that pull request number and links to the pull request. Rerun is on each run and uses the credentials already stored.
 
 ![Sign-in page. Sign in on this computer is enabled. GitHub and Microsoft are inactive.](docs/screenshots/sign-in.png)
 
@@ -144,7 +149,9 @@ The first person to sign in is the administrator. Administration is where that p
 
 ## Architecture
 
-A scan and the timeline server are separate. The scan never holds an NVD API key. The updater is the only job that talks to `services.nvd.nist.gov`.
+A short description is in [docs/architecture.md](docs/architecture.md).
+
+A scan and the timeline server are separate. The scan never holds an NVD API key. The updater is the only job that talks to `services.nvd.nist.gov`. Findings on the timeline are one table in four groups: Direct · Production, Direct · Dev, Transitive · Production, and Transitive · Dev. A `node_modules` path is the package name. A connected GitHub App adds workflow runs to that timeline, including pull-request runs and rerun.
 
 ```mermaid
 flowchart TB
@@ -179,14 +186,18 @@ flowchart TB
     reports[Directories of scan reports]
     ui[Web UI]
     accounts[Account store]
-    github[GitHub]
+    github[GitHub sign-in]
     entra[Microsoft Entra]
     azure[Azure DevOps]
+    app[GitHub App]
+    runs[Workflow runs]
     report --> reports --> ui
     github --> accounts
     entra --> accounts
     azure --> accounts
     accounts --> ui
+    app --> runs --> ui
+    ui --> app
   end
 ```
 
@@ -194,9 +205,10 @@ Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints
 
 | Path | Role |
 | --- | --- |
-| `src/checkstead` | Scan client, account store, and timeline server |
+| `src/checkstead` | Scan client, score policy, GitHub App, account store, and timeline server |
 | `engine.version` | The Dependency-Check pin |
-| `checkstead.yml` | Snapshot URL, plus fields reserved for later |
+| `checkstead.yml` | Snapshot URL, score policy, threshold, KEV, unscored findings, and an optional private suppression file |
+| `docs/architecture.md` | Short architecture description |
 | `Dockerfile` | Scanner image |
 | `Dockerfile.server` | Timeline server image |
 | `action.yml` | GitHub Action that runs the scanner image |
@@ -215,8 +227,11 @@ Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints
 | Named score policy, threshold, KEV flag, and a no-score line | |
 | Private suppression file, kept local | |
 | Timeline of scans and the drift between them | Suppression and false-positive records |
+| Findings table with direct/transitive and production/dev groups. A `node_modules` path is the package name | |
 | Git author on a scan when that commit is in the tree | |
-| Server accounts: GitHub, Microsoft Entra, Azure DevOps | GitLab and other Git hosts |
+| Local sign-in with no OAuth app. A personal GitHub account can install the GitHub App | GitLab and other Git hosts |
+| Workflow runs on the timeline: queued, in progress, success, or failure, with pull-request links and rerun | |
+| Server accounts: GitHub, Microsoft Entra, Azure DevOps | |
 
 `scorePolicy` chooses the one score a finding is judged on. `threshold` fails the build when that score is at or above the number. An empty threshold does not fail on score. `failOnKev` fails on a CISA KEV finding even when the score is below the threshold. `failUnscored` fails when a finding has no score. `privateSuppressions` is a local file passed to the engine. A URL is refused, and the file is not published. The timeline does not invent suppression or false-positive records.
 
@@ -551,7 +566,7 @@ That is the same lint, package build, unit tests, and Maven plugin tests that CI
 
 ## License and security
 
-Checkstead is [Apache-2.0](LICENSE). Contributions use the Developer Certificate of Origin. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Checkstead is [Apache-2.0](LICENSE). Contributions use the Developer Certificate of Origin. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). The record of this version is [CHANGELOG.md](CHANGELOG.md).
 
 Maintainer: Chethan K ([@chethankumblekar](https://github.com/chethankumblekar)). Report a vulnerability through [SECURITY.md](SECURITY.md). You can email chethan.kumblekar@ascertra.com, or open a private advisory:
 

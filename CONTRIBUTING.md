@@ -4,11 +4,51 @@ Checkstead is licensed under the Apache License, Version 2.0. Contributors keep
 their copyright. Inbound contributions are licensed the same way. There is no
 copyright assignment.
 
+The community standard is [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report a
+vulnerability through [SECURITY.md](SECURITY.md), not through a public issue.
+
+## Developer Certificate of Origin
+
 Commits use the Developer Certificate of Origin. Add a `Signed-off-by` line with
 `git commit -s`. By doing so you certify that you can submit the change under
-the project license.
+the project license:
 
-Defects and ideas are public issues. A private suppression file is not a
-contribution. Do not open a pull request that publishes one.
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
 
-A public suppression rule needs a reason a stranger can verify, an owner, and an end date. Do not add one without that confirmation.
+## What to change
+
+Defects and ideas are public issues. A pull request should keep the current
+product: one pinned Dependency-Check release, one snapshot, and scans that do
+not call `services.nvd.nist.gov`.
+
+A private suppression file is not a contribution. Do not open a pull request
+that publishes one. `privateSuppressions` stays optional. Do not add a
+suppression file that a scan requires.
+
+A public suppression rule needs a reason a stranger can verify, an owner, and
+an end date. Do not add one without that confirmation. Checkstead does not ship
+a confirmed public rule in this version.
+
+Questions about a CVE score, a CPE match, or NVD enrichment belong with NVD,
+the CVE Numbering Authority, or the analyzer that produced them.
+
+## Develop
+
+From a checkout:
+
+```bash
+python3 -m pip install ruff==0.14.2 build==1.3.0 certifi
+bash scripts/self-test.sh
+```
+
+That is the lint, package build, unit tests, and Maven plugin tests that CI
+runs. The tests publish no database and do not call the NVD. See the Develop
+section of [README.md](README.md).
+
+## Pull requests
+
+Describe what changed and how you checked it. Use the pull request template.
+Keep commits signed off. The maintainer is Chethan K
+([@chethankumblekar](https://github.com/chethankumblekar)).
