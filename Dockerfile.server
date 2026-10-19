@@ -6,7 +6,13 @@ COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src
 COPY scripts/server-entrypoint.sh /usr/local/bin/checkstead-server
 
-RUN pip install --no-cache-dir /opt/checkstead-src \
+# The official Python image vendors msgpack, setuptools, and urllib3 inside
+# pip and lists them in pip/_vendor/bom.cdx.json. Trivy reads that bill of
+# materials and fails the High language-package gate. The server does not
+# need pip after Checkstead is installed.
+RUN python -m pip install --no-cache-dir /opt/checkstead-src \
+    && python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
+    && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
     && chmod 0755 /usr/local/bin/checkstead-server \
     && mkdir -p /var/lib/checkstead/scans \
     && chown -R checkstead:checkstead /var/lib/checkstead

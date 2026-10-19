@@ -64,7 +64,7 @@ class CiTests(TestCase):
         self.assertIn("value=latest,enable={{is_default_branch}}", ci)
         self.assertIn("value=engine-", ci)
         self.assertIn("docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5", ci)
-        self.assertIn("docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6", ci)
+        self.assertIn("docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0", ci)
         self.assertIn("linux/amd64,linux/arm64", ci)
         self.assertIn("docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3", ci)
         self.assertIn("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0", ci)
@@ -114,3 +114,14 @@ class CiTests(TestCase):
             self.assertTrue((shots / shot).is_file())
         self.assertNotEqual((shots / "sign-in.png").read_bytes(), (shots / "drift.png").read_bytes())
         self.assertNotEqual((shots / "scan.png").read_bytes(), (shots / "drift.png").read_bytes())
+
+    def test_build_push_action_pin_matches_both_jobs_and_the_record(self) -> None:
+        pin = "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0"
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        record = (ROOT / "docs" / "security" / "supply-chain-and-provenance.md").read_text(encoding="utf-8")
+        self.assertEqual(ci.count(pin), 2)
+        self.assertNotIn("docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", ci)
+        self.assertIn(
+            "| `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |",
+            record,
+        )
