@@ -708,6 +708,13 @@ class GitHubAppTests(TestCase):
         self.assertNotIn("/opt/checkstead/scans", script)
         self.assertIn("CHECKSTEAD_LOCAL=1", dockerfile)
         self.assertIn("CHECKSTEAD_SCANS=/var/lib/checkstead/scans", dockerfile)
+        self.assertIn("python -m pip install --no-cache-dir /opt/checkstead-src", dockerfile)
+        self.assertLess(
+            dockerfile.index("python -m pip install --no-cache-dir /opt/checkstead-src"),
+            dockerfile.index("shutil.rmtree(root / 'pip')"),
+        )
+        self.assertIn("pip-*.dist-info", dockerfile)
+        self.assertIn("rm -f /usr/local/bin/pip", dockerfile)
         self.assertIn("checkstead-scans:/var/lib/checkstead/scans", compose)
         self.assertIn("CHECKSTEAD_SCANS: /var/lib/checkstead/scans", compose)
         subprocess.run(["bash", "-n", str(ROOT / "scripts" / "server-entrypoint.sh")], check=True)
