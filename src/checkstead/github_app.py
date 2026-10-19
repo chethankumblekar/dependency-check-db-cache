@@ -36,6 +36,13 @@ _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SLUG = re.compile(r"^[A-Za-z0-9-]{1,100}$")
 _ACCEPT = "application/vnd.github+json"
 _API_VERSION = "2022-11-28"
+_PERMISSIONS = {"actions": "write", "contents": "read", "metadata": "read"}
+_ACTION = re.compile(
+    r"dependency-check-db-cache|^\s*-?\s*uses:\s*\S*checkstead",
+    re.IGNORECASE | re.MULTILINE,
+)
+_RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
+_STAMP = re.compile(r"^[0-9T:Z.+\-]{10,40}$")
 
 
 def localhost_client(host: str) -> bool:
@@ -58,7 +65,7 @@ def build_manifest(public_base: str) -> dict:
         "setup_url": base + "/api/github/setup",
         "description": "Scan this account's repositories with Checkstead.",
         "public": False,
-        "default_permissions": {"contents": "read", "metadata": "read"},
+        "default_permissions": dict(_PERMISSIONS),
         "default_events": [],
     }
 
@@ -196,6 +203,18 @@ def _json_object(status: int, body: bytes, failure: str) -> dict:
     if not isinstance(payload, dict):
         raise ChecksteadError(failure)
     return payload
+
+
+class ActionsPermissionRequired(ChecksteadError):
+    """The stored app cannot read Actions until the installation accepts that permission."""
+
+    def __init__(self, approval_url: str):
+        super().__init__("The GitHub App needs Actions access. Approve it on GitHub.")
+        self.approval_url = approval_url
+
+
+class _ActionsDenied(Exception):
+    pass
 
 
 def github_request(
@@ -541,6 +560,292 @@ def scan_installed_repositories(
     return results
 
 
+def _installed(data_dir: Path) -> bool:
+    directory = data_dir / "github-app"
+    installation = _read_json(directory / "installation.json")
+    app = _read_json(directory / "app.json")
+    key = directory / "private-key.pem"
+    return bool(
+        installation
+        and installation.get("accountType") in {"Organization", "User"}
+        and app
+        and key.is_file()
+    )
+
+
+def _approval_url(installation: dict) -> str:
+    web = github_web_base()
+    ident = installation.get("id")
+    if not isinstance(ident, int) and not (isinstance(ident, str) and ident.isdigit()):
+        return web
+    if installation.get("accountType") == "Organization":
+        org = installation.get("organization")
+        if isinstance(org, str) and _ORG.fullmatch(org):
+            return f"{web}/organizations/{urllib.parse.quote(org)}/settings/installations/{ident}"
+    return f"{web}/settings/installations/{ident}"
+
+
+def _request_actions_permission(data_dir: Path, transport) -> None:
+    """Ask GitHub to add Actions on the app created from the stored key.
+
+    An installation still has to accept that permission. This does not take a token.
+    """
+    app, key = _load_app(data_dir)
+    token = app_jwt(str(app["id"]), key)
+    status, body = github_request(
+        "GET",
+        f"{github_api_base()}/app",
+        _api_headers(token),
+        None,
+        transport,
+    )
+    current: dict = {}
+    if status < 400 and body:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("permissions"), dict):
+            current = payload["permissions"]
+    if current.get("actions") == "write" and current.get("contents") == "read":
+        return
+    github_request(
+        "PATCH",
+        f"{github_api_base()}/app",
+        {**_api_headers(token), "Content-Type": "application/json"},
+        json.dumps({"default_permissions": _PERMISSIONS}).encode("utf-8"),
+        transport,
+    )
+
+
+def _raise_if_denied(status: int) -> None:
+    if status == 403:
+        raise _ActionsDenied()
+
+
+def _status_label(status: object, conclusion: object) -> str | None:
+    if status in {"queued", "waiting", "requested", "pending"}:
+        return "queued"
+    if status == "in_progress":
+        return "in progress"
+    if status != "completed":
+        return None
+    if conclusion == "success":
+        return "success"
+    if conclusion in {"failure", "timed_out", "startup_failure", "cancelled", "action_required"}:
+        return "failure"
+    return None
+
+
+def _clean_text(value: object, limit: int = 120) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:limit]
+
+
+def _workflow_path(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if not value.startswith(".github/workflows/") or ".." in value or "\\" in value:
+        return None
+    if not value.endswith((".yml", ".yaml")):
+        return None
+    return value
+
+
+def _quote_repo(repository: str) -> str:
+    owner, repo = repository.split("/", 1)
+    return f"{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}"
+
+
+def _workflow_source(token: str, repository: str, path: str, transport) -> str:
+    quoted = "/".join(urllib.parse.quote(part) for part in path.split("/"))
+    status, body = github_request(
+        "GET",
+        f"{github_api_base()}/repos/{_quote_repo(repository)}/contents/{quoted}",
+        _api_headers(token),
+        None,
+        transport,
+    )
+    _raise_if_denied(status)
+    if status >= 400 or not body:
+        return ""
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict) or not isinstance(payload.get("content"), str):
+        return ""
+    try:
+        raw = base64.b64decode(payload["content"])
+    except (ValueError, TypeError):
+        return ""
+    return raw[:262144].decode("utf-8", errors="replace")
+
+
+def _is_checkstead(
+    repository: str,
+    run: dict,
+    token: str,
+    cache: dict[tuple[str, str], str],
+    transport,
+) -> bool:
+    name = _clean_text(run.get("name"), 200).lower()
+    path = run.get("path") if isinstance(run.get("path"), str) else ""
+    if "checkstead" in name or "checkstead" in path.lower():
+        return True
+    workflow = _workflow_path(path)
+    if workflow is None:
+        return False
+    key = (repository, workflow)
+    if key not in cache:
+        cache[key] = _workflow_source(token, repository, workflow, transport)
+    return _ACTION.search(cache[key]) is not None
+
+
+def _pull_request(run: dict) -> int | None:
+    pulls = run.get("pull_requests")
+    if not isinstance(pulls, list):
+        return None
+    for pull in pulls:
+        number = pull.get("number") if isinstance(pull, dict) else None
+        if isinstance(number, int) and 0 < number < 100_000_000:
+            return number
+    return None
+
+
+def _public_run(
+    repository: str,
+    run: dict,
+    token: str,
+    cache: dict[tuple[str, str], str],
+    transport,
+) -> dict | None:
+    label = _status_label(run.get("status"), run.get("conclusion"))
+    if label is None or not _is_checkstead(repository, run, token, cache, transport):
+        return None
+    run_id = run.get("id")
+    if not isinstance(run_id, int) or run_id < 1:
+        return None
+    updated = run.get("updated_at") or run.get("created_at")
+    stamp = updated if isinstance(updated, str) and _STAMP.fullmatch(updated) else ""
+    number = _pull_request(run)
+    web = github_web_base()
+    return {
+        "id": run_id,
+        "repository": repository,
+        "name": _clean_text(run.get("name"), 120),
+        "status": label,
+        "branch": _branch_name(run.get("head_branch")) or "",
+        "pullRequest": number,
+        "pullRequestUrl": f"{web}/{repository}/pull/{number}" if number else None,
+        "url": f"{web}/{repository}/actions/runs/{run_id}",
+        "updatedAt": stamp,
+    }
+
+
+def _repo_runs(token: str, repository: str, cache: dict, transport) -> list[dict]:
+    status, body = github_request(
+        "GET",
+        f"{github_api_base()}/repos/{_quote_repo(repository)}/actions/runs?per_page=20",
+        _api_headers(token),
+        None,
+        transport,
+    )
+    _raise_if_denied(status)
+    if status >= 400 or not body:
+        return []
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    batch = payload.get("workflow_runs") if isinstance(payload, dict) else None
+    if not isinstance(batch, list):
+        return []
+    found: list[dict] = []
+    for run in batch:
+        if not isinstance(run, dict):
+            continue
+        public = _public_run(repository, run, token, cache, transport)
+        if public:
+            found.append(public)
+    return found
+
+
+def list_workflow_runs(data_dir: Path, transport=None) -> dict:
+    """Recent Checkstead workflow runs for repositories this installation can read."""
+    transport = transport or default_transport
+    if not _installed(data_dir):
+        return {"connected": False, "runs": []}
+    installation, access = _installation_token(data_dir, transport)
+    repos = list_repositories(access, transport)
+    runs: list[dict] = []
+    cache: dict[tuple[str, str], str] = {}
+    try:
+        for full_name, _branch in repos[:25]:
+            if not _REPO.fullmatch(full_name):
+                continue
+            runs.extend(_repo_runs(access, full_name, cache, transport))
+    except _ActionsDenied:
+        _request_actions_permission(data_dir, transport)
+        raise ActionsPermissionRequired(_approval_url(installation)) from None
+    runs.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+    return {"connected": True, "runs": runs[:20]}
+
+
+def _fetch_run(token: str, repository: str, run_id: str, transport) -> dict:
+    status, body = github_request(
+        "GET",
+        f"{github_api_base()}/repos/{_quote_repo(repository)}/actions/runs/{run_id}",
+        _api_headers(token),
+        None,
+        transport,
+    )
+    _raise_if_denied(status)
+    if status >= 400 or not body:
+        raise ChecksteadError("That workflow run is not on this account.")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ChecksteadError("That workflow run is not on this account.") from exc
+    if not isinstance(payload, dict) or str(payload.get("id")) != run_id:
+        raise ChecksteadError("That workflow run is not on this account.")
+    return payload
+
+
+def rerun_workflow(data_dir: Path, repository: str, run_id: object, transport=None) -> dict:
+    """Start the same Checkstead workflow run again with the stored installation."""
+    transport = transport or default_transport
+    repo = repository.strip()
+    run_text = str(run_id).strip()
+    if not _REPO.fullmatch(repo) or not _RUN_ID.fullmatch(run_text):
+        raise ChecksteadError("That workflow run is not on this account.")
+    if not _installed(data_dir):
+        raise ChecksteadError("Install the GitHub App on the account first.")
+    installation, access = _installation_token(data_dir, transport)
+    names = {name for name, _branch in list_repositories(access, transport)}
+    if repo not in names:
+        raise ChecksteadError("That repository is not connected.")
+    try:
+        run = _fetch_run(access, repo, run_text, transport)
+        if not _is_checkstead(repo, run, access, {}, transport):
+            raise ChecksteadError("That run is not a Checkstead workflow.")
+        status, _body = github_request(
+            "POST",
+            f"{github_api_base()}/repos/{_quote_repo(repo)}/actions/runs/{run_text}/rerun",
+            _api_headers(access),
+            None,
+            transport,
+        )
+        _raise_if_denied(status)
+    except _ActionsDenied:
+        _request_actions_permission(data_dir, transport)
+        raise ActionsPermissionRequired(_approval_url(installation)) from None
+    if status not in {201, 204}:
+        raise ChecksteadError("GitHub did not start that workflow again.")
+    return {"repository": repo, "id": int(run_text), "status": "queued"}
+
+
 def install_url(data_dir: Path) -> str:
     app, _key = _load_app(data_dir)
     slug = urllib.parse.quote(str(app["slug"]))
@@ -580,10 +885,12 @@ def render_github_page(status: dict) -> str:
         "to approve the install. A user login installs the app on that personal account. "
         "An organization login installs it on that organization. GitHub returns the app id, "
         "private key, and client credentials, and Checkstead stores them. There is no token field.</p>"
-        "<p>The app reads repository contents and metadata. "
-        "A scan uses the score policy in checkstead.yml in the directory "
-        "where the server was started. With no project file, the policy is "
-        "prefer-newest. A private suppression file stays optional.</p>",
+        "<p>The app reads repository contents and metadata, and it reads and reruns "
+        "Actions workflows. The timeline shows recent Checkstead workflow runs for "
+        "the installed repositories. A rerun uses the credentials already stored. "
+        "There is no token field. A scan uses the score policy in checkstead.yml "
+        "in the directory where the server was started. With no project file, the "
+        "policy is prefer-newest. A private suppression file stays optional.</p>",
     ]
     app = status.get("app")
     installation = status.get("installation")

@@ -87,6 +87,21 @@
     .scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
     .scan strong { display: block; font-size: 16px; letter-spacing: -0.01em; }
     .scan span { display: block; color: var(--muted); font-size: 13px; }
+    .builds { margin: 0 0 22px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .build {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 2px; font-size: 13px;
+    }
+    .build strong {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;
+    }
+    .build .quiet { margin-left: auto; flex: none; }
+    .build-status { font-size: 11px; letter-spacing: 0.04em; font-weight: 650; text-transform: uppercase; }
+    .build-status.success { color: var(--added); }
+    .build-status.failure { color: var(--removed); }
+    .build-status.queued, .build-status.in-progress { color: var(--changed); }
+    .build a { color: inherit; }
+    .build .quiet { padding: 4px 10px; font-size: 12px; }
     .later { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
     .empty { color: var(--muted); margin: 0 0 10px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
@@ -124,9 +139,24 @@
       align-items: center;
       margin: 10px 0 8px;
     }
-    .finding-filters { display: flex; flex-wrap: nowrap; gap: 12px 20px; margin: 0; }
-    .finding-filters div { display: flex; flex-wrap: nowrap; gap: 6px; }
-    .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+    .finding-filters { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; margin: 0; }
+    .finding-filters div {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 2px;
+      padding: 2px;
+      border-radius: 999px;
+      background: #f3eee4;
+    }
+    .finding-filters button.quiet {
+      padding: 3px 10px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font: 600 12px/1.3 ui-sans-serif, sans-serif;
+    }
+    .finding-filters button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
     .finding-count { margin: 0 0 0 auto; color: var(--muted); white-space: nowrap; }
     .finding-block {
       flex: 1;
@@ -176,8 +206,37 @@
     .finding-table td { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
     .finding-table tbody tr { cursor: pointer; }
     .finding-table tbody tr[aria-selected="true"] td { background: #efe8dc; }
-    .finding-table .finding-score { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .finding-table tr.finding-group th {
+      position: sticky;
+      top: 26px;
+      z-index: 1;
+      background: #fbf8f3;
+      color: var(--ink);
+      font: 650 11px/1.2 ui-sans-serif, sans-serif;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 7px 8px 5px;
+    }
+    .finding-group .group-count { margin-left: 8px; color: var(--muted); font-weight: 550; }
     .finding-table .vuln-id { font: 600 12px/1.3 ui-monospace, monospace; }
+    .score-pill, .chip {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: 650;
+    }
+    .score-pill { min-width: 2.2rem; text-align: center; font-variant-numeric: tabular-nums; background: #eeeae2; }
+    .score-pill.critical { background: #f8d6d1; color: #8d3b2f; }
+    .score-pill.high { background: #f8e3c4; color: #8a5a12; }
+    .score-pill.medium { background: #f3ead2; color: #6d5316; }
+    .score-pill.low { background: #dceee4; color: #1d6b43; }
+    .chip { letter-spacing: 0.04em; text-transform: uppercase; background: #f3efe6; color: var(--muted); font-weight: 650; }
+    .chip.direct { background: #e7eef8; color: #1e4f86; }
+    .chip.transitive { background: #f8efe2; color: #8a5a12; }
+    .chip.dev { background: #f3e8f6; color: #6b3a78; }
+    .chip.production { background: #e5f2ea; color: #1d6b43; }
     .finding-description {
       margin: 6px 0 0;
       white-space: nowrap;
@@ -280,7 +339,7 @@
       <a class="sso-link" id="sso-github" href="/api/sso/github/start"><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Sign in with GitHub</a>
       <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
       <p class="notice">The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
-      <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories.</p>
+      <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories. When that app is installed, this timeline lists its workflow runs.</p>
       <form id="local-sign-in">
         <button type="submit" id="sign-in-local">Sign in on this computer</button>
         <p id="local-error" class="error" hidden></p>
@@ -319,6 +378,11 @@
   </section>
   <main hidden>
     <aside class="timeline">
+      <div class="builds" id="builds" hidden>
+        <h2><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Builds</h2>
+        <div id="build-list"></div>
+        <p id="build-error" class="error" hidden></p>
+      </div>
       <h2><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>Scans</h2>
       <div id="scans"></div>
       <div class="later">
@@ -339,6 +403,7 @@
       findingScope: "",
       findingSort: "score",
       findingSortDescending: true,
+      builds: null,
     };
 
     function text(tag, value, className) {
@@ -401,6 +466,97 @@
       return groups;
     }
 
+    function safeHttpUrl(value) {
+      try {
+        const parsed = new URL(value, window.location.origin);
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") return parsed.href;
+      } catch (error) {
+        return "";
+      }
+      return "";
+    }
+
+    function renderBuilds() {
+      const root = document.getElementById("builds");
+      const list = document.getElementById("build-list");
+      const payload = state.builds;
+      list.replaceChildren();
+      if (!payload || !payload.connected) {
+        root.hidden = true;
+        return;
+      }
+      root.hidden = false;
+      if (payload.notice) {
+        const note = text("p", payload.notice, "empty");
+        const approval = safeHttpUrl(payload.approvalUrl || "");
+        if (approval) {
+          const link = document.createElement("a");
+          link.href = approval;
+          link.textContent = "Approve on GitHub";
+          note.append(document.createTextNode(" "), link);
+        }
+        list.append(note);
+      }
+      if (!payload.runs.length && !payload.notice) {
+        list.append(text("p", "No recent Checkstead workflow runs.", "empty"));
+      }
+      payload.runs.forEach((run) => {
+        const row = document.createElement("div");
+        row.className = "build";
+        const status = text("span", run.status, "build-status " + String(run.status || "").replace(" ", "-"));
+        const runUrl = safeHttpUrl(run.url || "");
+        if (runUrl) {
+          const link = document.createElement("a");
+          link.href = runUrl;
+          link.append(status);
+          row.append(link);
+        } else {
+          row.append(status);
+        }
+        row.append(text("strong", run.repository || run.name || "Workflow"));
+        if (run.pullRequest) {
+          const pull = document.createElement("a");
+          pull.href = safeHttpUrl(run.pullRequestUrl || "");
+          pull.textContent = "#" + run.pullRequest;
+          row.append(pull);
+        } else if (run.branch) {
+          row.append(text("span", run.branch, "meta-line"));
+        }
+        const rerun = document.createElement("button");
+        rerun.type = "button";
+        rerun.className = "quiet";
+        rerun.textContent = "Rerun";
+        rerun.addEventListener("click", () => rerunBuild(run, rerun));
+        row.append(rerun);
+        list.append(row);
+      });
+    }
+
+    async function loadBuilds() {
+      try {
+        state.builds = await api("/api/github/runs");
+      } catch (error) {
+        state.builds = {connected: false, runs: []};
+      }
+      renderBuilds();
+    }
+
+    async function rerunBuild(run, button) {
+      button.disabled = true;
+      showError("build-error", "");
+      try {
+        await api("/api/github/rerun", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({repository: run.repository, run: run.id}),
+        });
+        await loadBuilds();
+      } catch (error) {
+        showError("build-error", error.message);
+        button.disabled = false;
+      }
+    }
+
     function renderTimeline() {
       const root = document.getElementById("scans");
       root.replaceChildren();
@@ -447,9 +603,25 @@
       falsePositive.replaceChildren(icon("eye-off"), falsePositiveLabel);
     }
 
+    function packageLabel(item) {
+      let name = String((item && (item.package || item.dependency || item.name || item.fileName)) || "");
+      name = name.replace(/\\/g, "/");
+      const marker = "node_modules/";
+      if (name.includes(marker)) name = name.slice(name.lastIndexOf(marker) + marker.length);
+      name = name.replace(/\/package\.json$/i, "").replace(/\/$/, "");
+      if (name.startsWith("@")) {
+        const parts = name.split("/");
+        name = parts.length > 1 ? parts[0] + "/" + parts[1] : name;
+      } else if (name.includes("/")) {
+        name = name.slice(name.lastIndexOf("/") + 1);
+      }
+      return name || "—";
+    }
+
     function dependencyLine(item) {
-      const version = item.version ? " " + item.version : "";
-      return item.name + version;
+      const name = packageLabel(item);
+      const version = item.version && !name.endsWith("@" + item.version) ? " " + item.version : "";
+      return (name === "—" ? item.name || item.fileName || "—" : name) + version;
     }
 
     function addRows(list, items, kind, label) {
@@ -507,17 +679,32 @@
       return "Drift. " + findingText + " " + dependencyCount + " dependency changes.";
     }
 
+    function listedDependencies(scan) {
+      const seen = new Set();
+      const rows = [];
+      (scan.dependencies || []).forEach((item) => {
+        const raw = String(item.fileName || item.name || "").replace(/\\/g, "/");
+        if (raw.includes("node_modules/") && !raw.endsWith("package.json") && !item.version) return;
+        const line = dependencyLine(item);
+        if (seen.has(line)) return;
+        seen.add(line);
+        rows.push(line);
+      });
+      return rows;
+    }
+
     function dependencyInventory(scan) {
       const list = document.createElement("ul");
+      const rows = listedDependencies(scan);
       if (!scan.hasDependencyReport) {
         list.append(text("li", "This scan has no Dependency-Check dependency report.", "empty"));
-      } else if (!scan.dependencies.length) {
+      } else if (!rows.length) {
         list.append(text("li", "The engine report lists no dependencies.", "empty"));
       } else {
-        scan.dependencies.forEach((item) => {
+        rows.forEach((line) => {
           const row = document.createElement("li");
           row.className = "row";
-          row.textContent = dependencyLine(item);
+          row.textContent = line;
           list.append(row);
         });
       }
@@ -536,11 +723,10 @@
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
       detail.append(identityLine(scan));
-      const items = visibleFindings(scan.findings || []);
-      detail.append(findingToolbar(items.length));
+      detail.append(findingToolbar(scan.findings || []));
       detail.append(findingsSection(scan.findings || []));
       detail.append(disclosure(driftSummary(drift), dependencyChanges(drift)));
-      detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
+      detail.append(disclosure("Dependencies. " + listedDependencies(scan).length + " packages.", dependencyInventory(scan)));
     }
 
     function findingRank(item) {
@@ -560,7 +746,7 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "quiet";
-        button.textContent = option[1];
+        button.textContent = option[2] == null ? option[1] : option[1] + " " + option[2];
         button.setAttribute("aria-pressed", option[0] === current ? "true" : "false");
         button.addEventListener("click", () => onPick(option[0]));
         group.append(button);
@@ -568,23 +754,35 @@
       return group;
     }
 
-    function findingFilters() {
+    function findingCounts(findings) {
+      const counts = { "": findings.length, direct: 0, transitive: 0, production: 0, dev: 0 };
+      findings.forEach((item) => {
+        const relationship = item.relationship || "direct";
+        const scope = item.scope || "production";
+        if (counts[relationship] != null) counts[relationship] += 1;
+        if (counts[scope] != null) counts[scope] += 1;
+      });
+      return counts;
+    }
+
+    function findingFilters(findings) {
+      const counts = findingCounts(findings);
       const bar = document.createElement("div");
       bar.className = "finding-filters";
       bar.append(
         filterGroup("Relationship", [
-          ["", "All"],
-          ["direct", "Direct"],
-          ["transitive", "Transitive"],
+          ["", "All", counts[""]],
+          ["direct", "Direct", counts.direct],
+          ["transitive", "Transitive", counts.transitive],
         ], state.findingRelationship, (value) => {
           state.findingRelationship = value;
           state.openFinding = null;
           render();
         }),
         filterGroup("Scope", [
-          ["", "All"],
-          ["production", "Production"],
-          ["dev", "Dev"],
+          ["", "All", counts[""]],
+          ["production", "Production", counts.production],
+          ["dev", "Dev", counts.dev],
         ], state.findingScope, (value) => {
           state.findingScope = value;
           state.openFinding = null;
@@ -605,11 +803,23 @@
 
     function findingField(item, key) {
       if (key === "score") return item.score || "";
-      if (key === "package") return item.package || item.dependency || "";
+      if (key === "package") {
+        const label = packageLabel(item);
+        return label === "—" ? "" : label;
+      }
       if (key === "scoreSource") return item.scoreSource || "";
       if (key === "relationship") return item.relationship || "direct";
       if (key === "scope") return item.scope || "production";
       return item.id || "";
+    }
+
+    function scoreBand(value) {
+      const score = Number(value);
+      if (!Number.isFinite(score)) return "";
+      if (score >= 9) return "critical";
+      if (score >= 7) return "high";
+      if (score >= 4) return "medium";
+      return "low";
     }
 
     function sortByColumn(key) {
@@ -629,9 +839,20 @@
       findingColumns.forEach((column) => {
         const cell = document.createElement("td");
         const value = findingField(item, column[0]) || "—";
-        if (column[0] === "score") cell.className = "finding-score";
         if (column[0] === "id") cell.className = "vuln-id";
-        cell.textContent = value;
+        if (column[0] === "score") {
+          const pill = document.createElement("span");
+          pill.className = "score-pill " + scoreBand(value);
+          pill.textContent = value;
+          cell.append(pill);
+        } else if (column[0] === "relationship" || column[0] === "scope") {
+          const chip = document.createElement("span");
+          chip.className = "chip " + value;
+          chip.textContent = value;
+          cell.append(chip);
+        } else {
+          cell.textContent = value;
+        }
         row.append(cell);
       });
       row.addEventListener("click", () => {
@@ -687,7 +908,41 @@
       });
       head.append(headRow);
       const body = document.createElement("tbody");
-      items.forEach((item) => body.append(findingRow(item)));
+      const groupOrder = [
+        ["direct", "production", "Direct · Production"],
+        ["direct", "dev", "Direct · Dev"],
+        ["transitive", "production", "Transitive · Production"],
+        ["transitive", "dev", "Transitive · Dev"],
+      ];
+      const grouped = new Map();
+      items.forEach((item) => {
+        const relationship = item.relationship || "direct";
+        const scope = item.scope || "production";
+        const known = groupOrder.some((group) => group[0] === relationship && group[1] === scope);
+        const key = known ? relationship + "\n" + scope : "other";
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(item);
+      });
+      const sequence = groupOrder
+        .map((group) => group[0] + "\n" + group[1])
+        .filter((key) => grouped.has(key));
+      if (grouped.has("other")) sequence.push("other");
+      sequence.forEach((key) => {
+        const rows = grouped.get(key);
+        const named = groupOrder.find((group) => group[0] + "\n" + group[1] === key);
+        const header = document.createElement("tr");
+        header.className = "finding-group";
+        const cell = document.createElement("th");
+        cell.colSpan = findingColumns.length;
+        cell.append(document.createTextNode(named ? named[2] : "Other"));
+        const count = document.createElement("span");
+        count.className = "group-count";
+        count.textContent = " " + rows.length;
+        cell.append(count);
+        header.append(cell);
+        body.append(header);
+        rows.forEach((item) => body.append(findingRow(item)));
+      });
       table.append(head, body);
       findingWindow.append(table);
       const chosen = items.find((item) => findingKey(item) === state.openFinding);
@@ -700,10 +955,12 @@
       return wrap;
     }
 
-    function findingToolbar(total) {
+    function findingToolbar(findings) {
+      const visible = visibleFindings(findings);
       const bar = document.createElement("div");
       bar.className = "finding-toolbar";
-      bar.append(findingFilters(), text("p", total + (total === 1 ? " finding" : " findings"), "finding-count"));
+      const label = visible.length + (visible.length === 1 ? " finding" : " findings");
+      bar.append(findingFilters(findings), text("p", label, "finding-count"));
       return bar;
     }
 
@@ -742,10 +999,9 @@
       const committer = committerLabel(scan);
       if (committer) detail.append(withIcon("person", committer, "p", "meta meta-line"));
       detail.append(identityLine(scan));
-      const items = visibleFindings(scan.findings || []);
-      detail.append(findingToolbar(items.length));
+      detail.append(findingToolbar(scan.findings || []));
       detail.append(findingsSection(scan.findings || []));
-      detail.append(disclosure("Dependencies. " + (scan.dependencies || []).length + " packages.", dependencyInventory(scan)));
+      detail.append(disclosure("Dependencies. " + listedDependencies(scan).length + " packages.", dependencyInventory(scan)));
       if (!(scan.scoreLines || []).length) {
         const note = scoreNote(scan.hasScoreSource);
         if (note) detail.append(note);
@@ -758,6 +1014,7 @@
         state.selected = state.history.scans[state.history.scans.length - 1].id;
       }
       renderTimeline();
+      renderBuilds();
       const scan = state.history.scans.find((item) => item.id === state.selected) || state.history.scans[0];
       const drift = state.history.drifts.find((item) => item.after === scan.id);
       if (drift) renderDrift(scan, drift);
@@ -841,6 +1098,7 @@
         state.selected = history.scans.length ? history.scans[history.scans.length - 1].id : null;
       }
       render();
+      await loadBuilds();
     }
 
     async function loadUsers() {
@@ -1006,6 +1264,11 @@
       showApp();
       await loadHistory();
     });
+
+    window.setInterval(() => {
+      if (document.querySelector("main").hidden) return;
+      loadBuilds();
+    }, 15000);
   </script>
 </body>
 </html>

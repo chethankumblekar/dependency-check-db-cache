@@ -308,6 +308,55 @@ class ScoreTests(TestCase):
         self.assertEqual(dev_finding.scope, "production")
         self.assertNotEqual(dev_finding.scope, real_finding.scope)
 
+    def test_a_node_modules_path_keeps_the_package_role(self) -> None:
+        root = ROOT / "build" / "tests" / "npm-paths"
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        (root / "package.json").write_text(
+            json.dumps({"dependencies": {"lodash": "4.17.21"}, "devDependencies": {"eslint": "9.0.0"}}),
+            encoding="utf-8",
+        )
+        (root / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "packages": {
+                        "": {},
+                        "node_modules/lodash": {"version": "4.17.21"},
+                        "node_modules/left-pad": {"version": "1.3.0"},
+                        "node_modules/eslint": {"version": "9.0.0", "dev": True},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def npm(name: str, version: str, identifier: str) -> dict:
+            return {
+                "fileName": f"node_modules/{name}/package.json",
+                "filePath": f"/work/node_modules/{name}/package.json",
+                "version": version,
+                "vulnerabilities": [{"name": identifier, "source": "NPM", **_v3(6.5)}],
+            }
+
+        result = evaluate_report(
+            {"dependencies": [
+                npm("lodash", "4.17.21", "GHSA-lodash"),
+                npm("left-pad", "1.3.0", "GHSA-pad"),
+                npm("eslint", "9.0.0", "GHSA-eslint"),
+            ]},
+            policy="prefer-newest",
+            threshold=None,
+            fail_on_kev=False,
+            fail_unscored=False,
+            roles=roles_from_paths([root]),
+        )
+        by_id = {item.identifier: item for item in result.findings}
+        self.assertEqual((by_id["GHSA-lodash"].relationship, by_id["GHSA-lodash"].scope), ("direct", "production"))
+        self.assertEqual(by_id["GHSA-lodash"].package(), "lodash@4.17.21")
+        self.assertNotIn("node_modules", by_id["GHSA-lodash"].package())
+        self.assertEqual((by_id["GHSA-pad"].relationship, by_id["GHSA-pad"].scope), ("transitive", "production"))
+        self.assertEqual((by_id["GHSA-eslint"].relationship, by_id["GHSA-eslint"].scope), ("direct", "dev"))
+
     def test_findings_are_grouped_and_each_one_has_a_description(self) -> None:
         vulnerability = _vuln("CVE-2020-8908", "NVD", _v3(5.5), cpe=False)
         vulnerability["description"] = "  A temp directory creation vulnerability exists in Guava.  "

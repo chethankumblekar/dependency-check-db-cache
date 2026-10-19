@@ -94,7 +94,7 @@ A personal account or an organization owner connects GitHub from that page. The 
 1. Run the local server from any directory. When that directory contains `checkstead.yml`, these scans use its score policy. A scan of a project uses the `checkstead.yml` beside that project when the server's directory has none.
 2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
 3. Open http://127.0.0.1:8765/github.
-4. Choose **Personal account** and type the user login, which is the GitHub username. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login when the account is an organization. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata.
+4. Choose **Personal account** and type the user login, which is the GitHub username. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login when the account is an organization. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata, and to read and rerun Actions workflows.
 5. On the installation page, click **Install** to approve the app on that account. Checkstead stores the credentials GitHub returns and accepts the installation.
 6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot. The report is written into the server's scan directory and the timeline groups it by branch.
 
@@ -130,13 +130,13 @@ On localhost, the first person uses **Sign in on this computer**. That button is
 
 ![Sign-in page. Sign in on this computer is enabled. GitHub and Microsoft are inactive.](docs/screenshots/sign-in.png)
 
-The first scan on a branch is the scan view. This one records branch `main`. Findings are one table. The columns are Score, Vulnerability, Package, Relationship, Scope, and Source. The header sticks while the rows scroll inside the table. Score starts highest first, and clicking a column sorts by that column. The selected row is highlighted. Its description is one line under the table. The filters and the count stay on one line above the table. Dependencies stay closed until opened.
+The first scan on a branch is the scan view. This one records branch `main`. Findings are one table, split into Direct · Production, Direct · Dev, Transitive · Production, and Transitive · Dev. A path inside `node_modules` is shown as the package name, not as the file. The columns are Score, Vulnerability, Package, Relationship, Scope, and Source. The header sticks while the rows scroll inside the table. Score starts highest first inside each group, and clicking a column sorts by that column. The selected row is highlighted. Its description is one line under the table. The filters and the count stay on one line above the table. Dependencies stay closed until opened.
 
-![Scan of billing on branch main. Findings are one table, with the description on one line under it.](docs/screenshots/scan.png)
+![Scan of billing on branch main. Findings are grouped into direct production and the other dependency types, with the description on one line under the table.](docs/screenshots/scan.png)
 
 The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The drift line says no findings were added or removed between the two scans. That detail stays closed until opened. The same table is on the screen.
 
-![Drift on branch main. The finding table stays on one screen, with drift closed.](docs/screenshots/drift.png)
+![Drift on branch main. The grouped finding table stays on one screen, with drift closed.](docs/screenshots/drift.png)
 
 The first person to sign in is the administrator. Administration is where that person adds later accounts.
 
@@ -406,7 +406,7 @@ The Action passes `GITHUB_REF_NAME` and `GITHUB_SHA` into the scan. `checkstead.
 
 On a pull request the Action fetches the head commit and the base commit, then scans both trees in one run. Both scans use the same snapshot and `--noupdate`. A finding is introduced only when its package identity and vulnerability id are on the head and absent on the base.
 
-Findings in `checkstead.txt` are separate groups: direct and transitive, and production and dev. Each vulnerability has a `description:` line, plus the score, the score source, and the package. The timeline keeps the findings in one table on one screen. The columns are score, vulnerability id, package, relationship, scope, and score source. Score starts highest first, and a column header sorts the table. The selected row is highlighted, and its description is one line under the table. The SARIF result carries the same description, score, score source, and package.
+Findings in `checkstead.txt` are separate groups: direct and transitive, and production and dev. Each vulnerability has a `description:` line, plus the score, the score source, and the package. The timeline keeps those groups in one table on one screen. A `node_modules` path is the package name. The columns are score, vulnerability id, package, relationship, scope, and score source. Score starts highest first inside each group, and a column header sorts the table. The selected row is highlighted, and its description is one line under the table. The SARIF result carries the same description, score, score source, and package.
 
 ### Pull requests
 
@@ -468,7 +468,9 @@ The two reports already in `ui/scans` are a pair of fixture scans on the same sn
 
 A scan records a revision when you pass `--revision`, and the GitHub Action passes `GITHUB_SHA`. When that revision is a commit git can see, the report also names the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
 
-A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Findings are one table. The header sticks while the rows scroll inside the table. Score starts highest first, and clicking a column sorts by that column. The selected row is highlighted, and its description is one line under the table. The page does not grow with the finding count. Filters and the count stay on one line above the table. Dependency and drift details stay closed until opened.
+A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Findings are one table, split into direct and transitive, and into production and dev. A `node_modules` path is shown as the package name. The header sticks while the rows scroll inside the table. Score starts highest first inside each group, and clicking a column sorts by that column. The selected row is highlighted, and its description is one line under the table. The page does not grow with the finding count. Filters and the count stay on one line above the table. Dependency and drift details stay closed until opened.
+
+When the GitHub App is installed, the timeline also lists recent Checkstead workflow runs for those repositories. A run is queued, in progress, success, or failure. A run on a pull request is labeled with that pull request number and links to the pull request. Rerun starts that same workflow again through the GitHub API, using the app credentials already stored. There is no token field.
 
 ## Server
 
@@ -518,7 +520,7 @@ The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/gith
 
 ### GitHub App
 
-The GitHub App is created from `/github`. It reads and scans repositories. It is not the OAuth app above, and it does not ask for a token. A personal account is supported, not only an organization. Choose **Personal account** and type the user login. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login for an organization. See [GitHub](#github).
+The GitHub App is created from `/github`. It reads and scans repositories, and the timeline shows that account's Checkstead workflow runs. Rerun uses the stored app credentials. It is not the OAuth app above, and it does not ask for a token. A personal account is supported, not only an organization. Choose **Personal account** and type the user login. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login for an organization. See [GitHub](#github).
 
 ### Scans
 

@@ -26,13 +26,16 @@ from checkstead.config import DEFAULT_SNAPSHOT_URL  # noqa: E402
 from checkstead.errors import ChecksteadError, RefusedHost  # noqa: E402
 from checkstead.history import load_history  # noqa: E402
 from checkstead.github_app import (  # noqa: E402
+    ActionsPermissionRequired,
     accept_installation,
     app_jwt,
     begin_manifest,
     build_manifest,
     github_request,
+    list_workflow_runs,
     localhost_client,
     manifest_target,
+    rerun_workflow,
     scan_installed_repositories,
 )
 from checkstead.identity import github_api_base, github_web_base  # noqa: E402
@@ -116,7 +119,7 @@ class GitHubAppTests(TestCase):
         self.assertNotIn("https://github.com/", enterprise)
         self.assertEqual(
             manifest["default_permissions"],
-            {"contents": "read", "metadata": "read"},
+            {"actions": "write", "contents": "read", "metadata": "read"},
         )
         with github_env(api="https://github.example.com/api/v3", oauth="https://override.example"):
             self.assertEqual(github_web_base(), "https://override.example")
@@ -509,6 +512,7 @@ class GitHubAppTests(TestCase):
             self.assertNotIn("https://github.com/", action)
             self.assertIn("contents", page.decode())
             self.assertIn("metadata", page.decode())
+            self.assertIn("actions", page.decode())
             self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(action).query)["state"][0], state)
 
             status, page, _headers = request(
@@ -716,3 +720,250 @@ class GitHubAppTests(TestCase):
         self.assertIn("checkstead-report/checkstead.sarif", readme)
         self.assertNotIn("need an app registration", readme)
         self.assertNotIn("paste", readme.lower())
+        self.assertIn("queued, in progress, success, or failure", readme)
+        self.assertIn("There is no token field.", readme)
+
+    def test_timeline_lists_checkstead_runs_and_reruns_with_stored_credentials(self) -> None:
+        root = self._work("runs")
+        data = root / "data"
+        scans = root / "scans"
+        scans.mkdir()
+        self._store_app(data)
+        (data / "github-app" / "installation.json").write_text(
+            json.dumps({"id": 42, "organization": "acme", "accountType": "Organization"}),
+            encoding="utf-8",
+        )
+        workflow = base64.b64encode(
+            b"name: Scan\non: [pull_request]\njobs:\n  scan:\n    steps:\n"
+            b"      - uses: chethankumblekar/dependency-check-db-cache@main\n"
+        ).decode("ascii")
+        calls: list[tuple[str, str]] = []
+
+        def transport(method: str, url: str, headers: dict, body):
+            calls.append((method, url))
+            self.assertNotIn("ghs_test", url)
+            self.assertNotIn("services.nvd.nist.gov", url)
+            token = headers.get("Authorization", "")
+            self.assertTrue(token.startswith("Bearer "))
+            self.assertNotIn("PRIVATE KEY", token)
+            if url.endswith("/access_tokens"):
+                return 201, json.dumps({"token": "ghs_test"}).encode()
+            if "/installation/repositories" in url:
+                return 200, json.dumps(
+                    {"repositories": [{"full_name": "acme/widget", "default_branch": "main"}]}
+                ).encode()
+            if url.endswith("/contents/.github/workflows/scan.yml"):
+                return 200, json.dumps({"content": workflow}).encode()
+            if url.endswith("/contents/.github/workflows/ci.yml"):
+                return 200, json.dumps(
+                    {"content": base64.b64encode(b"name: CI\njobs: {}\n").decode("ascii")}
+                ).encode()
+            if url.endswith("/actions/runs?per_page=20"):
+                return 200, json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 1,
+                                "name": "Checkstead",
+                                "path": ".github/workflows/checkstead.yml",
+                                "status": "queued",
+                                "conclusion": None,
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:01:00Z",
+                            },
+                            {
+                                "id": 2,
+                                "name": "Checkstead",
+                                "path": ".github/workflows/checkstead.yml",
+                                "status": "in_progress",
+                                "conclusion": None,
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:02:00Z",
+                            },
+                            {
+                                "id": 3,
+                                "name": "Checkstead",
+                                "path": ".github/workflows/checkstead.yml",
+                                "status": "completed",
+                                "conclusion": "success",
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:03:00Z",
+                            },
+                            {
+                                "id": 4,
+                                "name": "Checkstead",
+                                "path": ".github/workflows/checkstead.yml",
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:04:00Z",
+                            },
+                            {
+                                "id": 5,
+                                "name": "Scan",
+                                "path": ".github/workflows/scan.yml",
+                                "status": "completed",
+                                "conclusion": "success",
+                                "head_branch": "feature",
+                                "event": "pull_request",
+                                "pull_requests": [{"number": 12}],
+                                "updated_at": "2026-10-16T00:05:00Z",
+                            },
+                            {
+                                "id": 6,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:06:00Z",
+                            },
+                            {
+                                "id": 7,
+                                "name": "Checkstead",
+                                "path": ".github/workflows/checkstead.yml",
+                                "status": "completed",
+                                "conclusion": "skipped",
+                                "head_branch": "main",
+                                "pull_requests": [],
+                                "updated_at": "2026-10-16T00:00:00Z",
+                            },
+                        ]
+                    }
+                ).encode()
+            if url.endswith("/actions/runs/5"):
+                return 200, json.dumps(
+                    {
+                        "id": 5,
+                        "name": "Scan",
+                        "path": ".github/workflows/scan.yml",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "head_branch": "feature",
+                        "pull_requests": [{"number": 12}],
+                    }
+                ).encode()
+            if url.endswith("/actions/runs/6"):
+                return 200, json.dumps(
+                    {
+                        "id": 6,
+                        "name": "CI",
+                        "path": ".github/workflows/ci.yml",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    }
+                ).encode()
+            if url.endswith("/actions/runs/5/rerun"):
+                self.assertEqual(method, "POST")
+                self.assertIsNone(body)
+                return 201, b""
+            raise AssertionError(url)
+
+        with github_env(api="https://github.example.com/api/v3"):
+            listed = list_workflow_runs(data, transport)
+        self.assertTrue(listed["connected"])
+        self.assertEqual(
+            [(run["id"], run["status"]) for run in listed["runs"]],
+            [(5, "success"), (4, "failure"), (3, "success"), (2, "in progress"), (1, "queued")],
+        )
+        pull = listed["runs"][0]
+        self.assertEqual(pull["pullRequest"], 12)
+        self.assertEqual(pull["pullRequestUrl"], "https://github.example.com/acme/widget/pull/12")
+        self.assertEqual(pull["repository"], "acme/widget")
+        self.assertNotIn("ghs_test", json.dumps(listed))
+
+        calls.clear()
+        with github_env(api="https://github.example.com/api/v3"):
+            started = rerun_workflow(data, "acme/widget", 5, transport)
+        self.assertEqual(started, {"repository": "acme/widget", "id": 5, "status": "queued"})
+        self.assertIn(
+            ("POST", "https://github.example.com/api/v3/repos/acme/widget/actions/runs/5/rerun"),
+            calls,
+        )
+        self.assertNotIn("ghs_test", json.dumps(started))
+        with github_env(api="https://github.example.com/api/v3"):
+            with self.assertRaises(ChecksteadError) as refused:
+                rerun_workflow(data, "acme/widget", 6, transport)
+        self.assertIn("Checkstead", str(refused.exception))
+
+        def denied(method: str, url: str, headers: dict, body):
+            calls.append((method, url, body))
+            if url.endswith("/access_tokens"):
+                return 201, json.dumps({"token": "ghs_test"}).encode()
+            if "/installation/repositories" in url:
+                return 200, json.dumps({"repositories": [{"full_name": "acme/widget"}]}).encode()
+            if url.endswith("/actions/runs?per_page=20"):
+                return 403, b'{"message":"Resource not accessible by integration"}'
+            if url.endswith("/app"):
+                if method == "GET":
+                    return 200, json.dumps({"permissions": {"contents": "read", "metadata": "read"}}).encode()
+                self.assertEqual(method, "PATCH")
+                self.assertIn(b'"actions": "write"', body)
+                self.assertNotIn(b"PRIVATE KEY", body)
+                return 200, b"{}"
+            raise AssertionError((method, url))
+
+        calls.clear()
+        with github_env(api="https://github.example.com/api/v3"):
+            with self.assertRaises(ActionsPermissionRequired) as needed:
+                list_workflow_runs(data, denied)
+        self.assertIn("Actions", str(needed.exception))
+        self.assertNotIn("token", str(needed.exception).lower())
+        self.assertEqual(
+            needed.exception.approval_url,
+            "https://github.example.com/organizations/acme/settings/installations/42",
+        )
+
+        server = bind_server(scans, "127.0.0.1", 0, data, github_transport=transport)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        host, port = server.server_address[:2]
+        base = f"http://{host}:{port}"
+
+        def request(path: str, method: str = "GET", data_bytes: bytes | None = None):
+            req = urllib.request.Request(
+                base + path,
+                data=data_bytes,
+                headers={"Content-Type": "application/json"} if data_bytes else {},
+                method=method,
+            )
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return response.status, response.read()
+            except urllib.error.HTTPError as exc:
+                return exc.code, exc.read()
+
+        with github_env(api="https://github.example.com/api/v3"):
+            status, body = request("/api/github/runs")
+            self.assertEqual(status, 200, body.decode())
+            payload = json.loads(body)
+            self.assertEqual(payload["runs"][0]["pullRequest"], 12)
+            self.assertNotIn(b"ghs_test", body)
+            self.assertNotIn(b"PRIVATE KEY", body)
+            status, body = request(
+                "/api/github/rerun",
+                "POST",
+                json.dumps({"repository": "acme/widget", "run": 5}).encode(),
+            )
+            self.assertEqual(status, 202, body.decode())
+            self.assertEqual(json.loads(body)["status"], "queued")
+            self.assertNotIn(b"ghs_test", body)
+            self.assertNotIn(b"token", body.lower())
+
+        page = (ROOT / "src" / "checkstead" / "ui_page.html").read_text(encoding="utf-8")
+        self.assertIn('id="builds"', page)
+        self.assertIn("Rerun", page)
+        self.assertIn("pullRequestUrl", page)
+        self.assertIn("Direct · Production", page)
+        self.assertIn("Direct · Dev", page)
+        self.assertIn("Transitive · Production", page)
+        self.assertIn("Transitive · Dev", page)
+        self.assertNotIn('name="token"', page)
+        self.assertNotIn("personal access", page.lower())
