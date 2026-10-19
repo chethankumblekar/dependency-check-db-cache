@@ -36,6 +36,8 @@ for the SHA that CI actually runs:
 | `docker/metadata-action` | v5 | `c299e40c65443455700f0fdfc63efafe5b349051` |
 | `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |
 | `github/codeql-action/upload-sarif` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
+| `github/codeql-action/init` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
+| `github/codeql-action/analyze` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
 | `aquasecurity/trivy-action` | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
 | `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` |
 

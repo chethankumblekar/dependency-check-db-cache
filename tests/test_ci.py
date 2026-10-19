@@ -139,6 +139,17 @@ class CiTests(TestCase):
         self.assertNotEqual((shots / "sign-in.png").read_bytes(), (shots / "drift.png").read_bytes())
         self.assertNotEqual((shots / "scan.png").read_bytes(), (shots / "drift.png").read_bytes())
 
+    def test_codeql_uploads_sarif_for_pull_requests_and_main(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "codeql.yml").read_text(encoding="utf-8")
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("branches:\n      - main", workflow)
+        self.assertIn("security-events: write", workflow)
+        self.assertIn("languages: python", workflow)
+        self.assertIn("upload: true", workflow)
+        self.assertNotIn("upload: false", workflow)
+        self.assertNotIn("continue-on-error", workflow)
+        _assert_action_pins(self, workflow, "codeql.yml")
+
     def test_build_push_action_pin_matches_both_jobs_and_the_record(self) -> None:
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         record = (ROOT / "docs" / "security" / "supply-chain-and-provenance.md").read_text(encoding="utf-8")
