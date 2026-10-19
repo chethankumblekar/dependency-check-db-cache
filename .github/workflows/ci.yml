@@ -232,6 +232,9 @@ jobs:
         with:
           subject-name: ghcr.io/${{ github.repository }}/${{ matrix.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
+          # The action defaults this to false, which stores the statement only
+          # in the GitHub API. Container verification also needs it on the image.
+          push-to-registry: true
 
       - name: Verify the GitHub provenance attestation
         env:

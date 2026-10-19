@@ -75,6 +75,7 @@ class CiTests(TestCase):
         )
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         images, _marker, publish = ci.partition("publish-images:")
+        self.assertIn("push-to-registry: true", publish)
         self.assertNotIn("packages: write", images)
         self.assertIn("packages: write", publish)
         self.assertIn("push: false", images)

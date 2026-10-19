@@ -56,9 +56,11 @@ and build versions are the pins in `pyproject.toml`. CI installs `.[dev]`.
 is the default branch or a `v*` tag. It has `packages: write`,
 `id-token: write`, and `attestations: write`. It pushes the tags, sets
 `provenance: true` and `sbom: true` on the BuildKit build, and then runs
-`actions/attest-build-provenance` so `gh attestation verify` can check the
-digest. The verify step in that job has not run for this change, because a
-pull request does not publish.
+`actions/attest-build-provenance` with `push-to-registry: true` so
+`gh attestation verify` can check the digest. The action defaults that input
+to false, which does not attach the statement to the image. The verify step
+in that job has not run for this change, because a pull request does not
+publish.
 
 BuildKit attestations on the image index are a different store from GitHub's
 attestation API. Both are described in

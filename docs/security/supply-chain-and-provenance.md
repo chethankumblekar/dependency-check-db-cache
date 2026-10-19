@@ -88,9 +88,12 @@ run on a pull request. The pull-request job sets `provenance: false`,
 `push: false`, and `contents: read`.
 
 The publish job sets BuildKit `provenance: true` and `sbom: true`, then runs
-`actions/attest-build-provenance` on the pushed digest. That second step is
-what `gh attestation verify` checks. It has not run yet for the images below.
-Do not describe those images as verified by GitHub's attestation API.
+`actions/attest-build-provenance` on the pushed digest with
+`push-to-registry: true`. That input is not the action default. Without it,
+the statement is not attached to the image. `gh attestation verify` checks
+the GitHub attestation for that same digest. It has not run yet for the
+images below. Do not describe those images as verified by GitHub's
+attestation API.
 
 ### What was checked on 19 October 2026
 
