@@ -94,7 +94,7 @@ A personal account or an organization owner connects GitHub from that page. The 
 1. Run the local server from any directory. When that directory contains `checkstead.yml`, these scans use its score policy. A scan of a project uses the `checkstead.yml` beside that project when the server's directory has none.
 2. For GitHub Enterprise Server, export `CHECKSTEAD_GITHUB_API` first. Leave it unset for github.com.
 3. Open http://127.0.0.1:8765/github.
-4. Choose **Personal account** and type the user login, which is the GitHub username. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login when the account is an organization. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata.
+4. Choose **Personal account** and type the user login, which is the GitHub username. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login when the account is an organization. Checkstead opens GitHub with the app filled in. Continue on that page. The app asks to read repository contents and metadata, and to read and rerun Actions workflows.
 5. On the installation page, click **Install** to approve the app on that account. Checkstead stores the credentials GitHub returns and accepts the installation.
 6. Scan from that page. Each repository is scanned with the current score policy. A private suppression file stays optional. The scan uses the published snapshot. The report is written into the server's scan directory and the timeline groups it by branch.
 
@@ -470,6 +470,8 @@ A scan records a revision when you pass `--revision`, and the GitHub Action pass
 
 A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Findings are one table, split into direct and transitive, and into production and dev. A `node_modules` path is shown as the package name. The header sticks while the rows scroll inside the table. Score starts highest first inside each group, and clicking a column sorts by that column. The selected row is highlighted, and its description is one line under the table. The page does not grow with the finding count. Filters and the count stay on one line above the table. Dependency and drift details stay closed until opened.
 
+When the GitHub App is installed, the timeline also lists recent Checkstead workflow runs for those repositories. A run is queued, in progress, success, or failure. A run on a pull request is labeled with that pull request number and links to the pull request. Rerun starts that same workflow again through the GitHub API, using the app credentials already stored. There is no token field.
+
 ## Server
 
 The timeline is a server you can run on a laptop or deploy as a container. The first person to sign in is the administrator. Variable names for the optional sign-in buttons are in [`.env.example`](.env.example).
@@ -518,7 +520,7 @@ The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/gith
 
 ### GitHub App
 
-The GitHub App is created from `/github`. It reads and scans repositories. It is not the OAuth app above, and it does not ask for a token. A personal account is supported, not only an organization. Choose **Personal account** and type the user login. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login for an organization. See [GitHub](#github).
+The GitHub App is created from `/github`. It reads and scans repositories, and the timeline shows that account's Checkstead workflow runs. Rerun uses the stored app credentials. It is not the OAuth app above, and it does not ask for a token. A personal account is supported, not only an organization. Choose **Personal account** and type the user login. For the account chethankumblekar, type `chethankumblekar`. Choose **Organization** and type the organization login for an organization. See [GitHub](#github).
 
 ### Scans
 

@@ -18,17 +18,20 @@ from checkstead.accounts import SESSION_DAYS, AccountError, AccountStore
 from checkstead.errors import ChecksteadError
 from checkstead.github_app import (
     GITHUB_COOKIE,
+    ActionsPermissionRequired,
     begin_manifest,
     clear_pending,
     complete_setup,
     exchange_manifest,
     github_status,
     install_url,
+    list_workflow_runs,
     localhost_client,
     pending_account,
     render_github_page,
     render_message,
     render_scan_results,
+    rerun_workflow,
     scan_installed_repositories,
 )
 from checkstead.history import history_payload, load_history
@@ -210,6 +213,11 @@ def bind_server(
                     return
                 self._json(200, github_status(store.data_dir))
                 return
+            if path == "/api/github/runs":
+                if not self._github_ok():
+                    return
+                self._github_runs()
+                return
             if path == "/api/github/manifest/callback":
                 if not self._github_ok():
                     return
@@ -274,6 +282,11 @@ def bind_server(
                 if not self._github_ok():
                     return
                 self._github_scan()
+                return
+            if path == "/api/github/rerun":
+                if not self._github_ok():
+                    return
+                self._github_rerun()
                 return
             self._send(404, "text/plain; charset=utf-8", b"Not found\n")
 
@@ -474,6 +487,44 @@ def bind_server(
                 self._json(200, {"scans": scans})
                 return
             self._html(200, render_scan_results(scans))
+
+        def _github_runs(self) -> None:
+            try:
+                payload = list_workflow_runs(store.data_dir, github_transport)
+            except ActionsPermissionRequired as exc:
+                self._json(
+                    200,
+                    {
+                        "connected": True,
+                        "runs": [],
+                        "approvalUrl": exc.approval_url,
+                        "notice": str(exc),
+                    },
+                )
+                return
+            except ChecksteadError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, payload)
+
+        def _github_rerun(self) -> None:
+            body = self._body()
+            if body is None:
+                return
+            try:
+                result = rerun_workflow(
+                    store.data_dir,
+                    str(body.get("repository") or ""),
+                    body.get("run"),
+                    github_transport,
+                )
+            except ActionsPermissionRequired as exc:
+                self._json(403, {"error": str(exc), "approvalUrl": exc.approval_url})
+                return
+            except ChecksteadError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(202, result)
 
         def _wants_json(self) -> bool:
             return "application/json" in self.headers.get("Accept", "")

@@ -87,6 +87,21 @@
     .scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
     .scan strong { display: block; font-size: 16px; letter-spacing: -0.01em; }
     .scan span { display: block; color: var(--muted); font-size: 13px; }
+    .builds { margin: 0 0 22px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .build {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 2px; font-size: 13px;
+    }
+    .build strong {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;
+    }
+    .build .quiet { margin-left: auto; flex: none; }
+    .build-status { font-size: 11px; letter-spacing: 0.04em; font-weight: 650; text-transform: uppercase; }
+    .build-status.success { color: var(--added); }
+    .build-status.failure { color: var(--removed); }
+    .build-status.queued, .build-status.in-progress { color: var(--changed); }
+    .build a { color: inherit; }
+    .build .quiet { padding: 4px 10px; font-size: 12px; }
     .later { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
     .empty { color: var(--muted); margin: 0 0 10px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
@@ -324,7 +339,7 @@
       <a class="sso-link" id="sso-github" href="/api/sso/github/start"><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Sign in with GitHub</a>
       <a class="sso-link" id="sso-entra" href="/api/sso/entra/start"><svg class="icon" aria-hidden="true"><use href="#i-microsoft"></use></svg>Sign in with Microsoft</a>
       <p class="notice">The first person to sign in is the administrator. Microsoft Entra is a work or school account.</p>
-      <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories.</p>
+      <p class="notice">An OAuth app only signs a person in. The GitHub App created from <a href="/github">GitHub</a> reads and scans repositories. When that app is installed, this timeline lists its workflow runs.</p>
       <form id="local-sign-in">
         <button type="submit" id="sign-in-local">Sign in on this computer</button>
         <p id="local-error" class="error" hidden></p>
@@ -363,6 +378,11 @@
   </section>
   <main hidden>
     <aside class="timeline">
+      <div class="builds" id="builds" hidden>
+        <h2><svg class="icon" aria-hidden="true"><use href="#i-github"></use></svg>Builds</h2>
+        <div id="build-list"></div>
+        <p id="build-error" class="error" hidden></p>
+      </div>
       <h2><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg>Scans</h2>
       <div id="scans"></div>
       <div class="later">
@@ -383,6 +403,7 @@
       findingScope: "",
       findingSort: "score",
       findingSortDescending: true,
+      builds: null,
     };
 
     function text(tag, value, className) {
@@ -443,6 +464,97 @@
         groups[index.get(key)].scans.push(scan);
       });
       return groups;
+    }
+
+    function safeHttpUrl(value) {
+      try {
+        const parsed = new URL(value, window.location.origin);
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") return parsed.href;
+      } catch (error) {
+        return "";
+      }
+      return "";
+    }
+
+    function renderBuilds() {
+      const root = document.getElementById("builds");
+      const list = document.getElementById("build-list");
+      const payload = state.builds;
+      list.replaceChildren();
+      if (!payload || !payload.connected) {
+        root.hidden = true;
+        return;
+      }
+      root.hidden = false;
+      if (payload.notice) {
+        const note = text("p", payload.notice, "empty");
+        const approval = safeHttpUrl(payload.approvalUrl || "");
+        if (approval) {
+          const link = document.createElement("a");
+          link.href = approval;
+          link.textContent = "Approve on GitHub";
+          note.append(document.createTextNode(" "), link);
+        }
+        list.append(note);
+      }
+      if (!payload.runs.length && !payload.notice) {
+        list.append(text("p", "No recent Checkstead workflow runs.", "empty"));
+      }
+      payload.runs.forEach((run) => {
+        const row = document.createElement("div");
+        row.className = "build";
+        const status = text("span", run.status, "build-status " + String(run.status || "").replace(" ", "-"));
+        const runUrl = safeHttpUrl(run.url || "");
+        if (runUrl) {
+          const link = document.createElement("a");
+          link.href = runUrl;
+          link.append(status);
+          row.append(link);
+        } else {
+          row.append(status);
+        }
+        row.append(text("strong", run.repository || run.name || "Workflow"));
+        if (run.pullRequest) {
+          const pull = document.createElement("a");
+          pull.href = safeHttpUrl(run.pullRequestUrl || "");
+          pull.textContent = "#" + run.pullRequest;
+          row.append(pull);
+        } else if (run.branch) {
+          row.append(text("span", run.branch, "meta-line"));
+        }
+        const rerun = document.createElement("button");
+        rerun.type = "button";
+        rerun.className = "quiet";
+        rerun.textContent = "Rerun";
+        rerun.addEventListener("click", () => rerunBuild(run, rerun));
+        row.append(rerun);
+        list.append(row);
+      });
+    }
+
+    async function loadBuilds() {
+      try {
+        state.builds = await api("/api/github/runs");
+      } catch (error) {
+        state.builds = {connected: false, runs: []};
+      }
+      renderBuilds();
+    }
+
+    async function rerunBuild(run, button) {
+      button.disabled = true;
+      showError("build-error", "");
+      try {
+        await api("/api/github/rerun", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({repository: run.repository, run: run.id}),
+        });
+        await loadBuilds();
+      } catch (error) {
+        showError("build-error", error.message);
+        button.disabled = false;
+      }
     }
 
     function renderTimeline() {
@@ -902,6 +1014,7 @@
         state.selected = state.history.scans[state.history.scans.length - 1].id;
       }
       renderTimeline();
+      renderBuilds();
       const scan = state.history.scans.find((item) => item.id === state.selected) || state.history.scans[0];
       const drift = state.history.drifts.find((item) => item.after === scan.id);
       if (drift) renderDrift(scan, drift);
@@ -985,6 +1098,7 @@
         state.selected = history.scans.length ? history.scans[history.scans.length - 1].id : null;
       }
       render();
+      await loadBuilds();
     }
 
     async function loadUsers() {
@@ -1150,6 +1264,11 @@
       showApp();
       await loadHistory();
     });
+
+    window.setInterval(() => {
+      if (document.querySelector("main").hidden) return;
+      loadBuilds();
+    }, 15000);
   </script>
 </body>
 </html>
