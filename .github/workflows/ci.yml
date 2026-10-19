@@ -93,7 +93,7 @@ jobs:
           severity: CRITICAL,HIGH
           scanners: vuln
 
-      - name: Fail on fixed Critical operating-system packages in the server image
+      - name: Fail on fixed High and Critical operating-system packages in the server image
         if: matrix.image == 'checkstead-server'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -102,7 +102,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           scanners: vuln
 
       - name: Fail on language packages outside the pinned engine
@@ -118,7 +118,7 @@ jobs:
           skip-dirs: /opt/dependency-check
           scanners: vuln
 
-      - name: Fail on fixed Critical operating-system packages in the scanner image
+      - name: Fail on fixed High and Critical operating-system packages in the scanner image
         if: matrix.image == 'checkstead'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -127,7 +127,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: os
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           scanners: vuln
 
       - name: Write the scanner image vulnerability report
@@ -207,8 +207,8 @@ jobs:
             type=sha,format=long,prefix=sha-
             type=ref,event=branch
             type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=engine-${{ steps.pin.outputs.version }},enable=${{ matrix.engine && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 

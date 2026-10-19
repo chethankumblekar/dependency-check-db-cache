@@ -33,6 +33,13 @@ function assertInside(value, label) {
   }
 }
 
+function hostUser() {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    return "";
+  }
+  return String(process.getuid()) + ":" + String(process.getgid());
+}
+
 function buildArgs(sources, inputs) {
   reject(sources, "sources");
   const image = inputs.image || DEFAULT_IMAGE;
@@ -44,9 +51,12 @@ function buildArgs(sources, inputs) {
   const output = relativeTo(sources, inputs.output || "checkstead-report");
   assertInside(scan, "scan");
   assertInside(output, "output");
-  const args = [
-    "run",
-    "--rm",
+  const args = ["run", "--rm"];
+  const user = hostUser();
+  if (user) {
+    args.push("--user", user);
+  }
+  args.push(
     "-v",
     sources + ":/work",
     "-w",
@@ -57,7 +67,7 @@ function buildArgs(sources, inputs) {
     scan,
     "--out",
     output,
-  ];
+  );
   if (inputs.project) {
     reject(inputs.project, "project");
     args.push("--project", inputs.project);

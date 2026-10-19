@@ -4,6 +4,10 @@
 set -euo pipefail
 
 tag=${1:?usage: move-release-tags.sh vMAJOR.MINOR.PATCH}
+if [[ "$tag" == *-rc.* ]]; then
+  echo "A release candidate does not move floating tags." >&2
+  exit 1
+fi
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 head=$(git rev-parse HEAD)

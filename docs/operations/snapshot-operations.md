@@ -85,19 +85,24 @@ environment.
 ## Signature
 
 `src/checkstead/snapshot_trust.json` is the trust root. It lists public keys
-and no private keys. The file in this revision has an empty `keys` list, so
-nothing is pinned and the publisher cannot produce a signature this client
-will accept until a maintainer adds one.
+and no private keys. The file in this revision has an empty `keys` list.
+Checksummed snapshots still scan, including ones the publisher has signed
+but this client cannot check yet. That signature is reported as `unsigned`.
+It is not a verified signature.
 
-To add a key:
+Do not pin a public key before a signed `db-YYYY-MM-DD` release exists.
+Pinning first turns `signature_required` on and refuses the unsigned caches
+already in use.
 
-1. On a machine that is not CI, run `openssl genpkey -algorithm ED25519 -out snapshot-signing-key.pem` and `openssl pkey -in snapshot-signing-key.pem -pubout`.
-2. Add the public PEM to `snapshot_trust.json` with a new `id`, `"status": "current"`, and no `notAfter`. Open a pull request. Do not commit the private PEM.
-3. Store the private PEM in the GitHub secret `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id in the repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID`. Only `update-snapshot.yml` receives them.
-4. The next new `db-YYYY-MM-DD` release is signed. Clients that have the pin verify it. An unsigned manifest is refused once any key is pinned, including a checksummed cache from before the pin. Publish the signed snapshot before you ship the pin, or leave the trust file empty.
-5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A client that does not know the key id refuses the signature. A retired key still verifies snapshots on or before `notAfter`. It cannot sign a new manifest.
+To sign, then pin:
 
-A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses an unsigned manifest even when the trust file is empty. Leave that variable unset, and leave the trust file empty, while published snapshots are unsigned. Existing offline scans of those checksummed snapshots keep working. Do not generate a production key in CI and do not commit a private key.
+1. On a machine that is not CI, run `openssl genpkey -algorithm ED25519 -out snapshot-signing-key.pem` and `openssl pkey -in snapshot-signing-key.pem -pubout`. Do not commit the private PEM and do not print it.
+2. Store the private PEM in the GitHub secret `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id in the repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID`. Only `update-snapshot.yml` receives them. Leave `snapshot_trust.json` empty.
+3. The next new `db-YYYY-MM-DD` release is signed. Clients with an empty trust file still accept it by checksum. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses that signature until the key is pinned.
+4. After that signed release exists, add the public PEM to `snapshot_trust.json` with that `id`, `"status": "current"`, and no `notAfter`. Clients that take the pin then verify the signature and refuse an unsigned manifest, including an older checksummed cache.
+5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A retired key still verifies snapshots on or before `notAfter`. It cannot sign a new manifest.
+
+A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. Leave `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE` unset, and leave the trust file empty, until a signed snapshot has been published and the matching public key is ready to pin. Do not commit a private key.
 
 ## Freshness
 
@@ -111,7 +116,7 @@ A scan prints `snapshot-freshness` and `snapshot-authenticity`.
 | `unavailable` | The manifest or zip could not be downloaded, and there is no usable cache for that UTC day. The scan stops. |
 | `cache=hit` | This UTC day's cached manifest was reused. The client did not download again, even if the release changed. |
 | `cache=fetched` | This scan downloaded the manifest and the zip. |
-| `unsigned` | No signature was present. This is the current published state. |
+| `unsigned` | No signature was verified. The trust file is empty, so a missing signature and a signature this client cannot check both land here. |
 | `signed key=<id>` | The pinned key verified the manifest. |
 
 `CHECKSTEAD_FAIL_STALE_SNAPSHOT=1` turns `stale` into a failure. The default leaves it as a warning so an offline scan of a verified cache still runs. To force a new download, remove `~/.cache/checkstead/<UTC date>/`. To publish a replacement for a bad day, delete that `db-YYYY-MM-DD` release only when you intend every later cache miss to see the new one. Caches that already verified the old zip keep it until the directory is removed.

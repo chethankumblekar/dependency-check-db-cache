@@ -32,12 +32,14 @@ loopback, which is how the tests serve fixtures.
 
 The database snapshot is integrity-checked against its manifest. That check
 does not prove a second party published the zip. If the manifest carries a
-signature, the client checks it against `src/checkstead/snapshot_trust.json`.
-That file pins no key yet, so current snapshots stay unsigned and a
-checksummed offline cache still scans. Pinning any public key, or setting
+signature and `src/checkstead/snapshot_trust.json` pins the key, the client
+verifies it. That file pins no key yet, so a checksummed snapshot still
+scans, including one the publisher has signed but this client cannot check.
+That result stays `unsigned`. Pinning any public key, or setting
 `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1`, refuses a manifest with no
-signature. A signature made by a key in this repository is the same publisher,
-not an independent one. Do not commit a private key.
+signature. Pin a key only after a signed snapshot release exists. A signature
+made by a key in this repository is the same publisher, not an independent
+one. Do not commit a private key.
 
 The Dependency-Check CLI zip is checked with the vendored release key in
 `scripts/keys/dependency-check-release.asc` before it is installed.

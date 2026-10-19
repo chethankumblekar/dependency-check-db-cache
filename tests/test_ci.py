@@ -69,6 +69,10 @@ class CiTests(TestCase):
         self.assertIn("vuln-type: os", ci)
         self.assertIn("severity: CRITICAL,HIGH", ci)
         self.assertIn("ignore-unfixed: true", ci)
+        self.assertIn("Fail on fixed High and Critical operating-system packages", ci)
+        self.assertNotRegex(ci, r"(?m)^[ ]+severity: CRITICAL$")
+        self.assertIn("type=semver,pattern={{version}},enable=${{ !contains(github.ref_name, '-') }}", ci)
+        self.assertIn("type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}", ci)
         self.assertRegex(
             ci,
             r"actions/attest-build-provenance@[0-9a-f]{40} # v\d",

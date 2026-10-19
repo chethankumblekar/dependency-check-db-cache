@@ -93,64 +93,42 @@ The publish job sets BuildKit `provenance: true` and `sbom: true`, then runs
 `actions/attest-build-provenance` on the pushed digest with
 `push-to-registry: true`. That input is not the action default. Without it,
 the statement is not attached to the image. `gh attestation verify` checks
-the GitHub attestation for that same digest. It has not run yet for the
-images below. Do not describe those images as verified by GitHub's
-attestation API.
+the GitHub attestation for that same digest.
 
-### What was checked on 19 October 2026
+### Digests to verify
 
-CI run [39260814721](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39260814721)
-published commit `b4606799145963d99f9837dbea953cf6dd3b77ae`. The registry
-accepted an anonymous pull. These commands were run from this workspace:
+Use the index digests from commit `c5b1707a34f7cbce1004fcee097e4b99f68ddb90`,
+publish run [39288176898](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39288176898).
+Do not move `:latest` or any other current tag back onto an older image.
 
 ```bash
-# Index digest recorded by that publish job.
-# checkstead        sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6
-# checkstead-server sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361
-
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272 \
   --repo chethankumblekar/dependency-check-db-cache
 
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7 \
   --repo chethankumblekar/dependency-check-db-cache
-
-python3 scripts/verify-published-images.py \
-  ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6 \
-  ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361
 ```
 
-`gh attestation verify` returned HTTP 404 for both digests. The GitHub
-attestation API has no statement for them. That check did not pass.
+Both commands exited 0 on 19 October 2026. Each statement is
+`https://slsa.dev/provenance/v1`, signed by `.github/workflows/ci.yml` on
+`refs/heads/main` for that commit. `python3 scripts/verify-published-images.py`
+on the same two digests also exited 0. The registry indexes include
+`https://spdx.dev/Document` and `https://slsa.dev/provenance/v1`.
 
-The same indexes do contain BuildKit attestation manifests. Reading the
-registry blobs showed:
-
-| Image index | Attached in-toto predicate types |
-| --- | --- |
-| `checkstead` `sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6` | `https://spdx.dev/Document`, `https://slsa.dev/provenance/v1` |
-| `checkstead-server` `sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361` | The same two predicate types, once for `linux/amd64` and once for `linux/arm64` |
-
-`python3 scripts/verify-published-images.py` on both digests exited 3. Each
-`gh attestation verify` exited 1 with HTTP 404. Exit 3 is not a pass.
+The images from run
+[39260814721](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39260814721)
+(`checkstead@sha256:0a3dc8ca37960361af32b69d3fc5495568495b777a193793ac9dd79287ced4f6`
+and `checkstead-server@sha256:5cace37da275c16fa02f60db1b3cb4b9c64202ee8aed480345f68d169c806361`)
+have no GitHub attestation. `gh attestation verify` on those digests returned
+HTTP 404. Do not republish them and do not point a current tag at them.
+Their registry indexes do have BuildKit SPDX and SLSA predicates.
+`scripts/verify-published-images.py` exited 3 for them. Exit 3 is not a pass.
 
 `scripts/verify-published-images.py` exits 0 only when both the registry
-predicates and `gh attestation verify` succeed. Exit 3 means the registry
-predicates are present and the GitHub API check did not succeed. Record the
-exit code. Do not call exit 3 a pass.
-
-After the next default-branch publish, the new digest should verify with:
-
-```bash
-gh attestation verify \
-  "oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:<digest>" \
-  --repo chethankumblekar/dependency-check-db-cache
-```
-
-The signer workflow for that statement is the reusable
-`actions/attest-build-provenance` workflow, not `ci.yml` by itself. Pin the
-digest from the publish log. A moving tag such as `latest` is not that pin.
+predicates and `gh attestation verify` succeed. Pin the digest above. A
+moving tag such as `latest` is not that pin.
 
 ## Permissions
 

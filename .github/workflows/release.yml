@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
 
 permissions:
   contents: write
@@ -42,16 +43,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -c 'import os; from checkstead.release import release_notes; open(os.environ["RUNNER_TEMP"] + "/notes.md", "w", encoding="utf-8").write(release_notes(os.environ["TAG"]))'
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          if [[ "$TAG" == *-rc.* ]]; then
+            title="Checkstead $TAG (release candidate)"
+            flags=(--prerelease --latest=false)
           else
-            gh release create "$TAG" --title "Checkstead $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            title="Checkstead $TAG"
+            flags=()
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$title" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+          else
+            gh release create "$TAG" --title "$title" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
           fi
 
       - name: Move the major and minor tags
+        if: ${{ !contains(github.ref_name, '-rc.') }}
         run: bash ./scripts/move-release-tags.sh "${{ github.ref_name }}"
 
       - name: Package the Azure DevOps extension
+        if: ${{ !contains(github.ref_name, '-rc.') }}
         env:
           TAG: ${{ github.ref_name }}
           AZURE_MARKETPLACE_PUBLISHER: ${{ vars.AZURE_MARKETPLACE_PUBLISHER }}
@@ -63,12 +73,14 @@ jobs:
           python3 scripts/package-azure-extension.py "${args[@]}"
 
       - name: Attach the extension to the release
+        if: ${{ !contains(github.ref_name, '-rc.') }}
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" build/checkstead.vsix --clobber
 
       - name: Publish to the Azure DevOps Marketplace
+        if: ${{ !contains(github.ref_name, '-rc.') }}
         env:
           AZURE_MARKETPLACE_TOKEN: ${{ secrets.AZURE_MARKETPLACE_TOKEN }}
           AZURE_MARKETPLACE_PUBLISHER: ${{ vars.AZURE_MARKETPLACE_PUBLISHER }}
