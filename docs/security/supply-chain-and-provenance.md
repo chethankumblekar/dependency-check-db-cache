@@ -97,25 +97,40 @@ the GitHub attestation for that same digest.
 
 ### Digests to verify
 
-Use the index digests from commit `c5b1707a34f7cbce1004fcee097e4b99f68ddb90`,
-publish run [39288176898](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39288176898).
-Do not move `:latest` or any other current tag back onto an older image.
+Use the index digests from commit `f3731b37f3033191eda7d6211de8e51f94dfc79f`,
+publish run [39297714215](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39297714215).
+`:latest` on that run is this pair. Do not move `:latest` back onto an older image.
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:063cde562cec605672518f5951af861b512b8df08b7f2096b930b89bb92cb740 \
   --repo chethankumblekar/dependency-check-db-cache
 
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744 \
   --repo chethankumblekar/dependency-check-db-cache
 ```
 
 Both commands exited 0 on 19 October 2026. Each statement is
 `https://slsa.dev/provenance/v1`, signed by `.github/workflows/ci.yml` on
-`refs/heads/main` for that commit. `python3 scripts/verify-published-images.py`
+`refs/heads/main` for commit `f3731b3`. `python3 scripts/verify-published-images.py`
 on the same two digests also exited 0. The registry indexes include
-`https://spdx.dev/Document` and `https://slsa.dev/provenance/v1`.
+`https://spdx.dev/Document` and `https://slsa.dev/provenance/v1`. The server
+index lists those predicates twice, once per platform.
+
+The release candidate `v0.1.1-rc.1` is the same commit and a different build.
+Its images are `checkstead@sha256:5e73042dd6b27baa4bbd541b8a7c00714676fb5d1e1bd0534301580a612c414f`
+and `checkstead-server@sha256:df7ebe075c05a0e0a28d2452691c4260988dd924da097abe70627ae8f190b146`.
+`gh attestation verify` and `scripts/verify-published-images.py` exited 0 on
+both. That tag did not publish `latest` or a floating minor tag. The GitHub
+release is a pre-release:
+[v0.1.1-rc.1](https://github.com/chethankumblekar/dependency-check-db-cache/releases/tag/v0.1.1-rc.1).
+
+The previous default-branch images, from commit `c5b1707` and run
+[39288176898](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39288176898),
+still verify: `checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272`
+and `checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7`.
+They are not `:latest`.
 
 The images from run
 [39260814721](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39260814721)

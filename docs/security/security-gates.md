@@ -102,20 +102,35 @@ does not hide the findings from the `trivy-scanner` report.
 | Why it cannot be fixed here | `engine.version` stays 13.0.0. These jars ship inside that Dependency-Check release. Clearing them would mean changing the engine pin without a release-note and snapshot compatibility check, or adding a suppression file. Neither is a fix. |
 | Review | 2027-01-19. Remove this exception earlier if a Dependency-Check release keeps the snapshot format and replaces these jars. |
 
-The published server image
-`ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7`
-has no fixed High or Critical operating-system finding, so that gate exits 0.
-A report with `ignore-unfixed: false` still lists unfixed findings, including
-Critical `CVE-2025-7458` in `libsqlite3-0` (status `affected`, no fixed
-version) and Critical `CVE-2023-45853` in `zlib1g` (status `will_not_fix`).
-Those stay visible and do not fail the job. There is no suppression entry.
-Review them on 2027-01-19, or earlier if the server base image publishes a
-fix. The published scanner digest
-`sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272`
-fails the fixed High operating-system gate: OpenSSL and `libssl3t64`
-3.0.13-0ubuntu3.5, `CVE-2026-45447` and `CVE-2026-84782`. That digest is not
-rebuilt. The candidate image uses `eclipse-temurin:25-jre-noble` and the
-same gate on `checkstead:local` exits 0.
+Exception `unfixed-os-2026-10-19` is the operating-system gate's
+`ignore-unfixed: true`. It is written next to that step in
+`.github/workflows/ci.yml` and in `scripts/scan-images.sh`.
+
+| Field | Value |
+| --- | --- |
+| Findings | Unfixed operating-system packages. On `checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744` this is 61 High findings and 2 Critical findings: `CVE-2025-7458` in `libsqlite3-0` (status `affected`, no fixed version) and `CVE-2023-45853` in `zlib1g` (status `will_not_fix`, no fixed version). |
+| Scope | Server and scanner image OS packages that have no fixed version. A fixed High or Critical OS package still fails the job. |
+| Why it cannot be fixed here | Debian has not published a fixed version for these packages. Failing the job would not point at a package upgrade. |
+| Review | 2027-01-19. If a fixed version appears before then, `ignore-unfixed: true` makes that finding fail the build. Do not add a `.trivyignore` entry for these CVEs. |
+
+The published server image from commit `f3731b3`,
+`ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744`,
+has no fixed High or Critical operating-system finding. That gate exited 0.
+A report with `ignore-unfixed: false` still lists 61 High and 2 Critical
+unfixed findings, including Critical `CVE-2025-7458` in `libsqlite3-0`
+(status `affected`, no fixed version) and Critical `CVE-2023-45853` in
+`zlib1g` (status `will_not_fix`). Those stay visible and do not fail the job.
+There is no suppression entry. Review them on 2027-01-19, or earlier if the
+server base image publishes a fix.
+
+The published scanner digest from the same commit,
+`sha256:063cde562cec605672518f5951af861b512b8df08b7f2096b930b89bb92cb740`,
+exited 0 on the fixed High and Critical operating-system gate and on the
+language-package gate outside `/opt/dependency-check`. The full report still
+lists the six High Dependency-Check jar findings above. The older scanner
+digest `sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272`
+fails that operating-system gate on OpenSSL `3.0.13-0ubuntu3.5`
+(`CVE-2026-45447` and `CVE-2026-84782`). That digest was not rebuilt.
 
 `scripts/rollback-image.sh` pulls one image by digest. It refuses a reference
 that names `:latest` or that is not `image@sha256:<64 hex>`. It does not tag

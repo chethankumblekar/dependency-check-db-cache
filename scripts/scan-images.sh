@@ -5,7 +5,10 @@
 # Gates, matching .github/workflows/ci.yml:
 #   language packages at HIGH or CRITICAL fail (scanner skips /opt/dependency-check)
 #   fixed operating-system HIGH and CRITICAL findings fail
-#   unfixed operating-system findings do not fail
+#   Exception unfixed-os-2026-10-19, review 2027-01-19: unfixed OS findings
+#   do not fail. Scope is packages with no fixed version, including
+#   CVE-2025-7458 and CVE-2023-45853 on the server image. This is not a
+#   .trivyignore file. A fixed High or Critical OS package still fails.
 # The full scanner report, including the pinned engine jars, is written and
 # does not fail this script. There is no .trivyignore.
 set -euo pipefail
