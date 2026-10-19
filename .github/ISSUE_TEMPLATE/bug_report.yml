@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in Checkstead does not do what the documentation says.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe a defect in Checkstead. Do not include an NVD API key, a private suppression file, or any other secret.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what Checkstead did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Checkstead version
+      description: The output of `checkstead version`, or the commit you built.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where it happened
+      options:
+        - checkstead scan
+        - Timeline
+        - GitHub App
+        - GitHub Action
+        - Maven
+        - Gradle
+        - Azure DevOps
+        - Snapshot updater
+    validations:
+      required: true

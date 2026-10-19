@@ -9,16 +9,19 @@ https://github.com/chethankumblekar/dependency-check-db-cache/security/advisorie
 You can also email chethan.kumblekar@ascertra.com. Please do not open a public
 issue for an unpublished vulnerability in this project.
 
-Questions about a CVE score, a CPE match, or NVD enrichment belong with NVD, the
-CVE Numbering Authority, or the analyzer that produced them. Checkstead does not
-assign those identifiers.
+Include the Checkstead version or commit, the command you ran, and the impact
+you can already see. The engine pin from `checkstead version`, and whether the
+scan used the public snapshot or a manifest you host, are useful. Do not include
+an NVD API key, a private suppression file, a GitHub App private key, an OAuth
+client secret, or a session cookie.
 
-## What a report should include
+The maintainer reviews the report and coordinates a fix before any public
+discussion. There is no bug-bounty program.
 
-The version or commit you ran, the engine pin from `checkstead version`, and
-whether the scan used the public snapshot or a manifest you host. Do not include
-`NVD_API_KEY`, a GitHub App private key, an OAuth client secret, a session
-cookie, or a private suppression file.
+This policy covers Checkstead: the scan command, the timeline server, the
+GitHub App integration, and the published images. Questions about a CVE score,
+a CPE match, or NVD enrichment belong with NVD, the CVE Numbering Authority, or
+the analyzer that produced them. Checkstead does not assign those identifiers.
 
 ## Boundaries
 
