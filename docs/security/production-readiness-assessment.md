@@ -286,4 +286,10 @@ it does not call Checkstead production-ready.
 - CI installs `.[dev]` and checks action pin format instead of a frozen SHA.
 - The server image has a health check for `/api/health`. The scanner image
   removes pip, curl, and unzip after the build. Neither image was built in
-  this workspace when `docker` was absent. Do not treat that as a scan.
+  this workspace: `docker` is absent and `scripts/scan-images.sh` exited 2.
+  Pull request run
+  [39277737619](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39277737619)
+  built both images. The failing Trivy steps on that run succeeded. The
+  report-only scanner artifact still lists four fixed High operating-system
+  findings in OpenSSL and six High findings in Dependency-Check jars. Those
+  are outside the failing gates and are not suppressed.
