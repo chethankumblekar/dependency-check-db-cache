@@ -8,12 +8,25 @@ RUN apt-get update \
         ca-certificates \
         curl \
         unzip \
+        gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY engine.version /tmp/engine.version
 COPY scripts/install-engine.sh /tmp/install-engine.sh
-RUN ENGINE_VERSION_FILE=/tmp/engine.version bash /tmp/install-engine.sh /opt/dependency-check \
-    && rm /tmp/install-engine.sh /tmp/engine.version
+COPY scripts/keys/dependency-check-release.asc /tmp/dependency-check-release.asc
+COPY src/checkstead/archive.py /tmp/archive.py
+RUN ENGINE_VERSION_FILE=/tmp/engine.version \
+    ENGINE_PUBLIC_KEY=/tmp/dependency-check-release.asc \
+    CHECKSTEAD_ARCHIVE=/tmp/archive.py \
+    bash /tmp/install-engine.sh /opt/dependency-check \
+    && rm -f /tmp/install-engine.sh /tmp/engine.version /tmp/archive.py /tmp/dependency-check-release.asc \
+    && apt-get purge -y gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# The scanner process stays root. The documented command is
+# docker run -v "$PWD:/work" -w /work, and that mount is owned by the host
+# user. A fixed non-root USER fails that command when the mount is not
+# writable by the image user. See docs/security/threat-model.md.
 
 COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src

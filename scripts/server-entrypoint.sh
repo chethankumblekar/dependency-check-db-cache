@@ -12,6 +12,7 @@ case "$scans" in
 esac
 if [ "${CHECKSTEAD_LOCAL:-1}" = "1" ]; then
   export CHECKSTEAD_LOCAL=1
+  echo "checkstead: CHECKSTEAD_LOCAL=1 lets any client that can reach this port become the first administrator. Publish 127.0.0.1:8765:8765, or set CHECKSTEAD_LOCAL=0." >&2
 else
   export CHECKSTEAD_LOCAL
 fi

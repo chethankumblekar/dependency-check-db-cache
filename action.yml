@@ -120,7 +120,7 @@ runs:
       run: python3 "$GITHUB_ACTION_PATH/scripts/pr-comment.py"
     - name: Upload SARIF
       if: always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
       with:
         sarif_file: ${{ inputs.output }}/checkstead.sarif
         category: checkstead

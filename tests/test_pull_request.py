@@ -464,7 +464,10 @@ class PullRequestCompareTests(TestCase):
         self.assertIn("GITHUB_SHA", entry)
         self.assertIn("--revision", entry)
         self.assertNotIn("source.txt", entry)
-        self.assertIn("github/codeql-action/upload-sarif@v3", action)
+        self.assertIn(
+            "github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311",
+            action,
+        )
         self.assertIn("branch:", readme)
         self.assertIn("description:", readme)
         self.assertNotIn("NVD_API_KEY", action)

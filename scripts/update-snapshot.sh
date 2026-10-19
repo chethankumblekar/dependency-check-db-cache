@@ -69,8 +69,36 @@ python3 -m checkstead write-manifest \
   --out "${WORK}/manifest.json" \
   --time "$SNAPSHOT_TIME"
 
+if [[ ! -s "${WORK}/checkstead-db.zip" ]]; then
+  echo "Refusing to publish an empty database zip." >&2
+  exit 1
+fi
+
 sha256sum "${WORK}/checkstead-db.zip" > "${WORK}/checkstead-db.zip.sha256"
 CHECKSUM=$(cut -d ' ' -f 1 "${WORK}/checkstead-db.zip.sha256")
+
+SNAPSHOT_ZIP="${WORK}/checkstead-db.zip" \
+SNAPSHOT_MANIFEST="${WORK}/manifest.json" \
+SNAPSHOT_SHA="${WORK}/checkstead-db.zip.sha256" \
+python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "src")
+from checkstead.snapshot import parse_manifest, sha256_file
+
+zip_path = Path(os.environ["SNAPSHOT_ZIP"])
+manifest = parse_manifest(Path(os.environ["SNAPSHOT_MANIFEST"]).read_text(encoding="utf-8"))
+actual = sha256_file(zip_path)
+if actual != manifest["checksum"]:
+    print("Refusing to publish. The manifest checksum does not match the zip.", file=sys.stderr)
+    sys.exit(1)
+recorded = Path(os.environ["SNAPSHOT_SHA"]).read_text(encoding="utf-8").split()[0]
+if recorded != actual:
+    print("Refusing to publish. The checksum file does not match the zip.", file=sys.stderr)
+    sys.exit(1)
+PY
 
 cat > "${WORK}/notes.md" <<EOF
 Dependency-Check ${VERSION}

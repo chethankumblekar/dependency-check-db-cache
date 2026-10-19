@@ -13,15 +13,26 @@ from checkstead.errors import RefusedHost
 
 USER_AGENT = f"checkstead/{__version__}"
 BLOCKED_HOSTS = frozenset({"services.nvd.nist.gov"})
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 READ_TIMEOUT_SECONDS = 120
 
 
 def ensure_allowed(url: str) -> None:
-    """Reject the NVD API host before any connection to it."""
+    """Reject the NVD API host, and cleartext HTTP to anything but loopback.
+
+    Tests serve fixtures on 127.0.0.1. A published snapshot is https. file://
+    is not a download location this client accepts.
+    """
     parsed = urlparse(url)
-    if parsed.scheme not in {"https", "http", "file"}:
+    if parsed.scheme not in {"https", "http"}:
         raise RefusedHost(f"Refusing URL scheme '{parsed.scheme or ''}'.")
+    if parsed.username or parsed.password:
+        raise RefusedHost("Refusing a URL that contains userinfo.")
     host = (parsed.hostname or "").rstrip(".").lower()
+    if parsed.scheme == "http" and host not in LOOPBACK_HOSTS:
+        raise RefusedHost(
+            "Refusing cleartext HTTP except to localhost. Use an https snapshot URL."
+        )
     if host in BLOCKED_HOSTS:
         raise RefusedHost(
             "Refusing to contact services.nvd.nist.gov. "
