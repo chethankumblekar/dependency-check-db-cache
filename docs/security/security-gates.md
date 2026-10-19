@@ -35,6 +35,10 @@ failing language-package scan. It is not a CVE id exception.
 
 `scripts/scan-images.sh` runs the same gates locally. It exits 2 when
 `docker` or `trivy` is not installed. That exit means the scan did not run.
+On 19 October 2026 that local command exited 2. The same gates then ran in
+pull request
+[39263737597](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39263737597)
+and the image jobs succeeded.
 
 ## Push and workflow dispatch
 

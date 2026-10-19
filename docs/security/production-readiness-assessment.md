@@ -185,8 +185,11 @@ because it would make a previously valid offline scan depend on the network.
 - The scanner-image report of Dependency-Check jars stays `exit-code: "0"`.
   The failing language-package gate skips `/opt/dependency-check`. Fixed
   Critical operating-system findings fail both images. Unfixed operating-system
-  findings do not, and they are not listed in a `.trivyignore`. This policy
-  has not been executed here: `docker` and `trivy` are not installed.
+  findings do not, and they are not listed in a `.trivyignore`. `docker` and
+  `trivy` are not installed in this workspace (`scripts/scan-images.sh`
+  exited 2). Pull request run
+  [39263737597](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39263737597)
+  on commit `8b73a6a` ran those gates and the image jobs succeeded.
 - Image provenance for commit `b460679` was inspected. BuildKit attached SPDX
   and SLSA provenance to the scanner index. `gh attestation verify` returned
   HTTP 404 for both image digests. That GitHub check did not pass. The publish
