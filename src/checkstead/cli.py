@@ -55,7 +55,18 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         print("engine-file: unset")
     print(f"cache: {default_cache_dir()}")
     print(f"data: {data or 'unset'}")
-    print(f"local-sign-in: {local or 'unset'}")
+    if local == "1":
+        local_mode = "any-peer"
+    elif local == "0":
+        local_mode = "disabled"
+    else:
+        local_mode = "loopback-peer"
+    print(f"local-sign-in: {local or 'unset'} ({local_mode})")
+    from checkstead.snapshot import max_snapshot_age_days
+    from checkstead.snapshot_auth import load_trust
+
+    print(f"snapshot-trust-keys: {len(load_trust().keys)}")
+    print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
     for name in (
         "CHECKSTEAD_GITHUB_CLIENT_SECRET",

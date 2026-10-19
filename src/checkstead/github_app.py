@@ -9,6 +9,7 @@ a log line, or an error.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -46,7 +47,25 @@ _STAMP = re.compile(r"^[0-9T:Z.+\-]{10,40}$")
 
 
 def localhost_client(host: str) -> bool:
-    return host in {"127.0.0.1", "::1"}
+    """True when the TCP peer address is on the loopback interface.
+
+    A hostname, a Host header, or an address a client typed is not a peer.
+    IPv4-mapped loopback (``::ffff:127.0.0.1``) is loopback. Other mapped
+    addresses are not.
+    """
+    text = host.strip()
+    if text.startswith("[") and "]" in text:
+        text = text[1 : text.index("]")]
+    if "%" in text:
+        text = text.split("%", 1)[0]
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return bool(address.is_loopback)
 
 
 def normalize_org(organization: str) -> str:

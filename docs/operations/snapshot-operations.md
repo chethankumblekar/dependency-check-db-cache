@@ -20,7 +20,12 @@ The job checks out this repository, installs the pinned engine, and runs
    `checkstead-db.zip.sha256`.
 6. Refuse to publish when the zip is empty or the manifest checksum does not
    match the zip.
-7. `gh release create db-YYYY-MM-DD --latest` with the manifest, the zip, and
+7. If `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and `CHECKSTEAD_SNAPSHOT_KEY_ID`
+   are set, sign the manifest with that Ed25519 key. The key id must be a
+   `current` key in `src/checkstead/snapshot_trust.json`, and the private key
+   must match the pinned public key. The private key is not written into the
+   release. If those variables are unset, the manifest stays unsigned.
+8. `gh release create db-YYYY-MM-DD --latest` with the manifest, the zip, and
    the checksum file.
 
 The workflow concurrency group is `checkstead-snapshot` with
@@ -77,16 +82,38 @@ environment.
 | Engine is missing or not executable | The scan stops before analysis. |
 | Dependency-Check exits non-zero | Checkstead exits with that status. It does not turn the failure into a pass. |
 
+## Signature
+
+`src/checkstead/snapshot_trust.json` is the trust root. It lists public keys
+and no private keys. The file in this revision has an empty `keys` list, so
+nothing is pinned and the publisher cannot produce a signature this client
+will accept until a maintainer adds one.
+
+To add a key:
+
+1. On a machine that is not CI, run `openssl genpkey -algorithm ED25519 -out snapshot-signing-key.pem` and `openssl pkey -in snapshot-signing-key.pem -pubout`.
+2. Add the public PEM to `snapshot_trust.json` with a new `id`, `"status": "current"`, and no `notAfter`. Open a pull request. Do not commit the private PEM.
+3. Store the private PEM in the GitHub secret `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id in the repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID`. Only `update-snapshot.yml` receives them.
+4. The next new `db-YYYY-MM-DD` release is signed. Clients that have the pin verify it. Older unsigned snapshots stay usable.
+5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A client that does not know the key id refuses the signature.
+
+A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses an unsigned manifest. Leave it unset while the trust file is empty, or every scan fails closed.
+
 ## Freshness
 
-A snapshot is "current" when it is the release tagged for that UTC day and
-marked latest. A consumer that already cached an earlier manifest today keeps
-it. That favors repeatability over picking up a republish. To force a new
-download, remove the day directory. To publish a replacement for a bad day,
-delete that `db-YYYY-MM-DD` release only when you intend every later cache
-miss to see the new one. Caches that already verified the old zip keep it
-until the directory is removed.
+A scan prints `snapshot-freshness` and `snapshot-authenticity`.
 
-Offline use of a verified cache does not contact GitHub or the NVD. Do not
-add a maximum age that fails those scans unless you also keep a way to run
-with the cache you already verified.
+| Status | Meaning |
+| --- | --- |
+| `current` | Manifest time is the scan's UTC day or one day older. |
+| `aging` | Older than one day, and not past `CHECKSTEAD_SNAPSHOT_MAX_AGE_DAYS` (default 7). |
+| `stale` | Older than that maximum. The scan warns and continues. |
+| `unavailable` | The manifest or zip could not be downloaded, and there is no usable cache for that UTC day. The scan stops. |
+| `cache=hit` | This UTC day's cached manifest was reused. The client did not download again, even if the release changed. |
+| `cache=fetched` | This scan downloaded the manifest and the zip. |
+| `unsigned` | No signature was present. This is the current published state. |
+| `signed key=<id>` | The pinned key verified the manifest. |
+
+`CHECKSTEAD_FAIL_STALE_SNAPSHOT=1` turns `stale` into a failure. The default leaves it as a warning so an offline scan of a verified cache still runs. To force a new download, remove `~/.cache/checkstead/<UTC date>/`. To publish a replacement for a bad day, delete that `db-YYYY-MM-DD` release only when you intend every later cache miss to see the new one. Caches that already verified the old zip keep it until the directory is removed.
+
+Offline use of a verified cache does not contact GitHub or the NVD.

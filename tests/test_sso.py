@@ -220,9 +220,64 @@ class SsoTests(TestCase):
         os.environ.pop("CHECKSTEAD_ENTRA_CLIENT_ID", None)
         os.environ.pop("CHECKSTEAD_ENTRA_CLIENT_SECRET", None)
         self.assertFalse(_local_sign_in("172.17.0.1", "172.17.0.1:8765"))
-        self.assertTrue(_local_sign_in("172.17.0.1", "127.0.0.1:8765"))
+        self.assertFalse(_local_sign_in("172.17.0.1", "127.0.0.1:8765"))
         os.environ["CHECKSTEAD_LOCAL"] = "1"
         self.assertTrue(_local_sign_in("172.17.0.1", "172.17.0.1:8765"))
+        os.environ.pop("CHECKSTEAD_LOCAL", None)
+
+    def test_host_and_forwarded_headers_are_not_a_local_peer(self) -> None:
+        self.addCleanup(os.environ.pop, "CHECKSTEAD_LOCAL", None)
+        os.environ.pop("CHECKSTEAD_LOCAL", None)
+        remote = "172.17.0.1"
+        self.assertFalse(_local_sign_in(remote, "127.0.0.1:8765"))
+        self.assertFalse(_local_sign_in(remote, "localhost"))
+        self.assertFalse(_local_sign_in(remote, "localhost:8765"))
+        self.assertFalse(_local_sign_in(remote, "[::1]:8765"))
+        self.assertFalse(_local_sign_in("10.0.0.8", "127.0.0.1:8765", "127.0.0.1"))
+        self.assertFalse(_local_sign_in("192.168.1.20", "localhost", "127.0.0.1", "for=127.0.0.1", "127.0.0.1"))
+        self.assertTrue(_local_sign_in("127.0.0.1", "172.17.0.1:8765", "10.0.0.8", "for=10.0.0.8", "10.0.0.8"))
+        self.assertTrue(_local_sign_in("::1", "evil.example"))
+        self.assertTrue(_local_sign_in("::ffff:127.0.0.1", "localhost"))
+        self.assertTrue(_local_sign_in("127.0.0.2", ""))
+        self.assertFalse(_local_sign_in("::ffff:10.0.0.8", "127.0.0.1"))
+        self.assertFalse(_local_sign_in("localhost", "localhost"))
+        os.environ["CHECKSTEAD_LOCAL"] = "1"
+        self.assertTrue(_local_sign_in("172.17.0.1", "not-local"))
+        os.environ["CHECKSTEAD_LOCAL"] = "0"
+        self.assertFalse(_local_sign_in("127.0.0.1", "127.0.0.1:8765", "127.0.0.1", "for=127.0.0.1", "127.0.0.1"))
+        self.assertFalse(_local_sign_in("::1", "localhost"))
+        self.assertFalse(_local_sign_in("172.17.0.1", "127.0.0.1:8765"))
+        os.environ.pop("CHECKSTEAD_LOCAL", None)
+
+        status, body, _headers = self.open("/api/sso")
+        payload = json.loads(body)
+        self.assertTrue(payload["local"]["enabled"])
+        request = urllib.request.Request(
+            self.base + "/api/session/local",
+            data=b"{}",
+            method="POST",
+            headers={
+                "Host": "172.17.0.1:8765",
+                "X-Forwarded-For": "10.1.2.3",
+                "X-Real-IP": "10.1.2.3",
+                "Forwarded": "for=10.1.2.3",
+            },
+        )
+        with self.opener.open(request) as response:
+            self.assertEqual(response.status, 200)
+
+        os.environ["CHECKSTEAD_LOCAL"] = "0"
+        status, body, _headers = self.open("/api/sso")
+        self.assertFalse(json.loads(body)["local"]["enabled"])
+        denied = urllib.request.Request(
+            self.base + "/api/session/local",
+            data=b"{}",
+            method="POST",
+            headers={"Host": "127.0.0.1:8765", "X-Forwarded-For": "127.0.0.1"},
+        )
+        with self.opener.open(denied) as response:
+            self.assertEqual(response.status, 403)
+            self.assertIn(b"localhost", response.read())
         os.environ.pop("CHECKSTEAD_LOCAL", None)
 
     def test_sso_stays_off_until_the_app_is_configured(self) -> None:

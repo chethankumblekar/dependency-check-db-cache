@@ -100,10 +100,53 @@ if recorded != actual:
     sys.exit(1)
 PY
 
+# The private key is a repository secret. It is not written into the release.
+# With no key configured, the snapshot stays unsigned and the client records that.
+AUTH_NOTE="Unsigned. Integrity is the manifest checksum. No snapshot signing key is configured for this run."
+if [[ -n "${CHECKSTEAD_SNAPSHOT_SIGNING_KEY:-}" ]]; then
+  if [[ -z "${CHECKSTEAD_SNAPSHOT_KEY_ID:-}" ]]; then
+    echo "Refusing to publish. CHECKSTEAD_SNAPSHOT_KEY_ID is required when the signing key is set." >&2
+    exit 1
+  fi
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "Refusing to publish. openssl is required to sign the snapshot." >&2
+    exit 1
+  fi
+  SIGNED_MANIFEST="${WORK}/manifest.json" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "src")
+from checkstead.errors import ChecksteadError
+from checkstead.snapshot import parse_manifest
+from checkstead.snapshot_auth import load_trust, sign_manifest
+
+path = Path(os.environ["SIGNED_MANIFEST"])
+manifest = parse_manifest(path.read_text(encoding="utf-8"))
+try:
+    signed = sign_manifest(
+        manifest,
+        os.environ["CHECKSTEAD_SNAPSHOT_SIGNING_KEY"],
+        os.environ["CHECKSTEAD_SNAPSHOT_KEY_ID"],
+        load_trust(),
+    )
+except ChecksteadError as exc:
+    print(f"Refusing to publish. {exc}", file=sys.stderr)
+    sys.exit(1)
+path.write_text(json.dumps(signed, indent=2) + "\n", encoding="utf-8")
+print(f"signature: {signed['signature']['keyId']}")
+PY
+  AUTH_NOTE="Signed with the key id in manifest.json. The public key is pinned in this repository. This is not a second publisher."
+fi
+
 cat > "${WORK}/notes.md" <<EOF
 Dependency-Check ${VERSION}
 Snapshot ${SNAPSHOT_TIME}
 Checksum sha256:${CHECKSUM}
+${AUTH_NOTE}
 
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 EOF

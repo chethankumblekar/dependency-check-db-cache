@@ -201,7 +201,7 @@ flowchart TB
   end
 ```
 
-Pushing this repository runs [CI](.github/workflows/ci.yml). That workflow lints, builds, and tests. After those pass, it publishes the scanner image and the server image. A pull request builds the images and does not push them.
+Pushing the default branch, or a `v*` tag, runs [CI](.github/workflows/ci.yml). That workflow lints, builds, and tests. After those pass, it publishes the scanner image and the server image. A pull request builds the images and does not push them. A push of any other branch does not publish either.
 
 | Path | Role |
 | --- | --- |
@@ -336,13 +336,19 @@ docker build -t checkstead .
 docker run --rm -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-The scanner image runs as root so this mounted-directory command can write the report. The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push publishes them and asks GitHub for build provenance and an image SBOM. This repository does not treat those attestations as verified until a publish job has run. Pin a published image by its digest when you need a fixed build:
+The scanner image runs as root by default so this mounted-directory command can write the report. The same image has a `checkstead` user, uid 10001. When the report should be owned by you, pass your uid. The entrypoint creates a writable home and cache for that uid:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
+```
+
+The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. The publish job also asks GitHub for an attestation that `gh attestation verify` can check. Images published before that step exist, and `gh attestation verify` of those digests returned HTTP 404 on 19 October 2026. The commands and the digests are in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md). Pin a published image by its digest when you need a fixed build:
 
 ```bash
 docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
 ```
 
-[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, and only on a push. A pull request builds the images and does not push.
+[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push.
 
 | Image | What it is |
 | --- | --- |
@@ -351,8 +357,8 @@ docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/chethankumblekar/depe
 
 | Tag | When it is published |
 | --- | --- |
-| `sha-<commit>` | Every push. The commit is the full git SHA, so this tag stays on that build. |
-| `<branch>` | Pushes to that branch. The default branch tag is `main`. |
+| `sha-<commit>` | Default-branch pushes and version tags. The commit is the full git SHA, so this tag stays on that build. |
+| `main` | Pushes to the default branch. Other branches are not published. |
 | `latest` | Pushes to the default branch. |
 | `engine-13.0.0` | Pushes to the default branch, scanner image only. The number is the pin in `engine.version`. |
 | `0.1.0`, `0.1`, and `v0.1.0` | A git tag named `v0.1.0`. |
@@ -509,7 +515,7 @@ PYTHONPATH=src python3 -m checkstead ui
 
 Open http://127.0.0.1:8765/. Accounts are stored under `~/.local/share/checkstead`, or in the directory you pass with `--data`.
 
-The container is the same server. `Dockerfile.server` listens on every interface inside the container and turns localhost sign-in on. Docker cannot publish a port to a process that listens only on the container's loopback, so the process binds `0.0.0.0` and the published port in [`docker-compose.yml`](docker-compose.yml) is `127.0.0.1:8765`. With `CHECKSTEAD_LOCAL=1`, any client that can open that port can become the first administrator. Keep the host binding on `127.0.0.1`, or set `CHECKSTEAD_LOCAL=0` and use GitHub or Entra sign-in. The server prints that warning when it listens beyond loopback.
+The container is the same server. `Dockerfile.server` listens on every interface inside the container and turns localhost sign-in on. Docker cannot publish a port to a process that listens only on the container's loopback, so the process binds `0.0.0.0` and the published port in [`docker-compose.yml`](docker-compose.yml) is `127.0.0.1:8765`. Inside the container the browser's connection arrives from the Docker bridge, not from `127.0.0.1`. `CHECKSTEAD_LOCAL=1` is what makes that connection count. It trusts every client that can open the port, and the `local` account is one shared administrator. Keep the host binding on `127.0.0.1`. For a remote server, set `CHECKSTEAD_LOCAL=0` and use GitHub or Entra sign-in. That setting disables localhost sign-in entirely, including a proxy that connects from loopback. A `Host` or `X-Forwarded-For` header is not treated as the client address. The server prints a warning when `CHECKSTEAD_LOCAL=1` and it listens beyond loopback.
 
 ```bash
 docker build -f Dockerfile.server -t checkstead-server .
@@ -525,7 +531,7 @@ docker run --rm -p 127.0.0.1:8765:8765 -v checkstead-data:/var/lib/checkstead -v
 
 ### Optional GitHub and Microsoft sign-in
 
-GitHub and Microsoft sign-in work only when the server variables are set. Leave them unset and those buttons stay on the page, marked not configured. **Sign in on this computer** stays enabled.
+GitHub and Microsoft sign-in work only when the server variables are set. Leave them unset and those buttons stay on the page, marked not configured. **Sign in on this computer** stays enabled for a loopback peer, and for every peer when `CHECKSTEAD_LOCAL=1`. It is hidden from the sign-in API when `CHECKSTEAD_LOCAL=0`.
 
 | Variable | What it is |
 | --- | --- |
