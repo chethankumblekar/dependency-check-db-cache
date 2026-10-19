@@ -102,6 +102,17 @@ does not hide the findings from the `trivy-scanner` report.
 | Why it cannot be fixed here | `engine.version` stays 13.0.0. These jars ship inside that Dependency-Check release. Clearing them would mean changing the engine pin without a release-note and snapshot compatibility check, or adding a suppression file. Neither is a fix. |
 | Review | 2027-01-19. Remove this exception earlier if a Dependency-Check release keeps the snapshot format and replaces these jars. |
 
+Exception `unfixed-os-2026-10-19` is the operating-system gate's
+`ignore-unfixed: true`. It is written next to that step in
+`.github/workflows/ci.yml` and in `scripts/scan-images.sh`.
+
+| Field | Value |
+| --- | --- |
+| Findings | Unfixed operating-system packages. On `checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744` this is 61 High findings and 2 Critical findings: `CVE-2025-7458` in `libsqlite3-0` (status `affected`, no fixed version) and `CVE-2023-45853` in `zlib1g` (status `will_not_fix`, no fixed version). |
+| Scope | Server and scanner image OS packages that have no fixed version. A fixed High or Critical OS package still fails the job. |
+| Why it cannot be fixed here | Debian has not published a fixed version for these packages. Failing the job would not point at a package upgrade. |
+| Review | 2027-01-19. If a fixed version appears before then, `ignore-unfixed: true` makes that finding fail the build. Do not add a `.trivyignore` entry for these CVEs. |
+
 The published server image from commit `f3731b3`,
 `ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744`,
 has no fixed High or Critical operating-system finding. That gate exited 0.

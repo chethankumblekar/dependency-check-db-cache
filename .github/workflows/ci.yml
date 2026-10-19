@@ -93,6 +93,16 @@ jobs:
           severity: CRITICAL,HIGH
           scanners: vuln
 
+      # Exception unfixed-os-2026-10-19, review 2027-01-19.
+      # Scope: operating-system packages in these images that have no fixed version.
+      # On checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744
+      # that is 61 unfixed High findings and 2 unfixed Critical findings:
+      # CVE-2025-7458 (libsqlite3-0, affected, no fixed version) and
+      # CVE-2023-45853 (zlib1g, will_not_fix, no fixed version).
+      # ignore-unfixed: true is this exception. A fixed High or Critical OS
+      # package still fails the step. This is not a .trivyignore file.
+      # The six Dependency-Check jar findings stay in the report-only scan.
+      # engine.version stays 13.0.0.
       - name: Fail on fixed High and Critical operating-system packages in the server image
         if: matrix.image == 'checkstead-server'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -118,6 +128,7 @@ jobs:
           skip-dirs: /opt/dependency-check
           scanners: vuln
 
+      # Same exception unfixed-os-2026-10-19. Fixed High and Critical OS packages still fail.
       - name: Fail on fixed High and Critical operating-system packages in the scanner image
         if: matrix.image == 'checkstead'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
