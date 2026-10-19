@@ -51,13 +51,21 @@ The current user was uid 1000. The scanner image default remains root.
 | Azure DevOps | Passed for the argument builder and the container user. `buildArgs` includes `--user 1000:1000`. The image write above is the same `docker run --user` shape. The task's `scan` subcommand was not executed. |
 | Compose | Passed. `docker compose -f docker-compose.yml` with the image set to `checkstead-server:local` started, and `http://127.0.0.1:8765/api/health` returned `{"ok": true}`. The server process is uid 999. `su` stays root only long enough to drop privileges. |
 
+## Recorded on 19 October 2026
+
+| Check | Result |
+| --- | --- |
+| `bash scripts/scan-images.sh` | Exited 0 after the operating-system gate included fixed High findings. |
+| Main publish `f3731b3`, run 39297714215 | `gh attestation verify` exited 0 for `checkstead@sha256:063cde562cec605672518f5951af861b512b8df08b7f2096b930b89bb92cb740` and `checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744`. `scripts/verify-published-images.py` exited 0. Fixed High and Critical OS and the failing library gates exited 0. The scanner full report still lists 6 High jars. |
+| Release candidate `v0.1.1-rc.1` | `checkstead@sha256:5e73042dd6b27baa4bbd541b8a7c00714676fb5d1e1bd0534301580a612c414f` and `checkstead-server@sha256:df7ebe075c05a0e0a28d2452691c4260988dd924da097abe70627ae8f190b146`. Attestation verify exited 0. `docker pull` of the scanner digest and `write-manifest` as uid 1000 exited 0. `manifest.json` is owned by uid 1000. The tag did not publish `latest`. |
+| Older scanner `sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272` | The fixed High OS gate exited 1. That image was not rebuilt. |
+| Rollback pull | `scripts/rollback-image.sh` on the `c5b1707` scanner digest exited 0. The local image stayed untagged. `:latest` was not moved. |
+
 ## Not run in this environment
 
 | Check | Why it is not a pass |
 | --- | --- |
-| `bash scripts/scan-images.sh` | Trivy 0.70.0 gates matching this script were run on the local images. Fixed High and Critical OS exited 0 for `checkstead:local` and `checkstead-server:local`. The published scanner digest `sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272` exited 1 on that same OS gate. |
-| A pushed image digest and its GitHub attestation | `gh attestation verify` of `checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272` and `checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7` (commit `c5b1707`) exited 0. The older digests from run 39260814721 still return HTTP 404. Do not republish those images. |
-| The real NVD update | The updater needs `NVD_API_KEY` and is not part of the unit suite. |
+| The real NVD update | Run 39294556503 is the updater already in progress. This suite does not start another one. No signed manifest has been published, so the public key is not pinned. |
 | A full Dependency-Check analysis of this repository | That needs a published snapshot and the engine. The unit suite uses fixtures. |
 
 Record the command and the exit code when you run one of those checks. Do not

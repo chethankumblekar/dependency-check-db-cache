@@ -342,15 +342,15 @@ The scanner image runs as root by default so this mounted-directory command can 
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. Pin the attested digests from commit `c5b1707a34f7cbce1004fcee097e4b99f68ddb90`. `gh attestation verify` exited 0 for both. Older digests from run 39260814721 have no GitHub attestation. Do not point a current tag at those images. The detail is in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md).
+The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. Pin the attested digests from commit `f3731b37f3033191eda7d6211de8e51f94dfc79f`. `gh attestation verify` exited 0 for both. The detail is in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md).
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:e361299c823f7f8b92a2463f9a4077adc281309c9ef6f66d012c6b913bfd2272 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:063cde562cec605672518f5951af861b512b8df08b7f2096b930b89bb92cb740 \
   --repo chethankumblekar/dependency-check-db-cache
 
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:0ed118f344789cea7b5e4dc90dee219581fae5397fb4fc538def433341962cf7 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744 \
   --repo chethankumblekar/dependency-check-db-cache
 ```
 
@@ -368,6 +368,7 @@ gh attestation verify \
 | `latest` | Pushes to the default branch. |
 | `engine-13.0.0` | Pushes to the default branch, scanner image only. The number is the pin in `engine.version`. |
 | `0.1.0`, `0.1`, and `v0.1.0` | A git tag named `v0.1.0`. |
+| `v0.1.1-rc.1` | A git tag named `v0.1.1-rc.1`. A candidate tag does not publish `latest` or a floating minor tag. |
 
 ```bash
 docker pull ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
