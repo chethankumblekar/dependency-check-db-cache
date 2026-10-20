@@ -235,7 +235,9 @@ function Install-Engine {
         }
         $gnupg = Join-Path $tmp "gnupg"
         New-Item -ItemType Directory -Path $gnupg | Out-Null
-        $env:GNUPGHOME = $gnupg
+        # Forward slashes: the gpg in Git for Windows is an MSYS build and reads
+        # "C:\..." as a relative path. Native GnuPG accepts both forms.
+        $env:GNUPGHOME = $gnupg.Replace('\', '/')
         $imported = & gpg --batch --import $keyFile 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
         $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
