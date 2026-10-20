@@ -12,6 +12,7 @@ import os
 import secrets
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -339,6 +340,16 @@ class BoundedHTTPServer(ThreadingHTTPServer):
         if not self._slots.acquire(blocking=False):
             try:
                 request.sendall(_BUSY)
+                # Read what the client already sent before closing. Closing
+                # with unread data makes Windows reset the connection, and
+                # the client then never sees the 503.
+                # This runs on the accept thread, so it is bounded to 100 ms
+                # in total however slowly the client sends.
+                deadline = time.monotonic() + 0.1
+                while (left := deadline - time.monotonic()) > 0:
+                    request.settimeout(left)
+                    if not request.recv(65536):
+                        break
             except OSError:
                 pass
             self.shutdown_request(request)
@@ -357,7 +368,7 @@ class BoundedHTTPServer(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address) -> None:
         # A client that hangs up or times out is routine, not a server error.
-        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, TimeoutError)):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
             return
         super().handle_error(request, client_address)
 

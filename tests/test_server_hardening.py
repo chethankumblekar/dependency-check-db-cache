@@ -97,8 +97,9 @@ class ServerGuards(TestCase):
         self.slow_scan = slow_scan
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(self.server.shutdown)
+        # Cleanups run last-in first-out: stop serve_forever, then close the socket.
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
         self.port = self.server.server_address[1]
 
     def call(self, method: str, path: str, headers: dict[str, str] | None = None, body: bytes | None = None):
@@ -211,8 +212,9 @@ class ConnectionHandlingTests(TestCase):
             shutil.rmtree(data)
         self.server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.addCleanup(self.server.shutdown)
+        # Cleanups run last-in first-out: stop serve_forever, then close the socket.
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
         self.port = self.server.server_address[1]
 
     def tearDown(self) -> None:
