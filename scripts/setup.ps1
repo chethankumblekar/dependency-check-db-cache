@@ -247,11 +247,19 @@ function Install-Engine {
             $archivePy = Join-Path $tmp "archive.py"
             Save-Download -Uri "$RawBase/src/checkstead/archive.py" -OutFile $archivePy
         }
-        $gnupg = Join-Path $tmp "gnupg"
+        # A short home of its own: gpg-agent's socket path must stay under the
+        # Unix socket limit (about 108 bytes), and the temp path above has a GUID.
+        $gnupg = Join-Path ([System.IO.Path]::GetTempPath()) ("csg" + [guid]::NewGuid().ToString("n").Substring(0, 8))
         New-Item -ItemType Directory -Path $gnupg | Out-Null
         $env:GNUPGHOME = ConvertTo-GpgPath $gnupg
         $imported = & gpg --batch --no-autostart --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
+        # gpg can exit non-zero after a good import when it cannot reach an
+        # agent, which a public-key import does not need. The keyring is the
+        # evidence: it must now hold the pinned fingerprint.
+        $listed = & gpg --batch --no-autostart --with-colons --list-keys 2>$null | Out-String
+        if ($listed -notmatch ("(?m)^fpr:+" + $ExpectedFingerprint + ":")) {
+            throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported"
+        }
         $shown = & gpg --batch --no-autostart --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
@@ -282,6 +290,7 @@ function Install-Engine {
         Write-Output "Installed Dependency-Check $Pin under $Root\dependency-check"
     } finally {
         if ($null -eq $previousGnupg) { Remove-Item Env:GNUPGHOME -ErrorAction SilentlyContinue } else { $env:GNUPGHOME = $previousGnupg }
+        if ($gnupg -and (Test-Path -LiteralPath $gnupg)) { Remove-Item -Recurse -Force $gnupg -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force $tmp }
     }
 }
