@@ -250,14 +250,14 @@ function Install-Engine {
         $gnupg = Join-Path $tmp "gnupg"
         New-Item -ItemType Directory -Path $gnupg | Out-Null
         $env:GNUPGHOME = ConvertTo-GpgPath $gnupg
-        $imported = & gpg --batch --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
+        $imported = & gpg --batch --no-autostart --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
-        $shown = & gpg --batch --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
+        $shown = & gpg --batch --no-autostart --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
         if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
         if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
-        $verified = & gpg --batch --verify (ConvertTo-GpgPath $signature) (ConvertTo-GpgPath $archive) 2>&1 | Out-String
+        $verified = & gpg --batch --no-autostart --verify (ConvertTo-GpgPath $signature) (ConvertTo-GpgPath $archive) 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify. gpg said: $verified" }
         $unpacked = Join-Path $tmp "unpacked"
         New-Item -ItemType Directory -Path $unpacked | Out-Null

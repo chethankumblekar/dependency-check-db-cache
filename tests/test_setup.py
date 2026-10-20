@@ -500,7 +500,7 @@ class SetupTests(TestCase):
         installer_fn = installer.split("gpg --batch --import", 1)[1]
         self.assertLess(installer_fn.index("gpg --batch --verify"), installer_fn.index('python3 "$ARCHIVE"'))
         engine = windows.split("function Install-Engine {", 1)[1].split("\nfunction ", 1)[0]
-        self.assertLess(engine.index("gpg --batch --verify"), engine.index("dependency-check.bat"))
+        self.assertLess(engine.index("gpg --batch --no-autostart --verify"), engine.index("dependency-check.bat"))
         self.assertNotIn("Expand-Archive", engine)
         self.assertIn("The release signature does not verify", engine)
         self.assertIn("gpg is required", shell)
