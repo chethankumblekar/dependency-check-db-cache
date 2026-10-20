@@ -1,5 +1,7 @@
 # Pinned by digest. Dependabot proposes a new digest; review it like code.
-FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83
+# Debian 13 (trixie). The bookworm base carried 61 High and 2 Critical
+# unfixed operating-system findings on 20 October 2026; see security-gates.md.
+FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 # uid and gid 999 are what `useradd --system` gave this user in every earlier
 # image, so volumes those images created stay readable.

@@ -3,8 +3,9 @@
 #
 #   scripts/smoke-image.sh scanner|server IMAGE_REF
 #
-# scanner: reports the engine pin, runs as a non-root uid, and refuses to
-#   scan when no snapshot is reachable, instead of calling the NVD.
+# scanner: reports the engine pin, runs as a non-root uid, refuses to scan
+#   when no snapshot is reachable instead of calling the NVD, and drops root
+#   on a default run.
 # server: runs as uid 999 with no capabilities and a read-only root
 #   filesystem, becomes healthy, answers /api/health, and refuses a Host
 #   name it was not configured for.
@@ -42,7 +43,18 @@ if [[ "$kind" == "scanner" ]]; then
   if grep -q "services.nvd.nist.gov" <<< "$output" && ! grep -q "Refusing" <<< "$output"; then
     fail "the offline scan tried the NVD"
   fi
-  echo "smoke: scanner ${ref} ok (pin ${pin}, uid 10001, offline scan refused)"
+  # Default run, no --user: the entrypoint must drop root to the owner of the
+  # mounted directory, so what it writes is owned by that user, not root.
+  work=$(mktemp -d)
+  printf 'zip' > "$work/db.zip"
+  host_uid=$(stat -c '%u' "$work" 2>/dev/null || stat -f '%u' "$work")
+  docker run --rm -v "$work:/work" -w /work "$ref" \
+    write-manifest --zip /work/db.zip --out /work/manifest.json --time 2026-01-01T00:00:00Z >/dev/null
+  written_uid=$(stat -c '%u' "$work/manifest.json" 2>/dev/null || stat -f '%u' "$work/manifest.json")
+  rm -rf "$work" 2>/dev/null || true
+  [[ "$written_uid" != "0" ]] || fail "the default run wrote its output as root"
+  [[ "$written_uid" == "$host_uid" ]] || fail "the default run wrote as uid ${written_uid}, not the directory owner ${host_uid}"
+  echo "smoke: scanner ${ref} ok (pin ${pin}, uid 10001, offline scan refused, default run dropped root to uid ${written_uid})"
   exit 0
 fi
 

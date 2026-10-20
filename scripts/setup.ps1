@@ -100,7 +100,12 @@ function Install-Python {
     $archive = Join-Path $tmp "python.tar.gz"
     Save-Download -Uri $url -OutFile $archive
     Assert-Sha256 -Path $archive -Expected $PythonSha256[$triple] -What "the Python download"
-    tar -xzf $archive -C $tmp
+    # Windows' own bsdtar. GNU tar from Git's usr\bin, when it is earlier on
+    # PATH, reads "C:\..." as a remote host and fails.
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (-not (Test-Path -LiteralPath $tar)) { $tar = "tar" }
+    & $tar -xzf $archive -C $tmp
+    if ($LASTEXITCODE -ne 0) { throw "Could not extract the Python archive." }
     $extracted = Join-Path $tmp "python"
     if (Test-Path (Join-Path $Root "python")) { Remove-Item -Recurse -Force (Join-Path $Root "python") }
     New-Item -ItemType Directory -Path $Root -Force | Out-Null

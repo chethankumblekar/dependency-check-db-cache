@@ -24,6 +24,10 @@ concurrency:
 
 jobs:
   publish:
+    # The signing key and the NVD key belong in this environment's secrets,
+    # with deployment limited to main, so a workflow on another branch cannot
+    # read them. docs/operations/production-operations.md has the setup.
+    environment: snapshot-signing
     runs-on: ubuntu-latest
     # An incremental update takes minutes. The weekly full rebuild took up to
     # 2.5 hours and three of ten runs before the seed was added hit 180.

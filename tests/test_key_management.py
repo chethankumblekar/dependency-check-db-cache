@@ -179,3 +179,9 @@ class SeedTests(TestCase):
         workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
         self.assertIn("validate_only", workflow)
         self.assertIn("CHECKSTEAD_VALIDATE_ONLY", workflow)
+
+    def test_the_signing_job_runs_in_a_protected_environment(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
+        self.assertIn("environment: snapshot-signing", workflow)
+        script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
+        self.assertIn("--nvdValidForHours 0", script)

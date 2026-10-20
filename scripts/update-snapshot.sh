@@ -79,11 +79,14 @@ if [[ -n "$SEED_MANIFEST" ]]; then
 fi
 
 # The key is passed only to this update process. It is not written into the snapshot.
+# --nvdValidForHours 0: a seed checked a few hours ago would otherwise skip the
+# NVD entirely ("Check for updates complete (22 ms)" in a validation run).
 UPDATE_STARTED=$(date +%s)
 "${ENGINE_DIR}/bin/dependency-check.sh" \
   --updateonly \
   --nvdApiKey "$NVD_API_KEY" \
   --nvdApiDelay 6000 \
+  --nvdValidForHours 0 \
   --data "${WORK}/data" \
   --log "$LOG"
 UPDATE_SECONDS=$(( $(date +%s) - UPDATE_STARTED ))
