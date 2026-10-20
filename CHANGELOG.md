@@ -6,6 +6,26 @@ listed as product versions.
 
 ## Unreleased
 
+Web UI:
+
+- The timeline is redesigned around evidence. Overview opens with the newest
+  scan's evidence chain (data freshness, signature, checksum, engine) and a
+  Needs attention list, with exploited and critical findings first. Each scan
+  has Findings, Changes, Dependencies, and Evidence tabs. See
+  [docs/ui-design.md](docs/ui-design.md).
+- Reports record `snapshot-authenticity` and `snapshot-key`; the history API
+  returns them with each scan's policy and each finding's KEV flag.
+- New `GET /api/history/summary` (scans without dependency lists) and
+  `GET /api/scans/<id>`. The page no longer downloads every dependency of
+  every scan on load.
+- The page's Content-Security-Policy no longer allows inline script or style.
+  Scripts, styles, and the vendored OFL fonts are served from a fixed
+  allowlist under `/static/`, with ETags.
+- A request body the handler did not read no longer corrupts the next request
+  on a keep-alive connection.
+- Light and dark themes, keyboard navigation, and axe-checked views. The NVD
+  attribution is shown wherever NVD data is.
+
 Security:
 
 - The timeline server refuses a `Host` it was not configured for (421), which
