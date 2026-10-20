@@ -140,6 +140,23 @@ Trivy reports and a CycloneDX SBOM per platform as an artifact.
 
 ### Digests to verify
 
+From 20 October 2026, pin the digests from the first gated publish, merge
+commit `031a6e0`, run
+[39387651283](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39387651283).
+Both commands exited 0:
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:a20843ff0d9180404230788ef7d32a7db2a6f5f6fcc32b0639acf3efc306d7d5 \
+  --repo chethankumblekar/dependency-check-db-cache
+
+gh attestation verify \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:7e31a3dbed8c1f3dbcc3c17fa1023172ea445587233b9247c4fed14ed49c2df5 \
+  --repo chethankumblekar/dependency-check-db-cache
+```
+
+The digests below are the earlier publish and stay valid for rollback.
+
 Use the index digests from commit `f3731b37f3033191eda7d6211de8e51f94dfc79f`,
 publish run [39297714215](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39297714215).
 `:latest` on that run is this pair. Do not move `:latest` back onto an older image.

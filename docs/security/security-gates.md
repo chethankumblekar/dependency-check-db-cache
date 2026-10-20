@@ -92,13 +92,17 @@ Exception `unfixed-os-2026-10-19` is the operating-system gate's
 | Why it cannot be fixed here | The distribution has not published a fixed version. Failing the job would not point at a package upgrade. |
 | Review | 2027-01-19. If a fixed version appears before then, the gate fails on it. |
 
-On 20 October 2026 the images built from this change had no High or Critical
-finding at all, fixed or unfixed, in the Trivy v0.70.0 report (server on
-`python:3.14-slim-bookworm@sha256:48b13b00…`, scanner on
-`eclipse-temurin:25-jre-noble@sha256:3f2223fe…` with the engine overrides).
-Those were local arm64 builds. The amd64 images CI builds have not been
-scanned yet. The exception is kept because unfixed findings come and go with
-the vulnerability database.
+The first gated publish, run
+[39387651283](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39387651283)
+on merge commit `031a6e0`, scanned the pushed digests with Trivy v0.70.0:
+
+| Image | Digest | High/Critical, all | With a fixed version |
+| --- | --- | --- | --- |
+| `checkstead` (linux/amd64, engine included) | `sha256:a20843ff0d9180404230788ef7d32a7db2a6f5f6fcc32b0639acf3efc306d7d5` | 0 | 0 |
+| `checkstead-server` (linux/amd64 and linux/arm64) | `sha256:7e31a3dbed8c1f3dbcc3c17fa1023172ea445587233b9247c4fed14ed49c2df5` | 63 per platform: 61 High, 2 Critical (`CVE-2023-45853` zlib1g `will_not_fix`, `CVE-2025-7458` libsqlite3-0 `affected`), all Debian packages | 0 |
+
+The server's 63 are exactly this exception. They are listed in the uploaded
+report and fail nothing because no fix exists.
 
 The engine-jar exception recorded on 19 October 2026 (six High findings in
 Jackson 2.22.1 and jsoup 1.23.1) is closed by the overrides above.
