@@ -127,10 +127,11 @@ function Install-Jdk {
     Expand-Archive -Path $archive -DestinationPath (Join-Path $tmp "unpacked") -Force
     $java = Get-ChildItem -Path (Join-Path $tmp "unpacked") -Filter java.exe -Recurse | Select-Object -First 1
     if ($null -eq $java) { throw "The JDK archive did not contain bin\java.exe." }
-    $home = $java.Directory.Parent.FullName
+    # Not $home: that is PowerShell's read-only $HOME, and assigning it throws.
+    $jdkHome = $java.Directory.Parent.FullName
     if (Test-Path (Join-Path $Root "jdk")) { Remove-Item -Recurse -Force (Join-Path $Root "jdk") }
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
-    Move-Item $home (Join-Path $Root "jdk")
+    Move-Item $jdkHome (Join-Path $Root "jdk")
     Remove-Item -Recurse -Force $tmp
     Write-Output "Installed a JDK under $Root\jdk"
 }

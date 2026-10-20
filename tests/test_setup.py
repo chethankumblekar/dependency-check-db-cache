@@ -535,6 +535,8 @@ class SetupTests(TestCase):
         self.assertEqual(script.count("verify_sha256 \""), 3)
         self.assertEqual(windows.count("Assert-Sha256 -Path"), 3)
         self.assertIn('Join-Path $env:SystemRoot "System32\\tar.exe"', windows)
+        # $home is PowerShell's read-only $HOME; assigning it aborts the install.
+        self.assertNotRegex(windows, r"(?im)^\s*\$home\s*=")
 
     def test_checkstead_ref_must_be_a_ref_name(self) -> None:
         root = ROOT / "build" / "tests" / "setup-ref"
