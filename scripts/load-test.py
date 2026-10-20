@@ -188,6 +188,7 @@ def main() -> int:
     parser.add_argument("--pid", type=int, help="Server process id, for memory and file sampling.")
     parser.add_argument("--sample-every", type=float, default=60)
     parser.add_argument("--max-rss-growth-mb", type=float, default=50)
+    parser.add_argument("--max-files-growth", type=int, default=100)
     parser.add_argument("--slow-count", type=int, default=50)
     parser.add_argument("--slow-wait", type=float, default=35)
     parser.add_argument("--new-connections", action="store_true", help="Open a connection per request.")
@@ -239,7 +240,11 @@ def main() -> int:
             # Growth after warm-up: the first window allocates caches and threads.
             growth = samples[-1]["rss_mb"] - samples[1]["rss_mb"]
             result["rss_growth_after_warmup_mb"] = round(growth, 1)
-            ok = ok and growth <= args.max_rss_growth_mb
+            files = samples[-1]["open_files"] - samples[1]["open_files"]
+            result["open_files_growth_after_warmup"] = files
+            # A descriptor leak grows without bound. Builds before 20 October 2026 held
+            # one SQLite handle per session check until garbage collection.
+            ok = ok and growth <= args.max_rss_growth_mb and files <= args.max_files_growth
     else:
         result = slow_clients(client, args.slow_count, args.slow_wait)
         ok = (
