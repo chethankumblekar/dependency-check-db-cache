@@ -3,8 +3,14 @@
   "keys": [
     {
       "id": "checkstead-2026-10",
+      "status": "retired",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=\n-----END PUBLIC KEY-----\n",
+      "notAfter": "2026-10-20"
+    },
+    {
+      "id": "checkstead-2026-10b",
       "status": "current",
-      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=\n-----END PUBLIC KEY-----\n"
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAWWSTucABPc5D1rP4iUbCMPJbuW3SuXk9lcp8yfGUlsk=\n-----END PUBLIC KEY-----\n"
     }
   ]
 }

@@ -113,8 +113,10 @@ gh secret delete CHECKSTEAD_SNAPSHOT_SIGNING_KEY
 gh secret delete NVD_API_KEY
 ```
 
-If the offline copy of the private key is lost, rotate (below) instead of
-copying it out of a workflow. After the move, `validate_only` runs dispatched
+On 20 October 2026 the key was rotated this way: `checkstead-2026-10b` lives
+only in the environment secret, and `checkstead-2026-10` is retired with
+`notAfter` 2026-10-20. There is no offline copy; if the environment secret is
+lost, rotate again. Never copy a key out of a workflow. After the move, `validate_only` runs dispatched
 from a branch run without the secrets: they test the update and the canary,
 not signing. Do not add required reviewers to the environment: the daily run
 would wait for an approval every night.

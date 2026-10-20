@@ -150,10 +150,17 @@ class SignatureTests(TestCase):
     def test_the_shipped_trust_store_pins_the_production_key_and_rejects_a_private_key(self) -> None:
         from checkstead.snapshot_auth import TRUST_FILE, signature_required
 
+        from datetime import date
+
         shipped = load_trust(TRUST_FILE)
-        self.assertEqual(sorted(shipped.keys), ["checkstead-2026-10"])
-        self.assertEqual(shipped.keys["checkstead-2026-10"].status, "current")
-        self.assertIn("MCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=", shipped.keys["checkstead-2026-10"].public_pem)
+        self.assertEqual(sorted(shipped.keys), ["checkstead-2026-10", "checkstead-2026-10b"])
+        # Rotated on 20 October 2026: the first key verifies snapshots up to
+        # that day and can no longer sign; the second signs from then on.
+        old = shipped.keys["checkstead-2026-10"]
+        self.assertEqual(old.status, "retired")
+        self.assertEqual(old.not_after, date(2026, 10, 20))
+        self.assertIn("MCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=", old.public_pem)
+        self.assertEqual(shipped.keys["checkstead-2026-10b"].status, "current")
         self.assertTrue(signature_required(shipped))
         with self.assertRaises(ChecksteadError):
             load_trust({"format": 1, "keys": [_entry("2026-10", self.private)]})

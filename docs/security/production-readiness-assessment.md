@@ -61,14 +61,18 @@ on the checklist has evidence.
 ### Signing key custody
 
 The `snapshot-signing` environment exists and only `main` may deploy to it;
-the updater job runs in it. The private signing key and the NVD key are still
-repository-level secrets, so a workflow pushed to another branch by someone
-with write access can still read them. Secret values cannot be read back from
-GitHub, so moving them means rotating the signing key (generate a new key into
-the environment, pin it, retire `checkstead-2026-10` with `notAfter`
-2026-10-20) and re-entering the NVD key. An automated agent was not permitted
-to write repository secrets. The steps are in
-[Production operations](../operations/production-operations.md#signing-key-custody).
+the updater job runs in it. With the maintainer's approval the signing key was
+rotated on 20 October 2026: `checkstead-2026-10b` was generated straight into
+that environment's `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret (never printed;
+the temporary file was removed), its key id set as the environment variable
+`CHECKSTEAD_SNAPSHOT_KEY_ID`, and its public key pinned as `current`.
+`checkstead-2026-10` is `retired` with `notAfter` 2026-10-20, so
+`db-2026-10-20` still verifies (re-checked with `verify-snapshot-pin.py`) and
+that key can no longer sign. The repository-level copy of the old key is
+deleted once pull request 25 merges. The NVD key stays a repository secret:
+its value cannot be read back, and a leaked NVD key affects rate limits, not
+snapshot integrity. No offline copy of the new private key exists; losing it
+means another rotation.
 
 ### Checklist changes
 
@@ -79,7 +83,7 @@ to write repository secrets. The steps are in
 | Load, stress, soak | None | Done; two defects fixed |
 | No High/Critical findings in either image | Server had 63 unfixed | Done (0 and 0) |
 | Scanner never runs as root | Open | Done |
-| Signing key out of repository secrets | Open | **Open (needs a person to approve a secret write)** |
+| Signing key out of repository secrets | Open | Done (rotated into `snapshot-signing`; old repository copy deleted after merge) |
 | Real identity-provider tenants | Open | **Open (needs test accounts)** |
 
 ## 20 October 2026 audit
