@@ -104,6 +104,13 @@ on merge commit `031a6e0`, scanned the pushed digests with Trivy v0.70.0:
 The server's 63 are exactly this exception. They are listed in the uploaded
 report and fail nothing because no fix exists.
 
+The server image then moved off Debian. On pull request 25 (Trivy v0.70.0):
+`python:3.14-slim-trixie` reported 44 High and 0 Critical, all unfixed;
+the Ubuntu 24.04 base it now uses reported 0 High and 0 Critical, the same
+as the scanner image. Both images currently carry no High or Critical
+finding of any kind. The exception stays so that a future unfixed finding
+in Ubuntu is reported rather than blocking every build.
+
 The engine-jar exception recorded on 19 October 2026 (six High findings in
 Jackson 2.22.1 and jsoup 1.23.1) is closed by the overrides above.
 

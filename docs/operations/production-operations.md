@@ -222,7 +222,8 @@ clients, a mix of `/api/health`, `/api/history`, `/`, and `/api/session`:
 | Load, 16 clients, 20 s | 940 to 1,160 req/s, 0 errors, p95 57 to 64 ms. Before the history cache: 42 req/s, p95 1,476 ms. |
 | Stress, doubling from 16 | 0 errors up to 256 clients (1,130 req/s, p95 508 ms). At 512, past the 256-connection cap, extra connections get 503 by design. Recovery afterwards: 0 errors. |
 | Slow clients, 50 half-sent requests | All 50 dropped after the 30 s socket timeout; normal traffic meanwhile 1,678 req/s, 0 errors. |
-| Soak, 32 clients, 20 min | 1,130,698 requests, 0 errors, p95 103 to 143 ms. Open files rose from 231 to 1,396: the SQLite handle leak, now fixed. The soak on the fixed build is recorded in the readiness assessment. |
+| Soak, 32 clients, 20 min, before the leak fix | 1,130,698 requests, 0 errors, p95 103 to 143 ms, but open files rose from 231 to 1,396 and memory to 470 MB: one SQLite handle per session check. |
+| Soak, 32 clients, 20 min, fixed | 871,666 requests, 0 errors, 467 to 997 req/s, p95 109 to 248 ms. Open files flat at 38. Memory flat at about 34 MB. |
 
 The server is one process. Throughput is bound by Python's GIL, not by
 threads, so add replicas behind the proxy for more. `CHECKSTEAD_MAX_CONNECTIONS`
