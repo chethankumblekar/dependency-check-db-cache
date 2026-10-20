@@ -132,7 +132,12 @@ class CiTests(TestCase):
         self.assertRegex(ci, r"docker/setup-qemu-action@[0-9a-f]{40} # v\d")
         self.assertRegex(ci, r"aquasecurity/setup-trivy@[0-9a-f]{40} # v\d")
         self.assertIn("TRIVY_VERSION: v", ci)
-        self.assertEqual(ci.count("persist-credentials: false"), 4)
+        self.assertEqual(ci.count("persist-credentials: false"), 5)
+        web = ci[ci.index("  web:\n") : ci.index("  windows:\n")]
+        self.assertRegex(web, r"actions/setup-node@[0-9a-f]{40} # v\d")
+        self.assertIn("npm ci --ignore-scripts", web)
+        self.assertIn("npm run check", web)
+        self.assertIn("vendor-fonts.mjs --check", web)
         windows = ci[ci.index("  windows:\n") : ci.index("  images:\n")]
         self.assertIn("runs-on: windows-latest", windows)
         self.assertIn("./scripts/setup.ps1", windows)

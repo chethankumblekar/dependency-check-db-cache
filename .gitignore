@@ -10,3 +10,6 @@ target/
 *.mv.db
 .idea/
 .DS_Store
+
+# Web UI development tooling
+web/node_modules/

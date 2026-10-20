@@ -31,6 +31,7 @@ from checkstead.score import (  # noqa: E402
     render_pull_request_comment,
 )
 from test_phase1 import FixtureServer, manifest_for, run_cli, write_zip  # noqa: E402
+from ui_assets import ui_source  # noqa: E402
 
 
 def _v3(score: float, source: str | None = None) -> dict:
@@ -255,10 +256,10 @@ class PullRequestCompareTests(TestCase):
         self.assertEqual(scan.pull_request, "42")
         payload = history_payload([scan])
         self.assertEqual(payload["scans"][0]["pullRequest"], "42")
-        page = (ROOT / "src" / "checkstead" / "ui_page.html").read_text(encoding="utf-8")
-        self.assertIn("function scanName(scan)", page)
-        self.assertIn('name + " #" + scan.pullRequest', page)
-        self.assertIn("scanName(scan)", page)
+        source = ui_source()
+        self.assertIn("export function scanName(scan)", source)
+        self.assertIn("`${name} #${scan.pullRequest}`", source)
+        self.assertIn("scanName(scan)", source)
 
     def test_one_snapshot_scans_head_and_base_and_fails_only_introduced(self) -> None:
         root = ROOT / "build" / "tests" / "pr-scan"

@@ -274,6 +274,9 @@ class HistoryCache:
         self._lock = threading.Lock()
         self._key: tuple | None = None
         self._body: HistoryBody | None = None
+        self._summary: HistoryBody | None = None
+        self._payload: dict | None = None
+        self._scans: dict[str, HistoryBody] = {}
 
     def _signature(self) -> tuple:
         entries = []
@@ -293,15 +296,66 @@ class HistoryCache:
                 entries.append((entry.name, name, info.st_size, info.st_mtime_ns))
         return tuple(entries)
 
-    def body(self) -> HistoryBody:
+    def _refresh(self) -> None:
+        """Rebuild everything when a report changed. Call with the lock held."""
         key = self._signature()
+        if self._payload is not None and key == self._key:
+            return
+        payload = history_payload(load_history(self.root))
+        raw = json.dumps(payload).encode("utf-8")
+        self._body = HistoryBody(raw, gzip.compress(raw, compresslevel=6))
+        summary = json.dumps(summarize(payload)).encode("utf-8")
+        self._summary = HistoryBody(summary, gzip.compress(summary, compresslevel=6))
+        self._payload = payload
+        self._scans = {}
+        self._key = key
+
+    def body(self) -> HistoryBody:
+        """The full history: every scan with every dependency."""
         with self._lock:
-            if self._body is not None and key == self._key:
-                return self._body
-            raw = json.dumps(history_payload(load_history(self.root))).encode("utf-8")
-            self._body = HistoryBody(raw, gzip.compress(raw, compresslevel=6))
-            self._key = key
+            self._refresh()
+            assert self._body is not None
             return self._body
+
+    def summary(self) -> HistoryBody:
+        """Scans and findings with dependency lists replaced by counts."""
+        with self._lock:
+            self._refresh()
+            assert self._summary is not None
+            return self._summary
+
+    def scan(self, scan_id: str) -> HistoryBody | None:
+        """One scan in full, with the drift that ends at it. None when unknown."""
+        with self._lock:
+            self._refresh()
+            if scan_id in self._scans:
+                return self._scans[scan_id]
+            assert self._payload is not None
+            scan = next((item for item in self._payload["scans"] if item["id"] == scan_id), None)
+            if scan is None:
+                return None
+            drift = next((item for item in self._payload["drifts"] if item["after"] == scan_id), None)
+            raw = json.dumps({"notice": self._payload["notice"], "scan": scan, "drift": drift}).encode("utf-8")
+            body = HistoryBody(raw, gzip.compress(raw, compresslevel=6))
+            self._scans[scan_id] = body
+            return body
+
+
+def summarize(payload: dict) -> dict:
+    """The history without dependency lists, which can run to tens of
+    thousands of entries per scan in a JavaScript tree. Counts stay."""
+    scans = []
+    for scan in payload["scans"]:
+        item = {key: value for key, value in scan.items() if key != "dependencies"}
+        item["dependencyCount"] = len(scan.get("dependencies") or [])
+        scans.append(item)
+    drifts = []
+    for drift in payload["drifts"]:
+        deps = drift["dependencies"]
+        item = {key: value for key, value in drift.items() if key != "dependencies"}
+        item["dependencyCounts"] = {name: len(deps.get(name) or []) for name in ("added", "removed", "changed")}
+        drifts.append(item)
+    return {**payload, "scans": scans, "drifts": drifts}
 
 
 DEFAULT_MAX_CONNECTIONS = 256
@@ -373,14 +427,61 @@ class BoundedHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def content_security_policy() -> str:
-    """The pages are one inline document. Nothing loads from another origin.
+STATIC_DIR = Path(__file__).resolve().with_name("static")
+STATIC_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain; charset=utf-8",
+}
 
-    The GitHub App manifest form posts to the GitHub web host, so that host is
-    the one extra ``form-action``.
+
+def static_files(root: Path = STATIC_DIR) -> dict[str, tuple[bytes, str, str]]:
+    """Every file the web UI may load, read once at startup.
+
+    A request is answered only when its path is a key here, so no request can
+    name a file outside this set. The value is the body, its content type,
+    and a strong ETag.
+    """
+    import hashlib
+
+    files: dict[str, tuple[bytes, str, str]] = {}
+    if not root.is_dir():
+        return files
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix not in STATIC_TYPES:
+            continue
+        body = path.read_bytes()
+        key = "/static/" + path.relative_to(root).as_posix()
+        files[key] = (body, STATIC_TYPES[path.suffix], '"' + hashlib.sha256(body).hexdigest()[:32] + '"')
+    return files
+
+
+def content_security_policy(legacy: bool = False) -> str:
+    """No inline script or style on the app; nothing from another origin.
+
+    ``legacy`` is the server-rendered GitHub App pages, which still carry one
+    inline script (the manifest auto-submit) and post their form to the GitHub
+    web host.
     """
     from checkstead.identity import github_web_base
 
+    if not legacy:
+        return "; ".join(
+            [
+                "default-src 'none'",
+                "script-src 'self'",
+                "style-src 'self'",
+                "img-src 'self' data:",
+                "font-src 'self'",
+                "connect-src 'self'",
+                "form-action 'self'",
+                "frame-ancestors 'none'",
+                "base-uri 'none'",
+                "object-src 'none'",
+            ]
+        )
     web = urlsplit(github_web_base())
     github = f"{web.scheme}://{web.netloc}" if web.scheme and web.netloc else "https://github.com"
     return "; ".join(
@@ -416,6 +517,7 @@ def bind_server(
     # of a second engine on the same snapshot data directory.
     scan_lock = threading.Lock()
     history = HistoryCache(scans_dir)
+    assets = static_files()
 
     class Handler(BaseHTTPRequestHandler):
         timeout = SOCKET_TIMEOUT_SECONDS
@@ -425,11 +527,15 @@ def bind_server(
 
         def _guard(self, unsafe: bool) -> bool:
             """Refuse a foreign Host, and a cross-site state change. True to continue."""
+            self._raw: bytes | None = None
             path = self.path.split("?", 1)[0]
             if path in _UNGUARDED_PATHS:
                 return True
             host = self.headers.get("Host", "")
             if not host_allowed(host):
+                # The body, if any, is not read. With keep-alive its bytes would
+                # be parsed as the next request, so the connection ends here.
+                self.close_connection = True
                 self._send(
                     421,
                     "text/plain; charset=utf-8",
@@ -442,8 +548,33 @@ def bind_server(
                 host,
                 self.headers.get("Sec-Fetch-Site", ""),
             ):
+                self.close_connection = True
                 self._json(403, {"error": "Cross-site request refused."})
                 return False
+            if unsafe:
+                return self._read_request_body()
+            return True
+
+        def _read_request_body(self) -> bool:
+            """Read the whole body once, before any handler runs.
+
+            Every POST, PATCH, and DELETE body is consumed whether or not its
+            handler uses it, so the next request on a keep-alive connection
+            starts at a request line.
+            """
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                length = -1
+            if length < 0:
+                self.close_connection = True
+                self._json(400, {"error": "Request body is not valid."})
+                return False
+            if length > MAX_BODY:
+                self.close_connection = True
+                self._json(413, {"error": "Request is too large."})
+                return False
+            self._raw = self.rfile.read(length) if length else b""
             return True
 
         def do_GET(self) -> None:
@@ -457,6 +588,9 @@ def bind_server(
                 return
             if path in {"/", "/index.html"}:
                 self._send(200, "text/html; charset=utf-8", PAGE.read_bytes())
+                return
+            if path.startswith("/static/"):
+                self._static(path)
                 return
             if path == "/api/providers":
                 self._json(200, list_providers())
@@ -482,7 +616,21 @@ def bind_server(
             if path == "/api/history":
                 if self._user() is None:
                     return
-                self._history()
+                self._history(history.body())
+                return
+            if path == "/api/history/summary":
+                if self._user() is None:
+                    return
+                self._history(history.summary())
+                return
+            if path.startswith("/api/scans/"):
+                if self._user() is None:
+                    return
+                scan_body = history.scan(unquote(path[len("/api/scans/"):]))
+                if scan_body is None:
+                    self._json(404, {"error": "There is no scan with that name."})
+                    return
+                self._history(scan_body)
                 return
             if path == "/api/admin/users":
                 if self._admin() is None:
@@ -852,15 +1000,8 @@ def bind_server(
             return "application/json" in self.headers.get("Accept", "")
 
         def _fields(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             content_type = self.headers.get("Content-Type", "")
             if "application/json" in content_type or raw[:1] == b"{":
                 try:
@@ -883,11 +1024,15 @@ def bind_server(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", content_security_policy())
+            legacy = self.path.split("?", 1)[0].startswith(("/github", "/api/github/"))
+            self.send_header("Content-Security-Policy", content_security_policy(legacy))
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-            self.send_header("Cache-Control", "no-store")
+            if self.close_connection:
+                self.send_header("Connection", "close")
+            if not self.path.startswith("/static/"):
+                self.send_header("Cache-Control", "no-store")
             if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
                 self.send_header("Strict-Transport-Security", "max-age=31536000")
 
@@ -942,15 +1087,8 @@ def bind_server(
             return user
 
         def _body(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             try:
                 body = json.loads(raw.decode("utf-8")) if raw else {}
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -964,8 +1102,32 @@ def bind_server(
                 body["organization"] = str(organization)
             return body
 
-        def _history(self) -> None:
-            body = history.body()
+        def _static(self, path: str) -> None:
+            found = assets.get(path)
+            if found is None:
+                self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                return
+            body, content_type, etag = found
+            # Revalidate every time: an upgrade must never leave an old script
+            # running against a new API.
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", "0")
+                self._common_headers()
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _history(self, body: HistoryBody) -> None:
             compressed = "gzip" in self.headers.get("Accept-Encoding", "")
             data = body.gzipped if compressed else body.raw
             self.send_response(200)

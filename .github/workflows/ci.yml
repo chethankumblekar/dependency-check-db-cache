@@ -55,6 +55,38 @@ jobs:
       - name: Lint, build, and test
         run: bash ./scripts/self-test.sh
 
+  web:
+    name: Web UI
+    # Type-checks the browser modules and runs their component, flow, and
+    # axe accessibility tests in jsdom. Node is a development tool only;
+    # nothing it installs ships in the Python package.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install pinned tools
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Type-check and test
+        run: npm run check
+
+      - name: Vendored fonts match the pinned packages
+        run: node scripts/vendor-fonts.mjs --check
+
   windows:
     name: Windows
     # The Windows client, the msvcrt lock, and setup.ps1 run here on a real

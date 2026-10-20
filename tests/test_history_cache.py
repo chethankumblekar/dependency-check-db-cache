@@ -54,3 +54,34 @@ class HistoryCacheTests(TestCase):
         victim = sorted(path for path in self.root.iterdir() if path.is_dir())[0]
         shutil.rmtree(victim)
         self.assertEqual(len(json.loads(cache.body().raw)["scans"]), count - 1)
+
+
+class SummaryAndScanTests(TestCase):
+    def setUp(self) -> None:
+        self.root = ROOT / "build" / "tests" / "history-summary" / self.id().split(".")[-1]
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.copytree(ROOT / "ui" / "scans", self.root)
+
+    def test_the_summary_drops_dependency_lists_and_keeps_counts(self) -> None:
+        cache = HistoryCache(self.root)
+        full = json.loads(cache.body().raw)
+        summary = json.loads(cache.summary().raw)
+        self.assertEqual([scan["id"] for scan in summary["scans"]], [scan["id"] for scan in full["scans"]])
+        for short, long in zip(summary["scans"], full["scans"]):
+            self.assertNotIn("dependencies", short)
+            self.assertEqual(short["dependencyCount"], len(long["dependencies"]))
+            self.assertEqual(short["findings"], long["findings"])
+        for short, long in zip(summary["drifts"], full["drifts"]):
+            self.assertNotIn("dependencies", short)
+            self.assertEqual(short["findings"], long["findings"])
+            self.assertEqual(short["dependencyCounts"]["added"], len(long["dependencies"]["added"]))
+
+    def test_one_scan_comes_back_in_full_with_its_drift(self) -> None:
+        cache = HistoryCache(self.root)
+        full = json.loads(cache.body().raw)
+        last = full["scans"][-1]
+        body = json.loads(cache.scan(last["id"]).raw)
+        self.assertEqual(body["scan"], last)
+        self.assertEqual(body["drift"], next((d for d in full["drifts"] if d["after"] == last["id"]), None))
+        self.assertIsNone(cache.scan("no-such-scan"))
+        self.assertIsNone(cache.scan("../01-fixture-a"))

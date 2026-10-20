@@ -8,3 +8,4 @@ checkstead-report
 .venv
 dist
 build
+web
