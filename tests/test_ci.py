@@ -179,17 +179,17 @@ class CiTests(TestCase):
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("actions/workflows/ci.yml/badge.svg?branch=main", readme)
-        self.assertIn("docs/screenshots/sign-in.png", readme)
-        self.assertIn("docs/screenshots/scan.png", readme)
-        self.assertIn("docs/screenshots/drift.png", readme)
-        self.assertIn("docs/screenshots/administration.png", readme)
         self.assertIn("```mermaid", readme)
         self.assertIn("Chethan K", readme)
         shots = ROOT / "docs" / "screenshots"
-        for shot in ("sign-in.png", "scan.png", "drift.png", "administration.png"):
-            self.assertTrue((shots / shot).is_file())
-        self.assertNotEqual((shots / "sign-in.png").read_bytes(), (shots / "drift.png").read_bytes())
-        self.assertNotEqual((shots / "scan.png").read_bytes(), (shots / "drift.png").read_bytes())
+        referenced = re.findall(r"docs/screenshots/([a-z0-9-]+\.png)", readme)
+        for shot in ("sign-in.png", "overview.png", "scan.png", "changes.png", "evidence.png", "access.png"):
+            self.assertIn(shot, referenced)
+        bodies = set()
+        for shot in referenced:
+            self.assertTrue((shots / shot).is_file(), shot)
+            bodies.add((shots / shot).read_bytes())
+        self.assertEqual(len(bodies), len(set(referenced)), "two screenshots are the same image")
 
     def test_codeql_uploads_sarif_for_pull_requests_and_main(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "codeql.yml").read_text(encoding="utf-8")
