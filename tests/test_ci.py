@@ -132,7 +132,13 @@ class CiTests(TestCase):
         self.assertRegex(ci, r"docker/setup-qemu-action@[0-9a-f]{40} # v\d")
         self.assertRegex(ci, r"aquasecurity/setup-trivy@[0-9a-f]{40} # v\d")
         self.assertIn("TRIVY_VERSION: v", ci)
-        self.assertEqual(ci.count("persist-credentials: false"), 3)
+        self.assertEqual(ci.count("persist-credentials: false"), 4)
+        windows = ci[ci.index("  windows:\n") : ci.index("  images:\n")]
+        self.assertIn("runs-on: windows-latest", windows)
+        self.assertIn("./scripts/setup.ps1", windows)
+        self.assertIn('CHECKSTEAD_INSTALL_RUNTIMES: "1"', windows)
+        self.assertIn("snapshot-authenticity: signed key=checkstead-2026-10", windows)
+        self.assertIn("tests.test_scan_safety", windows)
         self.assertNotRegex(ci, r"uses: .+@v\d+")
         for workflow in workflows.glob("*.yml"):
             text = workflow.read_text(encoding="utf-8")

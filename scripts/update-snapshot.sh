@@ -32,7 +32,11 @@ SNAPSHOT_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SNAPSHOT_DAY=${SNAPSHOT_TIME%%T*}
 TAG="db-${SNAPSHOT_DAY}"
 
-if gh release view "$TAG" >/dev/null 2>&1; then
+# CHECKSTEAD_VALIDATE_ONLY=1 runs the whole build, update, canary, and signing
+# path against the real NVD and stops before `gh release create`. It is how an
+# incremental update is tested on a day that already has a snapshot.
+VALIDATE_ONLY=${CHECKSTEAD_VALIDATE_ONLY:-}
+if [[ "$VALIDATE_ONLY" != "1" ]] && gh release view "$TAG" >/dev/null 2>&1; then
   echo "Snapshot ${TAG} is already published. Leaving it in place."
   exit 0
 fi
@@ -75,12 +79,58 @@ if [[ -n "$SEED_MANIFEST" ]]; then
 fi
 
 # The key is passed only to this update process. It is not written into the snapshot.
+# --nvdValidForHours 0: a seed checked a few hours ago would otherwise skip the
+# NVD entirely ("Check for updates complete (22 ms)" in a validation run).
+UPDATE_STARTED=$(date +%s)
 "${ENGINE_DIR}/bin/dependency-check.sh" \
   --updateonly \
   --nvdApiKey "$NVD_API_KEY" \
   --nvdApiDelay 6000 \
+  --nvdValidForHours 0 \
   --data "${WORK}/data" \
   --log "$LOG"
+UPDATE_SECONDS=$(( $(date +%s) - UPDATE_STARTED ))
+NVD_BATCHES=$(grep -c "Completed processing batch" "$LOG" || true)
+echo "update: ${UPDATE_SECONDS}s, ${NVD_BATCHES} NVD batches"
+
+# Canary. Before anything is published, the new database has to find a CVE
+# that has been in the NVD since 2015 in a jar pinned by digest. An empty,
+# truncated, or wrongly migrated database fails here instead of reaching
+# every scan. The scan runs on a copy so it cannot change what is zipped.
+CANARY_JAR_URL="https://repo1.maven.org/maven2/commons-collections/commons-collections/3.2.1/commons-collections-3.2.1.jar"
+CANARY_JAR_SHA256="87363a4c94eaabeefd8b930cb059f66b64c9f7d632862f23de3012da7660047b"
+CANARY_CVE="CVE-2015-6420"
+mkdir -p "${WORK}/canary/project"
+curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 3 --connect-timeout 30 --max-time 300 \
+  -o "${WORK}/canary/project/commons-collections-3.2.1.jar" "$CANARY_JAR_URL"
+if [[ "$(sha256sum "${WORK}/canary/project/commons-collections-3.2.1.jar" | cut -d ' ' -f 1)" != "$CANARY_JAR_SHA256" ]]; then
+  echo "Refusing to publish. The canary jar does not match its pinned SHA-256." >&2
+  exit 1
+fi
+cp -a "${WORK}/data" "${WORK}/canary/data"
+canary_status=0
+"${ENGINE_DIR}/bin/dependency-check.sh" \
+  --noupdate \
+  --disableCentral \
+  --disableOssIndex \
+  --disableYarnAudit \
+  --disableNodeAudit \
+  --data "${WORK}/canary/data" \
+  --scan "${WORK}/canary/project" \
+  --project canary \
+  --format JSON \
+  --out "${WORK}/canary/out" \
+  --log "${WORK}/canary/dependency-check.log" >/dev/null || canary_status=$?
+if [[ "$canary_status" -ne 0 ]]; then
+  echo "Refusing to publish. The canary scan on the new database exited ${canary_status}." >&2
+  exit 1
+fi
+if ! grep -q "\"${CANARY_CVE}\"" "${WORK}/canary/out/dependency-check-report.json"; then
+  echo "Refusing to publish. The canary scan did not find ${CANARY_CVE} in commons-collections 3.2.1." >&2
+  exit 1
+fi
+rm -rf "${WORK}/canary/data"
+echo "canary: ${CANARY_CVE} found"
 
 (
   cd "${WORK}/data"
@@ -192,6 +242,26 @@ ${SEED_NOTE}
 
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 EOF
+
+ZIP_BYTES=$(wc -c < "${WORK}/checkstead-db.zip" | tr -d ' ')
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  {
+    echo "### Snapshot ${SNAPSHOT_TIME}"
+    echo
+    echo "| | |"
+    echo "| --- | --- |"
+    echo "| Mode | $([[ "$VALIDATE_ONLY" == "1" ]] && echo "validate only, not published" || echo "publish ${TAG}") |"
+    echo "| Start | ${SEED_NOTE} |"
+    echo "| NVD update | ${UPDATE_SECONDS}s, ${NVD_BATCHES} batches |"
+    echo "| Canary | ${CANARY_CVE} found |"
+    echo "| Zip | ${ZIP_BYTES} bytes, sha256:${CHECKSUM} |"
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
+
+if [[ "$VALIDATE_ONLY" == "1" ]]; then
+  echo "Validation only. ${TAG} was not published. The manifest and notes are in ${WORK}."
+  exit 0
+fi
 
 gh release create "$TAG" \
   --latest \

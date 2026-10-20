@@ -3,9 +3,22 @@
 # A direct `docker run` can pass checkstead arguments instead.
 set -euo pipefail
 
-# Root remains the default so a host-mounted workspace is writable. A non-root
-# uid, including `docker run --user "$(id -u):$(id -g)"`, gets a HOME it can
-# write. The report is owned by whatever uid the container runs as.
+# The image starts as root only to choose who to become. It then drops to the
+# owner of the working directory (the host user behind `-v "$PWD:/work" -w
+# /work`), or to uid 10001 when that owner is root, with every capability
+# cleared and no-new-privileges set. The scan never runs as root, and the
+# report stays owned by the host user. CHECKSTEAD_ALLOW_ROOT=1 keeps root.
+# `docker run --user "$(id -u):$(id -g)"` skips this block entirely.
+if [[ "$(id -u)" == "0" && "${CHECKSTEAD_ALLOW_ROOT:-}" != "1" ]]; then
+  owner=$(stat -c '%u:%g' . 2>/dev/null || echo "0:0")
+  if [[ ! "$owner" =~ ^[0-9]+:[0-9]+$ || "$owner" == 0:* ]]; then
+    owner="10001:10001"
+  fi
+  exec setpriv --reuid="${owner%%:*}" --regid="${owner##*:}" --clear-groups \
+    --inh-caps=-all --bounding-set=-all --no-new-privs -- "$0" "$@"
+fi
+
+# A non-root uid gets a HOME it can write.
 if [[ "$(id -u)" != "0" ]]; then
   if [[ -z "${HOME:-}" || ! -w "${HOME}" ]]; then
     HOME="/tmp/checkstead-$(id -u)"

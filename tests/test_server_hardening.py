@@ -97,8 +97,9 @@ class ServerGuards(TestCase):
         self.slow_scan = slow_scan
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(self.server.shutdown)
+        # Cleanups run last-in first-out: stop serve_forever, then close the socket.
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
         self.port = self.server.server_address[1]
 
     def call(self, method: str, path: str, headers: dict[str, str] | None = None, body: bytes | None = None):
@@ -200,3 +201,142 @@ class ServerGuards(TestCase):
     def test_a_stalled_client_is_dropped(self) -> None:
         self.assertEqual(self.server.RequestHandlerClass.timeout, ui.SOCKET_TIMEOUT_SECONDS)
         self.assertLessEqual(ui.SOCKET_TIMEOUT_SECONDS, 60)
+
+
+class ConnectionHandlingTests(TestCase):
+    def setUp(self) -> None:
+        self.saved = os.environ.get("CHECKSTEAD_MAX_CONNECTIONS")
+        os.environ["CHECKSTEAD_MAX_CONNECTIONS"] = "3"
+        data = ROOT / "build" / "tests" / "server-connections" / self.id().split(".")[-1]
+        if data.exists():
+            shutil.rmtree(data)
+        self.server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        # Cleanups run last-in first-out: stop serve_forever, then close the socket.
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def tearDown(self) -> None:
+        if self.saved is None:
+            os.environ.pop("CHECKSTEAD_MAX_CONNECTIONS", None)
+        else:
+            os.environ["CHECKSTEAD_MAX_CONNECTIONS"] = self.saved
+
+    def test_one_connection_serves_several_requests(self) -> None:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            for _ in range(3):
+                connection.request("GET", "/api/health")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.version, 11)
+                response.read()
+        finally:
+            connection.close()
+
+    def test_connections_past_the_limit_get_503_and_the_server_recovers(self) -> None:
+        import socket
+        import time
+
+        self.assertEqual(self.server.max_connections, 3)
+        held = []
+        for _ in range(3):
+            sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+            sock.sendall(b"GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+            held.append(sock)
+        time.sleep(0.3)
+        status, _, headers = ServerGuards.call(self, "GET", "/api/health")
+        self.assertEqual(status, 503)
+        self.assertEqual(headers.get("Retry-After"), "1")
+        for sock in held:
+            sock.close()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            status, _, _ = ServerGuards.call(self, "GET", "/api/health")
+            if status == 200:
+                break
+            time.sleep(0.2)
+        self.assertEqual(status, 200)
+
+    def test_redirects_carry_a_length_so_keep_alive_does_not_hang(self) -> None:
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_ID"] = "id"
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_SECRET"] = "secret"
+        try:
+            status, body, headers = ServerGuards.call(self, "GET", "/api/sso/github/start")
+        finally:
+            os.environ.pop("CHECKSTEAD_GITHUB_CLIENT_ID", None)
+            os.environ.pop("CHECKSTEAD_GITHUB_CLIENT_SECRET", None)
+        self.assertEqual(status, 302)
+        self.assertEqual(headers.get("Content-Length"), "0")
+
+
+class KeepAliveBodyTests(TestCase):
+    """Every request body is consumed, so the next request on the connection parses."""
+
+    def setUp(self) -> None:
+        saved = {name: os.environ.pop(name, None) for name in ENV_NAMES}
+        self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in saved.items() if v is not None])
+        data = ROOT / "build" / "tests" / "server-keepalive" / self.id().split(".")[-1]
+        if data.exists():
+            shutil.rmtree(data)
+        self.server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def _connection(self) -> http.client.HTTPConnection:
+        return http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+
+    def test_a_post_body_to_an_unguarded_path_does_not_corrupt_the_next_request(self) -> None:
+        connection = self._connection()
+        try:
+            connection.request("POST", "/api/health", body=b'{"x": 1}', headers={"Content-Type": "application/json"})
+            first = connection.getresponse()
+            first.read()
+            connection.request("GET", "/api/health")
+            again = connection.getresponse()
+            self.assertEqual(again.status, 200, again.read())
+        finally:
+            connection.close()
+
+    def test_a_body_the_handler_ignores_does_not_corrupt_the_next_request(self) -> None:
+        connection = self._connection()
+        try:
+            origin = {"Origin": f"http://127.0.0.1:{self.port}", "Content-Type": "application/json"}
+            connection.request("POST", "/api/session/local", body=b"{}", headers=origin)
+            response = connection.getresponse()
+            cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+            response.read()
+            self.assertEqual(response.status, 200)
+            connection.request("GET", "/api/session", headers={"Cookie": cookie})
+            again = connection.getresponse()
+            self.assertEqual(again.status, 200, again.read())
+        finally:
+            connection.close()
+
+    def test_a_refused_request_with_a_body_closes_the_connection(self) -> None:
+        connection = self._connection()
+        try:
+            connection.request("POST", "/api/session/local", body=b'{"x": 1}', headers={"Origin": "https://evil.example"})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 403)
+            self.assertEqual(response.getheader("Connection", "").lower(), "close")
+        finally:
+            connection.close()
+
+    def test_an_oversized_body_is_refused_and_closed(self) -> None:
+        connection = self._connection()
+        try:
+            connection.putrequest("POST", "/api/admin/users")
+            connection.putheader("Origin", f"http://127.0.0.1:{self.port}")
+            connection.putheader("Content-Length", str(10 * 1024 * 1024))
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 413)
+            self.assertEqual(response.getheader("Connection", "").lower(), "close")
+        finally:
+            connection.close()

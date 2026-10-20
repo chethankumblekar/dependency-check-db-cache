@@ -29,14 +29,13 @@ RUN ENGINE_VERSION_FILE=/tmp/engine.version \
     && apt-get purge -y gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# The default process is root. `docker run -v "$PWD:/work" -w /work` writes
-# the report as root because the mount is owned by the host user. A fixed
-# USER would fail that command. The image still has a `checkstead` user
-# (uid 10001). Run as the host user when the mount should stay owned by
-# that user:
-#   docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work ...
-# The entrypoint gives a non-root uid a writable HOME and cache. The engine
-# and the virtualenv are world-executable. Do not add --privileged.
+# The container starts as root only so the entrypoint can pick the user: the
+# owner of the mounted working directory, or uid 10001. It switches with
+# setpriv, clearing every capability and setting no-new-privileges, before
+# anything else runs. A fixed USER would break `docker run -v "$PWD:/work"`
+# on Linux, where the mount belongs to the host user. `--user` still works
+# and skips the switch. The engine and the virtualenv are world-executable.
+# Do not add --privileged.
 
 COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src

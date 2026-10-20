@@ -81,14 +81,50 @@ in, except the first one.
 
 | Secret | Where | Scope | Rotation |
 | --- | --- | --- | --- |
-| `NVD_API_KEY` | Repository secret | `update-snapshot.yml` only. Scans strip it from the engine environment. | Request a new key from NVD, replace the secret, the next run uses it. |
-| `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` | Repository secret, Ed25519 PKCS#8 PEM | `update-snapshot.yml` only | See key management. |
+| `NVD_API_KEY` | Secret of the `snapshot-signing` environment (see custody) | `update-snapshot.yml` only. Scans strip it from the engine environment. | Request a new key from NVD, replace the secret, the next run uses it. |
+| `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` | Secret of the `snapshot-signing` environment, Ed25519 PKCS#8 PEM | `update-snapshot.yml` on `main` only | See key management. |
 | `CHECKSTEAD_SNAPSHOT_KEY_ID` | Repository variable | Names the key in each manifest | Changes with the key. |
 | `AZURE_MARKETPLACE_TOKEN` | Repository secret | `release.yml`, Marketplace publish only | Azure DevOps PAT expiry. |
 | OAuth client secrets | Server `.env` | Server process only. The scan engine never receives them: every variable named like a secret, token, password, or key is removed from its environment. | Rotate at the identity provider, update `.env`, `docker compose up -d`. |
 | GitHub App private key | `CHECKSTEAD_DATA/github-app/private-key.pem`, mode 0600 | Server | Generate a new key on the app's GitHub settings page, replace the file, delete the old key on GitHub. |
 
 `checkstead doctor` prints which of these are set, never their values.
+
+### Signing key custody
+
+A repository secret can be read by any workflow file on any branch that a
+person with write access pushes, so a branch could print it. The updater job
+runs in the `snapshot-signing` environment; once the environment is limited
+to `main` and holds the secrets, a workflow on another branch cannot read
+them. Set it up once:
+
+```bash
+# Allow only the default branch to use the environment.
+gh api -X PUT repos/chethankumblekar/dependency-check-db-cache/environments/snapshot-signing \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/chethankumblekar/dependency-check-db-cache/environments/snapshot-signing/deployment-branch-policies \
+  -f name=main -f type=branch
+# Move the secrets into it (the key is read from your offline copy).
+gh secret set CHECKSTEAD_SNAPSHOT_SIGNING_KEY --env snapshot-signing < snapshot-signing.pem
+gh secret set NVD_API_KEY --env snapshot-signing
+# Then remove the repository-level copies.
+gh secret delete CHECKSTEAD_SNAPSHOT_SIGNING_KEY
+gh secret delete NVD_API_KEY
+```
+
+On 20 October 2026 the key was rotated this way: `checkstead-2026-10b` lives
+only in the environment secret, and `checkstead-2026-10` is retired with
+`notAfter` 2026-10-20. There is no offline copy; if the environment secret is
+lost, rotate again. Never copy a key out of a workflow. After the move, `validate_only` runs dispatched
+from a branch run without the secrets: they test the update and the canary,
+not signing. Do not add required reviewers to the environment: the daily run
+would wait for an approval every night.
+
+What remains: the key is software-held. A maintainer with admin on the
+repository can still change the environment's rules. A hardware or cloud KMS
+signer would remove the private key from GitHub entirely; the client's trust
+format does not need to change for that.
 
 ## Snapshot signing key management
 
@@ -157,6 +193,51 @@ gh workflow run update-snapshot.yml -f full_rebuild=true
 
 A run that finds today's `db-*` release exits without doing anything. A run
 that fails publishes nothing, and clients keep the previous snapshot.
+
+Before publishing, every run scans a digest-pinned `commons-collections`
+3.2.1 jar with the new database and refuses to publish unless
+`CVE-2015-6420` is found. An empty, truncated, or wrongly migrated database
+stops there. `--nvdValidForHours 0` makes the NVD query happen even when the
+seed was checked recently.
+
+To exercise the whole path against the real NVD without publishing:
+
+```bash
+gh workflow run update-snapshot.yml -f validate_only=true
+```
+
+The job summary shows where it started from, how many NVD records and
+batches it applied, the canary result, and the zip checksum. On 20 October
+2026 run [39401035176](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39401035176)
+seeded from the signed `db-2026-10-20`, applied 48 changed NVD records in one
+batch (10 s), found the canary, and signed with `checkstead-2026-10`; the job
+took 51 s.
+
+## Capacity
+
+Measured on 20 October 2026 with `scripts/load-test.py` against `checkstead ui`
+on an Apple Silicon laptop (Python 3.14), 204 scans in the timeline, keep-alive
+clients, a mix of `/api/health`, `/api/history`, `/`, and `/api/session`:
+
+| Test | Result |
+| --- | --- |
+| Load, 16 clients, 20 s | 940 to 1,160 req/s, 0 errors, p95 57 to 64 ms. Before the history cache: 42 req/s, p95 1,476 ms. |
+| Stress, doubling from 16 | 0 errors up to 256 clients (1,130 req/s, p95 508 ms). At 512, past the 256-connection cap, extra connections get 503 by design. Recovery afterwards: 0 errors. |
+| Slow clients, 50 half-sent requests | All 50 dropped after the 30 s socket timeout; normal traffic meanwhile 1,678 req/s, 0 errors. |
+| Soak, 32 clients, 20 min, before the leak fix | 1,130,698 requests, 0 errors, p95 103 to 143 ms, but open files rose from 231 to 1,396 and memory to 470 MB: one SQLite handle per session check. |
+| Soak, 32 clients, 20 min, fixed | 871,666 requests, 0 errors, 467 to 997 req/s, p95 109 to 248 ms. Open files flat at 38. Memory flat at about 34 MB. |
+
+The server is one process. Throughput is bound by Python's GIL, not by
+threads, so add replicas behind the proxy for more. `CHECKSTEAD_MAX_CONNECTIONS`
+(default 256) caps concurrent connections; past it a client gets 503 with
+`Retry-After: 1`. Run the tests against a loopback test server:
+
+```bash
+python3 scripts/load-test.py load --base http://127.0.0.1:8765
+python3 scripts/load-test.py stress --base http://127.0.0.1:8765
+python3 scripts/load-test.py slow --base http://127.0.0.1:8765
+python3 scripts/load-test.py soak --base http://127.0.0.1:8765 --seconds 3600 --pid <server pid>
+```
 
 ## Monitoring
 

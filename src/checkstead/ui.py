@@ -6,11 +6,14 @@ from GitHub or Microsoft sign-in. The timeline itself is unchanged.
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import secrets
 import sys
 import threading
+import time
+from dataclasses import dataclass
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -251,6 +254,125 @@ def _github_cookie(state: str) -> str:
     return "; ".join(parts)
 
 
+@dataclass(frozen=True)
+class HistoryBody:
+    raw: bytes
+    gzipped: bytes
+
+
+class HistoryCache:
+    """The /api/history response, rebuilt only when a scan report changes.
+
+    Building it parses every scan; with a few hundred scans that is tens of
+    milliseconds of CPU under the GIL, and every concurrent request queued
+    behind it. The key is each scan directory's name and the size and mtime
+    of its two report files, which is a few hundred stat calls.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._lock = threading.Lock()
+        self._key: tuple | None = None
+        self._body: HistoryBody | None = None
+
+    def _signature(self) -> tuple:
+        entries = []
+        try:
+            children = sorted(os.scandir(self.root), key=lambda entry: entry.name)
+        except FileNotFoundError:
+            return ()
+        for entry in children:
+            if not entry.is_dir():
+                continue
+            for name in ("checkstead.txt", "dependency-check-report.json"):
+                try:
+                    info = os.stat(os.path.join(entry.path, name))
+                except FileNotFoundError:
+                    entries.append((entry.name, name, None))
+                    continue
+                entries.append((entry.name, name, info.st_size, info.st_mtime_ns))
+        return tuple(entries)
+
+    def body(self) -> HistoryBody:
+        key = self._signature()
+        with self._lock:
+            if self._body is not None and key == self._key:
+                return self._body
+            raw = json.dumps(history_payload(load_history(self.root))).encode("utf-8")
+            self._body = HistoryBody(raw, gzip.compress(raw, compresslevel=6))
+            self._key = key
+            return self._body
+
+
+DEFAULT_MAX_CONNECTIONS = 256
+
+
+def max_connections() -> int:
+    raw = os.environ.get("CHECKSTEAD_MAX_CONNECTIONS", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return DEFAULT_MAX_CONNECTIONS
+
+
+_BUSY = (
+    b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain; charset=utf-8\r\n"
+    b"Retry-After: 1\r\nConnection: close\r\nContent-Length: 39\r\n\r\n"
+    b"The server is busy. Try again shortly.\n"
+)
+
+
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """One thread per connection, up to a limit. Past it, 503 and close.
+
+    Without a limit a flood of connections, or many idle keep-alive clients,
+    grows threads and memory until the process fails for everyone.
+    """
+
+    daemon_threads = True
+    request_queue_size = 128
+
+    def __init__(self, address, handler, limit: int) -> None:
+        self._slots = threading.BoundedSemaphore(limit)
+        self.max_connections = limit
+        super().__init__(address, handler)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(_BUSY)
+                # Read what the client already sent before closing. Closing
+                # with unread data makes Windows reset the connection, and
+                # the client then never sees the 503.
+                # This runs on the accept thread, so it is bounded to 100 ms
+                # in total however slowly the client sends.
+                deadline = time.monotonic() + 0.1
+                while (left := deadline - time.monotonic()) > 0:
+                    request.settimeout(left)
+                    if not request.recv(65536):
+                        break
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+    def handle_error(self, request, client_address) -> None:
+        # A client that hangs up or times out is routine, not a server error.
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def content_security_policy() -> str:
     """The pages are one inline document. Nothing loads from another origin.
 
@@ -293,17 +415,29 @@ def bind_server(
     # One repository scan batch at a time. A second request gets 409 instead
     # of a second engine on the same snapshot data directory.
     scan_lock = threading.Lock()
+    history = HistoryCache(scans_dir)
 
     class Handler(BaseHTTPRequestHandler):
         timeout = SOCKET_TIMEOUT_SECONDS
+        # Keep-alive. Every response sets Content-Length, and an idle
+        # connection is closed after SOCKET_TIMEOUT_SECONDS.
+        protocol_version = "HTTP/1.1"
 
         def _guard(self, unsafe: bool) -> bool:
             """Refuse a foreign Host, and a cross-site state change. True to continue."""
+            self._raw: bytes | None = None
             path = self.path.split("?", 1)[0]
             if path in _UNGUARDED_PATHS:
+                # No Host or Origin check here, but a body still has to leave
+                # the connection. The webhook drains its own.
+                if unsafe and path != "/api/github/hook":
+                    return self._read_request_body()
                 return True
             host = self.headers.get("Host", "")
             if not host_allowed(host):
+                # The body, if any, is not read. With keep-alive its bytes would
+                # be parsed as the next request, so the connection ends here.
+                self.close_connection = True
                 self._send(
                     421,
                     "text/plain; charset=utf-8",
@@ -316,8 +450,33 @@ def bind_server(
                 host,
                 self.headers.get("Sec-Fetch-Site", ""),
             ):
+                self.close_connection = True
                 self._json(403, {"error": "Cross-site request refused."})
                 return False
+            if unsafe:
+                return self._read_request_body()
+            return True
+
+        def _read_request_body(self) -> bool:
+            """Read the whole body once, before any handler runs.
+
+            Every POST, PATCH, and DELETE body is consumed whether or not its
+            handler uses it, so the next request on a keep-alive connection
+            starts at a request line.
+            """
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                length = -1
+            if length < 0:
+                self.close_connection = True
+                self._json(400, {"error": "Request body is not valid."})
+                return False
+            if length > MAX_BODY:
+                self.close_connection = True
+                self._json(413, {"error": "Request is too large."})
+                return False
+            self._raw = self.rfile.read(length) if length else b""
             return True
 
         def do_GET(self) -> None:
@@ -356,7 +515,7 @@ def bind_server(
             if path == "/api/history":
                 if self._user() is None:
                     return
-                self._json(200, history_payload(load_history(scans_dir)))
+                self._history()
                 return
             if path == "/api/admin/users":
                 if self._admin() is None:
@@ -502,6 +661,8 @@ def bind_server(
             self.send_response(302)
             self.send_header("Location", location)
             self.send_header("Set-Cookie", state_cookie(state))
+            self.send_header("Content-Length", "0")
+            self._common_headers()
             self.end_headers()
 
         def _sso_callback(self, kind: str, query: dict[str, list[str]]) -> None:
@@ -525,6 +686,8 @@ def bind_server(
             self.send_header("Location", "/")
             self.send_header("Set-Cookie", _session_cookie(token, SESSION_DAYS * 24 * 3600))
             self.send_header("Set-Cookie", f"{STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+            self.send_header("Content-Length", "0")
+            self._common_headers()
             self.end_headers()
 
         def _local_session(self) -> None:
@@ -555,7 +718,10 @@ def bind_server(
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
-                length = 0
+                length = -1
+            if length < 0 or length > 1024 * 1024:
+                # Not drained in full, so the connection cannot be reused.
+                self.close_connection = True
             remaining = min(max(length, 0), 1024 * 1024)
             while remaining:
                 chunk = self.rfile.read(min(remaining, 65536))
@@ -722,15 +888,8 @@ def bind_server(
             return "application/json" in self.headers.get("Accept", "")
 
         def _fields(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             content_type = self.headers.get("Content-Type", "")
             if "application/json" in content_type or raw[:1] == b"{":
                 try:
@@ -757,6 +916,8 @@ def bind_server(
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.send_header("Cache-Control", "no-store")
             if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
                 self.send_header("Strict-Transport-Security", "max-age=31536000")
@@ -812,15 +973,8 @@ def bind_server(
             return user
 
         def _body(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             try:
                 body = json.loads(raw.decode("utf-8")) if raw else {}
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -833,6 +987,20 @@ def bind_server(
             if organization is not None:
                 body["organization"] = str(organization)
             return body
+
+        def _history(self) -> None:
+            body = history.body()
+            compressed = "gzip" in self.headers.get("Accept-Encoding", "")
+            data = body.gzipped if compressed else body.raw
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Vary", "Accept-Encoding")
+            if compressed:
+                self.send_header("Content-Encoding", "gzip")
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(data)
 
         def _json(self, status: int, payload: dict, cookie: str | None = None) -> None:
             body = json.dumps(payload).encode("utf-8")
@@ -856,7 +1024,7 @@ def bind_server(
         def log_message(self, fmt: str, *args) -> None:
             return
 
-    return ThreadingHTTPServer((host, port), Handler)
+    return BoundedHTTPServer((host, port), Handler, max_connections())
 
 
 def warn_exposed_local_sign_in(host: str) -> None:

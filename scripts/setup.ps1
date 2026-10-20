@@ -100,7 +100,12 @@ function Install-Python {
     $archive = Join-Path $tmp "python.tar.gz"
     Save-Download -Uri $url -OutFile $archive
     Assert-Sha256 -Path $archive -Expected $PythonSha256[$triple] -What "the Python download"
-    tar -xzf $archive -C $tmp
+    # Windows' own bsdtar. GNU tar from Git's usr\bin, when it is earlier on
+    # PATH, reads "C:\..." as a remote host and fails.
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (-not (Test-Path -LiteralPath $tar)) { $tar = "tar" }
+    & $tar -xzf $archive -C $tmp
+    if ($LASTEXITCODE -ne 0) { throw "Could not extract the Python archive." }
     $extracted = Join-Path $tmp "python"
     if (Test-Path (Join-Path $Root "python")) { Remove-Item -Recurse -Force (Join-Path $Root "python") }
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
@@ -122,10 +127,11 @@ function Install-Jdk {
     Expand-Archive -Path $archive -DestinationPath (Join-Path $tmp "unpacked") -Force
     $java = Get-ChildItem -Path (Join-Path $tmp "unpacked") -Filter java.exe -Recurse | Select-Object -First 1
     if ($null -eq $java) { throw "The JDK archive did not contain bin\java.exe." }
-    $home = $java.Directory.Parent.FullName
+    # Not $home: that is PowerShell's read-only $HOME, and assigning it throws.
+    $jdkHome = $java.Directory.Parent.FullName
     if (Test-Path (Join-Path $Root "jdk")) { Remove-Item -Recurse -Force (Join-Path $Root "jdk") }
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
-    Move-Item $home (Join-Path $Root "jdk")
+    Move-Item $jdkHome (Join-Path $Root "jdk")
     Remove-Item -Recurse -Force $tmp
     Write-Output "Installed a JDK under $Root\jdk"
 }
@@ -193,6 +199,20 @@ function Install-EngineOverrides {
     }
 }
 
+# The gpg in Git for Windows is an MSYS build. It treats only paths that
+# start with "/" as absolute, so "C:\x" and "C:/x" both become relative to
+# the working directory. It reports its home as "/c/..." in --version; native
+# GnuPG (GnuPG for Windows, Gpg4win) reports "C:\..." and takes Windows paths.
+function ConvertTo-GpgPath {
+    param([string]$Path)
+    $homeLine = (& gpg --version 2>$null | Select-String -Pattern '^Home:' | Select-Object -First 1)
+    if ($homeLine -and ($homeLine.ToString() -match '^Home:\s*/')) {
+        $drive = $Path.Substring(0, 1).ToLowerInvariant()
+        return "/" + $drive + $Path.Substring(2).Replace('\', '/')
+    }
+    return $Path
+}
+
 function Install-Engine {
     param([string]$Pin, [string]$Python)
     # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
@@ -227,18 +247,26 @@ function Install-Engine {
             $archivePy = Join-Path $tmp "archive.py"
             Save-Download -Uri "$RawBase/src/checkstead/archive.py" -OutFile $archivePy
         }
-        $gnupg = Join-Path $tmp "gnupg"
+        # A short home of its own: gpg-agent's socket path must stay under the
+        # Unix socket limit (about 108 bytes), and the temp path above has a GUID.
+        $gnupg = Join-Path ([System.IO.Path]::GetTempPath()) ("csg" + [guid]::NewGuid().ToString("n").Substring(0, 8))
         New-Item -ItemType Directory -Path $gnupg | Out-Null
-        $env:GNUPGHOME = $gnupg
-        & gpg --batch --import $keyFile 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported." }
-        $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
+        $env:GNUPGHOME = ConvertTo-GpgPath $gnupg
+        $imported = & gpg --batch --no-autostart --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
+        # gpg can exit non-zero after a good import when it cannot reach an
+        # agent, which a public-key import does not need. The keyring is the
+        # evidence: it must now hold the pinned fingerprint.
+        $listed = & gpg --batch --no-autostart --with-colons --list-keys 2>$null | Out-String
+        if ($listed -notmatch ("(?m)^fpr:+" + $ExpectedFingerprint + ":")) {
+            throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported"
+        }
+        $shown = & gpg --batch --no-autostart --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
         if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
         if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
-        & gpg --batch --verify $signature $archive 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify." }
+        $verified = & gpg --batch --no-autostart --verify (ConvertTo-GpgPath $signature) (ConvertTo-GpgPath $archive) 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify. gpg said: $verified" }
         $unpacked = Join-Path $tmp "unpacked"
         New-Item -ItemType Directory -Path $unpacked | Out-Null
         if ($Python -eq "py -3") {
@@ -262,6 +290,7 @@ function Install-Engine {
         Write-Output "Installed Dependency-Check $Pin under $Root\dependency-check"
     } finally {
         if ($null -eq $previousGnupg) { Remove-Item Env:GNUPGHOME -ErrorAction SilentlyContinue } else { $env:GNUPGHOME = $previousGnupg }
+        if ($gnupg -and (Test-Path -LiteralPath $gnupg)) { Remove-Item -Recurse -Force $gnupg -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force $tmp }
     }
 }
@@ -332,7 +361,11 @@ function Install-UserPath {
 
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 
-$python = Select-Python
+# CHECKSTEAD_INSTALL_RUNTIMES=1 installs the pinned Python and JDK even when the
+# machine has its own, so their checksum paths are exercised (CI does this).
+$forceRuntimes = $env:CHECKSTEAD_INSTALL_RUNTIMES -eq "1"
+
+$python = if ($forceRuntimes) { $null } else { Select-Python }
 if ($python) {
     Write-Output "Python 3.11+ already present."
 } else {
@@ -341,9 +374,9 @@ if ($python) {
 }
 
 $bundledJdk = $false
-if (Test-JavaRuns) {
+if ((-not $forceRuntimes) -and (Test-JavaRuns)) {
     Write-Output "java already runs."
-} elseif (Test-Path (Join-Path $Root "jdk\bin\java.exe")) {
+} elseif ((-not $forceRuntimes) -and (Test-Path (Join-Path $Root "jdk\bin\java.exe"))) {
     Write-Output "JDK already installed."
     $bundledJdk = $true
 } else {

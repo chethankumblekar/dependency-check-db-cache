@@ -60,7 +60,8 @@ class KeyCommandTests(TestCase):
 
     def test_generate_writes_a_private_file_and_prints_only_the_public_entry(self) -> None:
         private, entry = self.generate("checkstead-2026-10")
-        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o600)
+        if os.name != "nt":  # Windows has no POSIX mode bits; ACLs apply instead.
+            self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o600)
         self.assertIn("PRIVATE KEY", private.read_text(encoding="utf-8"))
         self.assertEqual(entry["id"], "checkstead-2026-10")
         self.assertEqual(entry["status"], "current")
@@ -164,3 +165,23 @@ class SeedTests(TestCase):
         workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
         self.assertIn("timeout-minutes: 330", workflow)
         self.assertIn("full_rebuild", workflow)
+
+    def test_the_updater_gates_publishing_on_a_canary_and_can_validate_only(self) -> None:
+        script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
+        canary = script.index("CANARY_CVE=")
+        self.assertLess(script.index("  --updateonly \\\n"), canary)
+        self.assertLess(canary, script.index('gh release create "$TAG"'))
+        self.assertIn('CANARY_JAR_SHA256="87363a4c94eaabeefd8b930cb059f66b64c9f7d632862f23de3012da7660047b"', script)
+        self.assertIn("Refusing to publish. The canary scan", script)
+        self.assertIn('cp -a "${WORK}/data" "${WORK}/canary/data"', script)
+        validate = script.index('if [[ "$VALIDATE_ONLY" == "1" ]]; then\n  echo "Validation only.')
+        self.assertLess(validate, script.index('gh release create "$TAG"'))
+        workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
+        self.assertIn("validate_only", workflow)
+        self.assertIn("CHECKSTEAD_VALIDATE_ONLY", workflow)
+
+    def test_the_signing_job_runs_in_a_protected_environment(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
+        self.assertIn("environment: snapshot-signing", workflow)
+        script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
+        self.assertIn("--nvdValidForHours 0", script)

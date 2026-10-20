@@ -165,3 +165,38 @@ class StoreHardeningTests(TestCase):
             created = [row[0] for row in conn.execute("SELECT created_at FROM sessions")]
         self.assertEqual(len(created), 1)
         self.assertNotEqual(created[0], "2000-01-01T00:00:00Z")
+
+
+class ConnectionLeakTests(TestCase):
+    def test_store_calls_close_their_database_connection(self) -> None:
+        import gc
+        import shutil
+        import sqlite3
+        import warnings
+
+        data = ROOT / "build" / "tests" / "accounts-leak"
+        shutil.rmtree(data, ignore_errors=True)
+        store = AccountStore(data)
+        token, _user = store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
+        opened: list[sqlite3.Connection] = []
+        real = sqlite3.connect
+
+        def tracking(*args, **kwargs):
+            connection = real(*args, **kwargs)
+            opened.append(connection)
+            return connection
+
+        from unittest import mock
+
+        with mock.patch("checkstead.accounts.sqlite3.connect", side_effect=tracking):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                for _ in range(50):
+                    self.assertIsNotNone(store.user_for_session(token))
+                store.list_users()
+                gc.collect()
+        self.assertEqual(len(opened), 51)
+        for connection in opened:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute("SELECT 1")
+        self.assertFalse([w for w in caught if "unclosed database" in str(w.message)])

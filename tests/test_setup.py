@@ -500,7 +500,7 @@ class SetupTests(TestCase):
         installer_fn = installer.split("gpg --batch --import", 1)[1]
         self.assertLess(installer_fn.index("gpg --batch --verify"), installer_fn.index('python3 "$ARCHIVE"'))
         engine = windows.split("function Install-Engine {", 1)[1].split("\nfunction ", 1)[0]
-        self.assertLess(engine.index("gpg --batch --verify"), engine.index("dependency-check.bat"))
+        self.assertLess(engine.index("gpg --batch --no-autostart --verify"), engine.index("dependency-check.bat"))
         self.assertNotIn("Expand-Archive", engine)
         self.assertIn("The release signature does not verify", engine)
         self.assertIn("gpg is required", shell)
@@ -534,6 +534,11 @@ class SetupTests(TestCase):
         # Python, the JDK, and each patched engine jar.
         self.assertEqual(script.count("verify_sha256 \""), 3)
         self.assertEqual(windows.count("Assert-Sha256 -Path"), 3)
+        self.assertIn('Join-Path $env:SystemRoot "System32\\tar.exe"', windows)
+        # $home is PowerShell's read-only $HOME; assigning it aborts the install.
+        self.assertNotRegex(windows, r"(?im)^\s*\$home\s*=")
+        # MSYS gpg (Git for Windows) reads a backslash GNUPGHOME as relative.
+        self.assertIn("$env:GNUPGHOME = ConvertTo-GpgPath $gnupg", windows)
 
     def test_checkstead_ref_must_be_a_ref_name(self) -> None:
         root = ROOT / "build" / "tests" / "setup-ref"

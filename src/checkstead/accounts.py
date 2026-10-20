@@ -12,8 +12,10 @@ import os
 import secrets
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterator
 
 from checkstead.errors import ChecksteadError
 from checkstead.identity import PROVIDERS, Identity, normalize_login
@@ -81,10 +83,21 @@ class AccountStore:
         if self.path.exists():
             os.chmod(self.path, 0o600)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """One transaction on a connection that is closed afterwards.
+
+        ``with sqlite3.connect(...)`` commits but does not close. Every
+        session check opened one, and under load the server held thousands
+        of open file handles until garbage collection caught up.
+        """
         conn = sqlite3.connect(self.path, timeout=5)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def sign_in(self, identity: Identity) -> tuple[str, dict]:
         key = identity.login.casefold()
