@@ -36,6 +36,7 @@ class Finding:
     description: str | None = None
     score: str | None = None
     package: str | None = None
+    kev: bool | None = None
 
 
 @dataclass
@@ -56,6 +57,9 @@ class Scan:
     score_lines: list[str] = field(default_factory=list)
     pull_request: str | None = None
     branch: str | None = None
+    authenticity: str | None = None
+    signature_key: str | None = None
+    policy: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -248,6 +252,7 @@ def _classified(findings: list[Finding], report_text: str) -> list[Finding]:
                 description=description or None,
                 score=chosen.get("score") or finding.score,
                 package=chosen.get("package") or chosen.get("dependency") or finding.package,
+                kev={"yes": True, "no": False}.get(chosen.get("kev") or ""),
             )
         )
     return classified
@@ -277,6 +282,20 @@ def load_scan(directory: Path) -> Scan:
         score_lines=score_lines_from_report(report_text),
         pull_request=header.get("pull-request") or None,
         branch=header.get("branch") or None,
+        # Written by scans from 20 October 2026 on. Older reports leave these
+        # unset, and the UI says "not recorded" rather than guessing.
+        authenticity=header.get("snapshot-authenticity") or None,
+        signature_key=header.get("snapshot-key") or None,
+        policy={
+            key: header[name]
+            for key, name in (
+                ("scorePolicy", "score-policy"),
+                ("threshold", "threshold"),
+                ("failOnKev", "fail-on-kev"),
+                ("failUnscored", "fail-unscored"),
+            )
+            if header.get(name)
+        },
     )
 
 
@@ -363,6 +382,8 @@ def _finding_json(item: Finding) -> dict:
         payload["score"] = item.score
     if item.package:
         payload["package"] = item.package
+    if item.kev is not None:
+        payload["kev"] = item.kev
     return payload
 
 
@@ -402,6 +423,9 @@ def history_payload(scans: list[Scan]) -> dict:
                 "scoreLines": list(scan.score_lines),
                 "pullRequest": scan.pull_request,
                 "branch": scan.branch,
+                "authenticity": scan.authenticity,
+                "signatureKey": scan.signature_key,
+                "policy": dict(scan.policy),
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],
                 "findings": [_finding_json(item) for item in scan.findings],
             }
