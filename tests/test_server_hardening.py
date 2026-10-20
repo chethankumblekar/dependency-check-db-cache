@@ -296,6 +296,18 @@ class KeepAliveBodyTests(TestCase):
     def _connection(self) -> http.client.HTTPConnection:
         return http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
 
+    def test_a_post_body_to_an_unguarded_path_does_not_corrupt_the_next_request(self) -> None:
+        connection = self._connection()
+        try:
+            connection.request("POST", "/api/health", body=b'{"x": 1}', headers={"Content-Type": "application/json"})
+            first = connection.getresponse()
+            first.read()
+            connection.request("GET", "/api/health")
+            again = connection.getresponse()
+            self.assertEqual(again.status, 200, again.read())
+        finally:
+            connection.close()
+
     def test_a_body_the_handler_ignores_does_not_corrupt_the_next_request(self) -> None:
         connection = self._connection()
         try:

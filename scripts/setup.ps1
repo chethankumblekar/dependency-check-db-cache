@@ -199,6 +199,20 @@ function Install-EngineOverrides {
     }
 }
 
+# The gpg in Git for Windows is an MSYS build. It treats only paths that
+# start with "/" as absolute, so "C:\x" and "C:/x" both become relative to
+# the working directory. It reports its home as "/c/..." in --version; native
+# GnuPG (GnuPG for Windows, Gpg4win) reports "C:\..." and takes Windows paths.
+function ConvertTo-GpgPath {
+    param([string]$Path)
+    $homeLine = (& gpg --version 2>$null | Select-String -Pattern '^Home:' | Select-Object -First 1)
+    if ($homeLine -and ($homeLine.ToString() -match '^Home:\s*/')) {
+        $drive = $Path.Substring(0, 1).ToLowerInvariant()
+        return "/" + $drive + $Path.Substring(2).Replace('\', '/')
+    }
+    return $Path
+}
+
 function Install-Engine {
     param([string]$Pin, [string]$Python)
     # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
@@ -233,17 +247,25 @@ function Install-Engine {
             $archivePy = Join-Path $tmp "archive.py"
             Save-Download -Uri "$RawBase/src/checkstead/archive.py" -OutFile $archivePy
         }
-        $gnupg = Join-Path $tmp "gnupg"
+        # A short home of its own: gpg-agent's socket path must stay under the
+        # Unix socket limit (about 108 bytes), and the temp path above has a GUID.
+        $gnupg = Join-Path ([System.IO.Path]::GetTempPath()) ("csg" + [guid]::NewGuid().ToString("n").Substring(0, 8))
         New-Item -ItemType Directory -Path $gnupg | Out-Null
-        $env:GNUPGHOME = $gnupg
-        $imported = & gpg --batch --import $keyFile 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
-        $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
+        $env:GNUPGHOME = ConvertTo-GpgPath $gnupg
+        $imported = & gpg --batch --no-autostart --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
+        # gpg can exit non-zero after a good import when it cannot reach an
+        # agent, which a public-key import does not need. The keyring is the
+        # evidence: it must now hold the pinned fingerprint.
+        $listed = & gpg --batch --no-autostart --with-colons --list-keys 2>$null | Out-String
+        if ($listed -notmatch ("(?m)^fpr:+" + $ExpectedFingerprint + ":")) {
+            throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported"
+        }
+        $shown = & gpg --batch --no-autostart --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
         if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
         if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
-        $verified = & gpg --batch --verify $signature $archive 2>&1 | Out-String
+        $verified = & gpg --batch --no-autostart --verify (ConvertTo-GpgPath $signature) (ConvertTo-GpgPath $archive) 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify. gpg said: $verified" }
         $unpacked = Join-Path $tmp "unpacked"
         New-Item -ItemType Directory -Path $unpacked | Out-Null
@@ -268,6 +290,7 @@ function Install-Engine {
         Write-Output "Installed Dependency-Check $Pin under $Root\dependency-check"
     } finally {
         if ($null -eq $previousGnupg) { Remove-Item Env:GNUPGHOME -ErrorAction SilentlyContinue } else { $env:GNUPGHOME = $previousGnupg }
+        if ($gnupg -and (Test-Path -LiteralPath $gnupg)) { Remove-Item -Recurse -Force $gnupg -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $tmp) { Remove-Item -Recurse -Force $tmp }
     }
 }

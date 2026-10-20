@@ -530,6 +530,10 @@ def bind_server(
             self._raw: bytes | None = None
             path = self.path.split("?", 1)[0]
             if path in _UNGUARDED_PATHS:
+                # No Host or Origin check here, but a body still has to leave
+                # the connection. The webhook drains its own.
+                if unsafe and path != "/api/github/hook":
+                    return self._read_request_body()
                 return True
             host = self.headers.get("Host", "")
             if not host_allowed(host):
@@ -833,7 +837,10 @@ def bind_server(
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
-                length = 0
+                length = -1
+            if length < 0 or length > 1024 * 1024:
+                # Not drained in full, so the connection cannot be reused.
+                self.close_connection = True
             remaining = min(max(length, 0), 1024 * 1024)
             while remaining:
                 chunk = self.rfile.read(min(remaining, 65536))

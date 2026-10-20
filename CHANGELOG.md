@@ -21,10 +21,33 @@ Web UI:
 - The page's Content-Security-Policy no longer allows inline script or style.
   Scripts, styles, and the vendored OFL fonts are served from a fixed
   allowlist under `/static/`, with ETags.
-- A request body the handler did not read no longer corrupts the next request
-  on a keep-alive connection.
 - Light and dark themes, keyboard navigation, and axe-checked views. The NVD
   attribution is shown wherever NVD data is.
+
+Verification pass (pull request 25):
+
+- The updater refuses to publish unless the new database finds
+  CVE-2015-6420 in a digest-pinned jar, always queries the NVD
+  (`--nvdValidForHours 0`), and has a `validate_only` mode that runs the full
+  update, canary, and signing against the real NVD without a release. Its job
+  runs in the `snapshot-signing` environment, limited to `main`.
+- The account store closes its SQLite connections; before, the server leaked
+  a file handle per session check under load.
+- The timeline history is cached and gzip-compressed (42 to 940 req/s with
+  204 scans), the server speaks HTTP/1.1 keep-alive, and
+  `CHECKSTEAD_MAX_CONNECTIONS` (256) caps connections with a fast 503.
+- A request body the handler did not read no longer corrupts the next request
+  on a keep-alive connection.
+- The scanner image drops root to the owner of the mounted directory with no
+  capabilities. The server image is built on Ubuntu 24.04: 0 High or
+  Critical findings, down from 63.
+- `setup.ps1` works on real Windows: it no longer assigns the read-only
+  `$HOME`, uses Windows' `tar.exe`, shows gpg's errors, works with Git for
+  Windows' gpg, and judges the key import by the pinned fingerprint. A
+  Windows CI job installs and scans end to end.
+- `scripts/load-test.py` (load, stress, slow clients, soak with memory and
+  file-handle limits) and `scripts/idp-preflight.py`, with a manual
+  identity-provider test plan.
 
 Security:
 

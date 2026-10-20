@@ -1,5 +1,86 @@
 # Production-readiness assessment
 
+## 20 October 2026, verification pass
+
+Branch `production-verification`, pull request 25, on top of `main` at
+`e4b20bc`. This pass ran the checks the audit below left open against real
+systems, and fixed what they found.
+
+**Verdict: the scanner, the snapshot pipeline, the container images, and the
+Windows installer are verified. Checkstead as a whole is not yet
+production-ready**, for two reasons that need a person: GitHub and Entra
+sign-in have not been tested against real tenants, and the snapshot signing
+key and NVD key are still repository secrets (custody below). Everything else
+on the checklist has evidence.
+
+### Results
+
+| Check | How | Result |
+| --- | --- | --- |
+| Incremental update against the real NVD | `update-snapshot.yml` with `validate_only`, run [39401035176](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39401035176) | Seed `db-2026-10-20` verified as `signed` by `checkstead-2026-10`. The NVD returned 48 changed records, applied in 1 batch; the NVD step took 10 s, the whole job 51 s (a full rebuild takes 1 to 2.5 hours). Canary found CVE-2015-6420. Manifest signed. Nothing published. |
+| Earlier validation run 39399445328 | same | Found a defect: Dependency-Check skipped the NVD ("Check for updates complete (22 ms)") because the seed had been checked that morning. Fixed with `--nvdValidForHours 0`. |
+| Canary gate | `update-snapshot.sh`, run locally with the engine | The real `db-2026-10-20` database finds CVE-2015-6420; an empty database makes the engine exit 13 and publishing is refused. |
+| Windows | CI job `Windows` on `windows-latest`, run [39470210320](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39470210320) | Portable unit tests pass, including the `msvcrt` lock test. `setup.ps1` installed the pinned Python and JDK (checksums verified), verified the engine signature, replaced the three vulnerable jars, and installed Checkstead. A scan verified the published snapshot as `signed key=checkstead-2026-10` and reported CVE-2015-6420 (9.8). |
+| Load | `scripts/load-test.py load`, 16 clients, 204 scans in the timeline | 42 req/s and p95 1,476 ms before; 940 to 1,160 req/s and p95 57 to 64 ms after the history cache. 0 errors. |
+| Stress | `load-test.py stress`, doubling from 16 | 0 errors up to 256 clients (1,130 req/s, p95 508 ms). At 512, past the 256-connection cap, extra connections get 503 with `Retry-After`. Recovery: 0 errors. |
+| Slow clients | `load-test.py slow`, 50 half-sent requests | All 50 dropped after the 30 s socket timeout; normal traffic meanwhile 1,678 req/s, 0 errors. |
+| Soak before the leak fix | `load-test.py soak`, 32 clients, 20 min | 1,130,698 requests, 0 errors, but open files 231 to 1,396 and memory up to 470 MB. |
+| Soak after the leak fix | same | 871,666 requests, 0 errors, p95 109 to 248 ms. Open files flat at 38; memory flat at about 34 MB. |
+| Server image OS findings | Trivy 0.70.0 report on pull request 25 | `python:3.14-slim-bookworm` 61 High + 2 Critical (all unfixed); `slim-trixie` 44 High; Ubuntu 24.04 **0 High, 0 Critical**. Scanner image: 0. |
+| Scanner root drop | `smoke-image.sh scanner` in CI | A default run (no `--user`) writes its output as the owner of the mounted directory, not root. |
+| Identity-provider preflight | `scripts/idp-preflight.py` against a local server with placeholder client ids | PASS for GitHub and Entra up to the provider's login page. No real tenant. |
+
+### Defects found and fixed in this pass
+
+| Severity | Defect | Fix |
+| --- | --- | --- |
+| High | The account store opened an SQLite connection per session check and never closed it; under load the server held thousands of file handles, which ends in "too many open files". | `_connect` closes every connection. `tests/test_accounts.py` fails on the old code. The soak now fails when open files grow. |
+| High | `setup.ps1` could not install a JDK on any Windows machine without one: it assigned PowerShell's read-only `$HOME`. | Renamed. Test forbids assigning `$home`. |
+| High | The updater could publish without querying the NVD when the seed was recent. | `--nvdValidForHours 0`; contract test. |
+| Medium | `/api/history` parsed every scan on every request (p95 1.5 s at 16 clients). | Cached by file signature and gzip-compressed. `tests/test_history_cache.py`. |
+| Medium | No connection limit; HTTP/1.0 only. | HTTP/1.1 keep-alive, `CHECKSTEAD_MAX_CONNECTIONS` (256) with a fast 503; a refused client reads its 503 on Windows too. |
+| Medium | `setup.ps1` used whichever `tar` was first on PATH (Git's GNU tar fails on `C:\`), hid gpg's errors, and passed Windows paths to Git for Windows' MSYS gpg, which treats them as relative; a long temp path also broke gpg-agent's socket. | Windows `tar.exe`; gpg's output in the error; MSYS paths when gpg is MSYS; a short GnuPG home; import judged by the pinned fingerprint in the keyring. |
+| Medium | Nothing checked a new database before publishing it. | Canary scan gate. |
+| Medium | The scanner image ran as root by default. | The entrypoint drops to the mounted directory's owner (or 10001) with `setpriv`, clearing every capability, with no-new-privileges. |
+| Medium | The server image carried 63 unfixed High/Critical OS findings. | Ubuntu 24.04 base, digest-pinned: 0. |
+
+### Not verified
+
+- **GitHub and Entra sign-in against real tenants.** It needs test accounts
+  and their passwords, which an automated agent does not enter. Run
+  `scripts/idp-preflight.py` and the 12 cases in
+  [Identity provider testing](../operations/identity-provider-testing.md).
+  Deployments that use only localhost sign-in, the CLI, the Action, and the
+  CI integrations do not depend on this.
+- **Load on production hardware.** The numbers above are from an Apple
+  Silicon laptop.
+- **The first scheduled incremental run on `main`** after pull request 25
+  merges. The validation run exercised the same path on this branch.
+
+### Signing key custody
+
+The `snapshot-signing` environment exists and only `main` may deploy to it;
+the updater job runs in it. The private signing key and the NVD key are still
+repository-level secrets, so a workflow pushed to another branch by someone
+with write access can still read them. Secret values cannot be read back from
+GitHub, so moving them means rotating the signing key (generate a new key into
+the environment, pin it, retire `checkstead-2026-10` with `notAfter`
+2026-10-20) and re-entering the NVD key. An automated agent was not permitted
+to write repository secrets. The steps are in
+[Production operations](../operations/production-operations.md#signing-key-custody).
+
+### Checklist changes
+
+| Item | Before this pass | Now |
+| --- | --- | --- |
+| Updater finishes inside its time limit, incremental against the NVD | Open | Done (51 s validation run) |
+| Windows | Open | Done (CI, install and scan) |
+| Load, stress, soak | None | Done; two defects fixed |
+| No High/Critical findings in either image | Server had 63 unfixed | Done (0 and 0) |
+| Scanner never runs as root | Open | Done |
+| Signing key out of repository secrets | Open | **Open (needs a person to approve a secret write)** |
+| Real identity-provider tenants | Open | **Open (needs test accounts)** |
+
 ## 20 October 2026 audit
 
 Base: `main` at `3578a2f`. Branch: `hardening/production-readiness`.
