@@ -6,9 +6,10 @@ Base: `main` at `3578a2f`. Branch: `hardening/production-readiness`.
 Engine pin: Dependency-Check 13.0.0.
 
 **Verdict: not production-ready yet.** The code-level findings below are fixed
-and tested, CI on this branch is green, and the production snapshot key is
-pinned. Still open: the first gated and attested publish, the first snapshot
-signed by the pinned key, and the incremental updater against the live NVD. They are listed under
+and tested, CI on this branch is green, the production snapshot key is
+pinned, and the first snapshot signed by it (`db-2026-10-20`) verifies. Still
+open: the first gated and attested publish, and the incremental updater
+against the live NVD. They are listed under
 [Not verified](#not-verified). Checkstead should not be called
 production-ready until each has evidence.
 
@@ -67,14 +68,15 @@ production-ready until each has evidence.
 - **First publish.** No image from this change has been pushed, gated by
   digest, attested, or promoted. The amd64 images CI builds have not been
   scanned; the local scans were arm64.
-- **Snapshot signing.** The maintainer supplied the public key for
-  `checkstead-2026-10` and it is pinned in `snapshot_trust.json`. No snapshot
-  signed by it exists yet, so that this key pairs with the
-  `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret is not yet shown. If it does not,
-  the updater refuses to publish ("does not match the pinned public key").
-  Every snapshot published so far is unsigned, and a client from this branch
-  refuses it: scans fail until the first signed snapshot is published. See
-  [Production operations](../operations/production-operations.md#snapshot-signing-key-management).
+- **Snapshot signing** is no longer open. The maintainer supplied the public
+  key for `checkstead-2026-10`; it is pinned. Run 39375412803 published
+  `db-2026-10-20` (snapshot `2026-10-20T05:32:17Z`) signed with that key id.
+  `scripts/verify-snapshot-pin.py` against the pinned trust file exited 0: the
+  signature verified, a tampered manifest and a stripped signature were
+  refused, and the zip matched its checksum. That proves the pinned key pairs
+  with the `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret. A local scan of the
+  genesis repository with this branch printed
+  `snapshot-authenticity: signed key=checkstead-2026-10`.
 - **Incremental updater.** Seeding and the weekly rebuild are unit-tested
   against fixture snapshots, not run against the NVD.
 - **Windows.** The `msvcrt` lock path and `setup.ps1` were not executed.
@@ -88,7 +90,7 @@ production-ready until each has evidence.
 | --- | --- | --- |
 | `NVD_API_KEY` secret | Maintainer | Present. |
 | `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret, `CHECKSTEAD_SNAPSHOT_KEY_ID` variable | Maintainer | Present. Public key pinned on 20 October 2026. |
-| A signed snapshot published before or right after this change merges | Maintainer | Scans with this client. Run `update-snapshot.yml` after merge. |
+| A signed snapshot published before this change merges | Maintainer | Done: `db-2026-10-20`. |
 | GHCR packages public, or consumers given read access | Maintainer | Pulling images |
 | Branch protection requiring `test`, `Build images`, and `Analyze` | Maintainer | Gates being mandatory |
 | Server `.env`: `CHECKSTEAD_PUBLIC_BASE`, `CHECKSTEAD_LOCAL=0`, `CHECKSTEAD_COOKIE_SECURE=1`, OAuth settings, `CHECKSTEAD_ENTRA_TENANT` | Operator | Any deployment beyond one laptop |
@@ -133,7 +135,7 @@ production-ready until each has evidence.
 | Supply chain | SBOM per image and platform | Done in workflow; local SBOMs generated |
 | Snapshot integrity | Checksum, signature verification, rotation, rollback and freshness checks | Done, tested |
 | Snapshot integrity | A production key pinned | Done (`checkstead-2026-10`) |
-| Snapshot integrity | First snapshot signed by that key, verified by a client | **Open (next updater run)** |
+| Snapshot integrity | First snapshot signed by that key, verified by a client | Done (`db-2026-10-20`) |
 | Containers | Digest-pinned bases, non-root server, no capabilities, read-only root, health check | Done, smoke-tested locally |
 | CI/CD | All third-party actions pinned to verified SHAs | Done, re-verified |
 | CI/CD | CI green on GitHub | Done on pull request 23 |
