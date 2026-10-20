@@ -28,6 +28,9 @@ Security:
   used (`CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK=1` to override). Signatures use
   the `cryptography` package instead of the `openssl` command.
   `checkstead snapshot-key generate|public` creates keys and trust entries.
+- The production snapshot key `checkstead-2026-10` is pinned. Clients refuse
+  unsigned snapshots and keys that are not pinned. `CHECKSTEAD_SNAPSHOT_TRUST`
+  replaces the shipped trust store for a company mirror and must pin a key.
 - Zip extraction refuses archives over `CHECKSTEAD_MAX_ARCHIVE_BYTES` or
   `CHECKSTEAD_MAX_ARCHIVE_MEMBERS`. An `Authorization` header is dropped when
   a redirect changes host.

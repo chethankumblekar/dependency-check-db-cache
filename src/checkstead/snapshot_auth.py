@@ -60,9 +60,20 @@ def canonical_payload(manifest: dict) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def trust_source() -> Path:
+    """The trust store in use: ``CHECKSTEAD_SNAPSHOT_TRUST``, or the one shipped here.
+
+    A company that runs its own updater and mirror pins its own key this way.
+    The override replaces the shipped keys rather than adding to them.
+    """
+    override = os.environ.get("CHECKSTEAD_SNAPSHOT_TRUST", "").strip()
+    return Path(override) if override else TRUST_FILE
+
+
 def load_trust(source: Path | dict | None = None) -> TrustStore:
+    override = source is None and bool(os.environ.get("CHECKSTEAD_SNAPSHOT_TRUST", "").strip())
     if source is None:
-        source = TRUST_FILE
+        source = trust_source()
     if isinstance(source, Path):
         try:
             payload = json.loads(source.read_text(encoding="utf-8"))
@@ -81,6 +92,13 @@ def load_trust(source: Path | dict | None = None) -> TrustStore:
         if key.key_id in keys:
             raise ChecksteadError(f"Snapshot trust store repeats key {key.key_id}.")
         keys[key.key_id] = key
+    if override and not keys:
+        # An empty replacement would turn signature checks off. That is a
+        # downgrade, not a configuration.
+        raise ChecksteadError(
+            "CHECKSTEAD_SNAPSHOT_TRUST names a trust store with no keys. "
+            "It has to pin at least one public key."
+        )
     return TrustStore(keys)
 
 

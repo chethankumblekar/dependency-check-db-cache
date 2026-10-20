@@ -207,5 +207,6 @@ and `su` to `checkstead`. A process that is already non-root skips `chown`.
   ships. Known High and Critical ones are replaced with fixed releases
   (`scripts/engine-overrides.txt`) and the gate covers the engine, so a new
   one fails CI. See [Security gates](security-gates.md).
-- That a snapshot signature is an independent publisher. No signing key is
-  pinned until `snapshot_trust.json` lists one.
+- That a snapshot signature is an independent publisher. The pinned key
+  `checkstead-2026-10` proves the snapshot came from a holder of the signing
+  secret, which is this repository's updater.

@@ -6,10 +6,9 @@ Base: `main` at `3578a2f`. Branch: `hardening/production-readiness`.
 Engine pin: Dependency-Check 13.0.0.
 
 **Verdict: not production-ready yet.** The code-level findings below are fixed
-and tested. Four things that production depends on can only be confirmed
-once this branch runs in GitHub, or by the maintainer: CI on this branch, the
-first gated and attested publish, a pinned snapshot signing key, and the
-incremental updater against the live NVD. They are listed under
+and tested, CI on this branch is green, and the production snapshot key is
+pinned. Still open: the first gated and attested publish, the first snapshot
+signed by the pinned key, and the incremental updater against the live NVD. They are listed under
 [Not verified](#not-verified). Checkstead should not be called
 production-ready until each has evidence.
 
@@ -61,16 +60,20 @@ production-ready until each has evidence.
 
 ### Not verified
 
-- **CI on this branch.** Nothing has been pushed. The new workflow steps
-  (`setup-trivy`, gating a pushed digest, `imagetools create`, the Maven
-  cache) have passed actionlint but have not run on GitHub.
+- **CI on this branch** ran green on pull request 23: `test`, both
+  `Build images` jobs (Trivy gates and smoke tests on the amd64 images), and
+  CodeQL. The publish path (gating a pushed digest, `imagetools create`) only
+  runs after merge.
 - **First publish.** No image from this change has been pushed, gated by
   digest, attested, or promoted. The amd64 images CI builds have not been
   scanned; the local scans were arm64.
-- **Snapshot signing.** `snapshot_trust.json` is empty, so every snapshot is
-  `unsigned` to clients, including ones the updater signs. Pinning needs the
-  public half of the maintainer's `checkstead-2026-10` key, which only the
-  updater's job summary (or the maintainer) can produce. See
+- **Snapshot signing.** The maintainer supplied the public key for
+  `checkstead-2026-10` and it is pinned in `snapshot_trust.json`. No snapshot
+  signed by it exists yet, so that this key pairs with the
+  `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret is not yet shown. If it does not,
+  the updater refuses to publish ("does not match the pinned public key").
+  Every snapshot published so far is unsigned, and a client from this branch
+  refuses it: scans fail until the first signed snapshot is published. See
   [Production operations](../operations/production-operations.md#snapshot-signing-key-management).
 - **Incremental updater.** Seeding and the weekly rebuild are unit-tested
   against fixture snapshots, not run against the NVD.
@@ -84,16 +87,19 @@ production-ready until each has evidence.
 | Item | Owner | Needed for |
 | --- | --- | --- |
 | `NVD_API_KEY` secret | Maintainer | Present. |
-| `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret, `CHECKSTEAD_SNAPSHOT_KEY_ID` variable | Maintainer | Present. The public key still has to be pinned in `snapshot_trust.json`. |
+| `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret, `CHECKSTEAD_SNAPSHOT_KEY_ID` variable | Maintainer | Present. Public key pinned on 20 October 2026. |
+| A signed snapshot published before or right after this change merges | Maintainer | Scans with this client. Run `update-snapshot.yml` after merge. |
 | GHCR packages public, or consumers given read access | Maintainer | Pulling images |
 | Branch protection requiring `test`, `Build images`, and `Analyze` | Maintainer | Gates being mandatory |
 | Server `.env`: `CHECKSTEAD_PUBLIC_BASE`, `CHECKSTEAD_LOCAL=0`, `CHECKSTEAD_COOKIE_SECURE=1`, OAuth settings, `CHECKSTEAD_ENTRA_TENANT` | Operator | Any deployment beyond one laptop |
 
 ### Residual risks
 
-- Until a key is pinned, a person who can publish a release on this
-  repository can publish a snapshot clients accept. Rollback protection and
-  freshness checks do not change that.
+- A person who holds the signing secret can publish a snapshot clients
+  accept. The key lives in one repository secret; it is not in a hardware
+  module, and the updater job can read it.
+- A company mirror needs its own key in a trust file named by
+  `CHECKSTEAD_SNAPSHOT_TRUST`; the shipped key does not verify it.
 - The engine jar overrides are a patch Checkstead maintains on top of an
   upstream release. They are pinned and tested, but upstream has not tested
   that combination. The laptop installers (`setup.sh`, `setup.ps1`) do not
@@ -126,10 +132,11 @@ production-ready until each has evidence.
 | Supply chain | Images gated, attested, and tagged by one digest | Done in workflow; **not yet run** |
 | Supply chain | SBOM per image and platform | Done in workflow; local SBOMs generated |
 | Snapshot integrity | Checksum, signature verification, rotation, rollback and freshness checks | Done, tested |
-| Snapshot integrity | A production key pinned | **Open (maintainer)** |
+| Snapshot integrity | A production key pinned | Done (`checkstead-2026-10`) |
+| Snapshot integrity | First snapshot signed by that key, verified by a client | **Open (next updater run)** |
 | Containers | Digest-pinned bases, non-root server, no capabilities, read-only root, health check | Done, smoke-tested locally |
 | CI/CD | All third-party actions pinned to verified SHAs | Done, re-verified |
-| CI/CD | CI green on GitHub | **Open (push needed)** |
+| CI/CD | CI green on GitHub | Done on pull request 23 |
 | Reliability | Timeouts, retries with backoff, locks, one scan batch at a time | Done, tested |
 | Reliability | Updater finishes inside its time limit | **Open (first scheduled run)** |
 | Cross-platform | Linux and macOS | Tested |

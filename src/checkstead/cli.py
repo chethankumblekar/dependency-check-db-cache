@@ -65,8 +65,11 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     from checkstead.snapshot import max_snapshot_age_days
     from checkstead.snapshot_auth import load_trust, signature_required
 
+    from checkstead.snapshot_auth import trust_source
+
     trust = load_trust()
-    print(f"snapshot-trust-keys: {len(trust.keys)}")
+    print(f"snapshot-trust: {trust_source()}")
+    print(f"snapshot-trust-keys: {len(trust.keys)} ({', '.join(sorted(trust.keys)) or 'none'})")
     print(f"snapshot-signature: {'required' if signature_required(trust) else 'optional'}")
     print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")

@@ -55,7 +55,8 @@ Scan client:
 | `CHECKSTEAD_CACHE` | `~/.cache/checkstead` | Snapshot cache. Shared safely by parallel scans on one machine. |
 | `CHECKSTEAD_UNTRUSTED_SOURCE` | unset | `1` turns off analyzers that run yarn, pnpm, go, mix, bundle-audit, or swift in the scanned tree. Set it for fork pull requests. The Action sets it in pull-request mode. The GitHub App scan always uses it. |
 | `CHECKSTEAD_SCAN_TIMEOUT_MINUTES` | `120` | Stops Dependency-Check and its child processes after this long. `0` means no limit. Exit code 124. |
-| `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE` | unset | `1` refuses an unsigned snapshot even with an empty trust file. Any pinned key already requires a signature. |
+| `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE` | unset | `1` refuses an unsigned snapshot even with an empty trust file. Any pinned key already requires a signature, and the shipped store pins one. |
+| `CHECKSTEAD_SNAPSHOT_TRUST` | shipped store | Path to a trust file that replaces the shipped keys, for a company mirror. Must pin at least one key. |
 | `CHECKSTEAD_SNAPSHOT_MAX_AGE_DAYS` | `7` | Age after which a snapshot is `stale`. |
 | `CHECKSTEAD_FAIL_STALE_SNAPSHOT` | unset | `1` fails a scan on a stale snapshot. Use it in CI when a missed update must stop builds. |
 | `CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK` | unset | `1` accepts a snapshot older than one this cache already used. Only for a deliberate withdrawal. |
@@ -91,9 +92,20 @@ in, except the first one.
 
 ## Snapshot signing key management
 
-A signature means something only when clients pin the public key. With an
-empty `src/checkstead/snapshot_trust.json`, a signed snapshot is recorded as
-`snapshot-authenticity: unsigned`. That is the state on 20 October 2026.
+A signature means something only when clients pin the public key. Since
+20 October 2026, `src/checkstead/snapshot_trust.json` pins
+`checkstead-2026-10`, so clients refuse an unsigned snapshot, a signature
+that does not verify, and a key that is not pinned.
+
+The first release with that pin needs a snapshot signed by that key. Run the
+updater right after merging (`gh workflow run update-snapshot.yml`). Its seed
+is the last unsigned snapshot, which the pinned client refuses, so that first
+run rebuilds from the NVD and takes longer.
+
+A company that runs its own updater and mirror pins its own key: write a
+trust file in the same format and set `CHECKSTEAD_SNAPSHOT_TRUST=/path/to/trust.json`
+on every client. It replaces the shipped keys, and a file with no keys is
+refused. `checkstead doctor` prints which trust file and keys are in use.
 
 Create and pin a key:
 

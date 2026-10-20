@@ -26,6 +26,34 @@ from checkstead.snapshot import parse_manifest, safe_extract, write_manifest  # 
 
 PIN = "13.0.0"
 
+# The shipped trust store pins the production key, so every unsigned snapshot
+# is refused. Fixture snapshots are signed with a throwaway key, and the client
+# (and every CLI subprocess) trusts only that key through CHECKSTEAD_SNAPSHOT_TRUST.
+_TEST_TRUST = ROOT / "build" / "tests" / "trust" / "snapshot_trust.json"
+
+
+def _test_signing_key() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from checkstead.snapshot_auth import public_pem_for
+
+    private = Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode("ascii")
+    _TEST_TRUST.parent.mkdir(parents=True, exist_ok=True)
+    _TEST_TRUST.write_text(
+        json.dumps(
+            {"format": 1, "keys": [{"id": "test-fixtures", "status": "current", "publicKeyPem": public_pem_for(private)}]}
+        ),
+        encoding="utf-8",
+    )
+    os.environ["CHECKSTEAD_SNAPSHOT_TRUST"] = str(_TEST_TRUST)
+    return private
+
+
+TEST_SIGNING_KEY = _test_signing_key()
+
 
 class FixtureServer:
     def __init__(self) -> None:
@@ -80,7 +108,9 @@ def write_zip(path: Path, label: str) -> None:
         archive.writestr("FIXTURE", f"checkstead test fixture {label}, not an NVD database\n")
 
 
-def manifest_for(zip_path: Path, snapshot_time: str, engine: str = PIN) -> bytes:
+def manifest_for(zip_path: Path, snapshot_time: str, engine: str = PIN, signed: bool = True) -> bytes:
+    from checkstead.snapshot_auth import load_trust, sign_manifest
+
     payload = {
         "format": 1,
         "engineVersion": engine,
@@ -88,6 +118,8 @@ def manifest_for(zip_path: Path, snapshot_time: str, engine: str = PIN) -> bytes
         "checksum": hashlib.sha256(zip_path.read_bytes()).hexdigest(),
         "database": "checkstead-db.zip",
     }
+    if signed:
+        payload = sign_manifest(payload, TEST_SIGNING_KEY, "test-fixtures", load_trust())
     return json.dumps(payload).encode("utf-8")
 
 
