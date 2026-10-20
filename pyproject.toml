@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,11 +8,13 @@ version = "0.1.0"
 description = "Run OWASP Dependency-Check once, the same way, for every build."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "Apache-2.0"}
-dependencies = ["certifi"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+# cryptography verifies snapshot signatures and signs the GitHub App token.
+# It replaces calls to the openssl command, which Windows does not ship.
+dependencies = ["certifi>=2024.2.2", "cryptography>=44.0.1"]
 authors = [{name = "Chethan K"}]
 classifiers = [
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
 ]
 

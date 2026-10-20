@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import stat
-import subprocess
 import tempfile
 import urllib.error
 import urllib.parse
@@ -23,6 +22,10 @@ import urllib.request
 from datetime import date, datetime, timezone
 from html import escape
 from pathlib import Path
+
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from checkstead.config import load_config
 from checkstead.errors import ChecksteadError, RefusedHost
@@ -289,7 +292,7 @@ def _b64url(data: bytes) -> str:
 
 
 def app_jwt(app_id: str, pem_path: Path, now: int | None = None) -> str:
-    """RS256 JWT for the GitHub App. openssl signs it. The key is not logged."""
+    """RS256 JWT for the GitHub App. The key is read from disk and is not logged."""
     issued = int(datetime.now(timezone.utc).timestamp()) if now is None else now
     header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
     payload = _b64url(
@@ -300,13 +303,12 @@ def app_jwt(app_id: str, pem_path: Path, now: int | None = None) -> str:
     )
     signing = f"{header}.{payload}".encode("ascii")
     try:
-        signature = subprocess.check_output(
-            ["openssl", "dgst", "-sha256", "-sign", str(pem_path)],
-            input=signing,
-            stderr=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ChecksteadError("openssl could not sign the GitHub App token.") from exc
+        key = serialization.load_pem_private_key(pem_path.read_bytes(), password=None)
+    except (OSError, ValueError, TypeError, UnsupportedAlgorithm) as exc:
+        raise ChecksteadError("The GitHub App private key could not be read.") from exc
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise ChecksteadError("The GitHub App private key is not an RSA key.")
+    signature = key.sign(signing, padding.PKCS1v15(), hashes.SHA256())
     return f"{header}.{payload}.{_b64url(signature)}"
 
 
@@ -570,6 +572,7 @@ def scan_installed_repositories(
                 fail_unscored=config.fail_unscored,
                 private_suppressions=config.private_suppressions,
                 branch=branch_name,
+                untrusted=True,
             )
         except ChecksteadError as exc:
             entry["error"] = str(exc)

@@ -49,6 +49,30 @@ WORK="${ROOT}/build/snapshot"
 rm -rf "$WORK"
 mkdir -p "$WORK/data"
 LOG="${WORK}/dependency-check.log"
+export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# Start from the last published snapshot, verified the way a scan verifies it,
+# so --updateonly fetches only what changed. A full rebuild from the NVD takes
+# hours and ran past the job timeout. CHECKSTEAD_SEED_MANIFEST= (empty) or a
+# failed check forces the full build.
+SEED_MANIFEST=${CHECKSTEAD_SEED_MANIFEST-$(python3 -c 'from checkstead.config import DEFAULT_SNAPSHOT_URL; print(DEFAULT_SNAPSHOT_URL)')}
+# Sunday, and CHECKSTEAD_FULL_REBUILD=1, rebuild from the NVD so a defect in
+# one snapshot cannot be carried forward by incremental updates for long.
+if [[ "${CHECKSTEAD_FULL_REBUILD:-}" == "1" || "$(date -u +%u)" == "7" ]]; then
+  SEED_MANIFEST=""
+fi
+SEED_NOTE="Full build. No earlier snapshot was used."
+if [[ -n "$SEED_MANIFEST" ]]; then
+  if SEED_OUT=$(python3 -m checkstead seed-data --url "$SEED_MANIFEST" --dest "${WORK}/data" --cache "${WORK}/seed-cache"); then
+    echo "$SEED_OUT"
+    SEED_NOTE="Incremental update from ${SEED_OUT#seed: }."
+  else
+    echo "Could not use the published snapshot as a starting point. Building the database from the NVD." >&2
+    rm -rf "${WORK}/data"
+    mkdir -p "${WORK}/data"
+  fi
+  rm -rf "${WORK}/seed-cache"
+fi
 
 # The key is passed only to this update process. It is not written into the snapshot.
 "${ENGINE_DIR}/bin/dependency-check.sh" \
@@ -63,7 +87,6 @@ LOG="${WORK}/dependency-check.log"
   zip -r -q "${WORK}/checkstead-db.zip" .
 )
 
-export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
 python3 -m checkstead write-manifest \
   --zip "${WORK}/checkstead-db.zip" \
   --out "${WORK}/manifest.json" \
@@ -139,6 +162,24 @@ except ChecksteadError as exc:
 path.write_text(json.dumps(signed, indent=2) + "\n", encoding="utf-8")
 print(f"signature: {signed['signature']['keyId']}")
 PY
+  # The public half is safe to show. The maintainer pins it from here.
+  python3 -m checkstead snapshot-key public --id "$CHECKSTEAD_SNAPSHOT_KEY_ID" > "${WORK}/trust-entry.json"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo "### Snapshot signing key"
+      echo
+      echo "Key id \`${CHECKSTEAD_SNAPSHOT_KEY_ID}\` signed this snapshot."
+      if python3 -c 'import os, sys; from checkstead.snapshot_auth import load_trust; sys.exit(0 if os.environ["CHECKSTEAD_SNAPSHOT_KEY_ID"] in load_trust().keys else 1)'; then
+        echo "It is pinned in \`src/checkstead/snapshot_trust.json\`. Clients verify it."
+      else
+        echo "It is **not pinned**. Clients record this snapshot as unsigned until this entry is added to \`src/checkstead/snapshot_trust.json\`:"
+        echo
+        echo '```json'
+        cat "${WORK}/trust-entry.json"
+        echo '```'
+      fi
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
   AUTH_NOTE="Signed with the key id in manifest.json. snapshot_trust.json is not updated by this job. Clients with an empty trust file still accept the checksum and do not treat this signature as verified. Pin the public key only after this signed release exists. The signature is not a second publisher."
 fi
 
@@ -147,6 +188,7 @@ Dependency-Check ${VERSION}
 Snapshot ${SNAPSHOT_TIME}
 Checksum sha256:${CHECKSUM}
 ${AUTH_NOTE}
+${SEED_NOTE}
 
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 EOF

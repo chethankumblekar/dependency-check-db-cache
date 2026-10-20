@@ -92,6 +92,7 @@ runs:
             -w /head \
             -e GITHUB_REF_NAME \
             -e GITHUB_SHA \
+            -e CHECKSTEAD_UNTRUSTED_SOURCE=1 \
             -e CHECKSTEAD_AUTHOR="$author_name" \
             -e CHECKSTEAD_AUTHOR_EMAIL="$author_email" \
             checkstead-action "${scan_args[@]}"
