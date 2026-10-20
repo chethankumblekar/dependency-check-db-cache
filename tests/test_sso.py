@@ -23,6 +23,18 @@ from checkstead.sso import public_base  # noqa: E402
 from checkstead.ui import _local_sign_in, bind_server  # noqa: E402
 
 
+ENTRA_TENANT = "11111111-2222-3333-4444-555555555555"
+
+
+def _unsigned_jwt(claims: dict) -> str:
+    import base64
+
+    def part(value: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'none'})}.{part(claims)}.sig"
+
+
 class NoRedirect(urllib.request.HTTPErrorProcessor):
     def http_response(self, request, response):
         return response
@@ -57,7 +69,19 @@ class Provider(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8")
         self.server.posted = body  # type: ignore[attr-defined]
-        self._json({"access_token": "from-provider", "token_type": "Bearer"})
+        claims = getattr(self.server, "id_claims", None) or {  # type: ignore[attr-defined]
+            "aud": "entra-id",
+            "tid": ENTRA_TENANT,
+            "sub": "entra-1",
+            "preferred_username": "ada@contoso.com",
+        }
+        self._json(
+            {
+                "access_token": "from-provider",
+                "token_type": "Bearer",
+                "id_token": _unsigned_jwt(claims),
+            }
+        )
 
     def _json(self, payload: dict) -> None:
         raw = json.dumps(payload).encode()
@@ -138,6 +162,8 @@ class SsoTests(TestCase):
                 "CHECKSTEAD_ENTRA_AUTHORIZE",
                 "CHECKSTEAD_ENTRA_TOKEN",
                 "CHECKSTEAD_ENTRA_USERINFO",
+                "CHECKSTEAD_ENTRA_TENANT",
+                "CHECKSTEAD_ENTRA_ALLOWED_TENANTS",
                 "CHECKSTEAD_PUBLIC_BASE",
                 "CHECKSTEAD_COOKIE_SECURE",
             )
@@ -151,6 +177,7 @@ class SsoTests(TestCase):
         self.addCleanup(provider.server_close)
         host, port = provider.server_address[:2]
         self.provider = f"http://{host}:{port}"
+        self.provider_server = provider
         data = ROOT / "build" / "tests" / "sso" / self.id().split(".")[-1]
         if data.exists():
             import shutil
@@ -293,8 +320,15 @@ class SsoTests(TestCase):
                 "Forwarded": "for=10.1.2.3",
             },
         )
+        # A Host name the server was not told about is refused before sign-in.
         with self.opener.open(request) as response:
-            self.assertEqual(response.status, 200)
+            self.assertEqual(response.status, 421)
+        os.environ["CHECKSTEAD_ALLOWED_HOSTS"] = "172.17.0.1"
+        try:
+            with self.opener.open(request) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            os.environ.pop("CHECKSTEAD_ALLOWED_HOSTS", None)
 
         os.environ["CHECKSTEAD_LOCAL"] = "0"
         status, body, _headers = self.open("/api/sso")
@@ -373,3 +407,49 @@ class SsoTests(TestCase):
         self.assertEqual(user["login"], "ada@contoso.com")
         self.assertEqual(user["displayName"], "Ada Admin")
         self.assertEqual(user["role"], "admin")
+
+    def _entra_callback(self) -> tuple[int, bytes]:
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        os.environ["CHECKSTEAD_ENTRA_AUTHORIZE"] = self.provider + "/authorize"
+        os.environ["CHECKSTEAD_ENTRA_TOKEN"] = self.provider + "/token"
+        os.environ["CHECKSTEAD_ENTRA_USERINFO"] = self.provider + "/userinfo"
+        _status, _body, headers = self.open("/api/sso/entra/start")
+        state = parse_qs(urlsplit(headers.get("Location")).query)["state"][0]
+        status, body, _headers = self.open(
+            f"/api/sso/entra/callback?code=demo-code&state={state}",
+            cookie=f"checkstead_sso={state}",
+        )
+        return status, body
+
+    def test_entra_refuses_a_directory_that_is_not_allowed(self) -> None:
+        os.environ["CHECKSTEAD_ENTRA_ALLOWED_TENANTS"] = "99999999-9999-9999-9999-999999999999"
+        status, body = self._entra_callback()
+        self.assertEqual(status, 401)
+        self.assertIn(b"directory is not allowed", body)
+
+    def test_entra_accepts_the_configured_directory_id(self) -> None:
+        os.environ["CHECKSTEAD_ENTRA_TENANT"] = ENTRA_TENANT
+        status, body = self._entra_callback()
+        self.assertEqual(status, 302, body)
+
+    def test_entra_refuses_a_token_for_another_application(self) -> None:
+        self.provider_server.id_claims = {"aud": "other-app", "tid": ENTRA_TENANT, "sub": "entra-1"}
+        status, body = self._entra_callback()
+        self.assertEqual(status, 401)
+        self.assertIn(b"another application", body)
+
+    def test_entra_refuses_a_different_person_in_userinfo(self) -> None:
+        self.provider_server.id_claims = {"aud": "entra-id", "tid": ENTRA_TENANT, "sub": "someone-else"}
+        status, body = self._entra_callback()
+        self.assertEqual(status, 401)
+        self.assertIn(b"two different people", body)
+
+    def test_entra_warns_when_any_directory_may_sign_in(self) -> None:
+        from checkstead.sso import entra_tenant_warning
+
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        self.assertIn("accepts any directory", entra_tenant_warning() or "")
+        os.environ["CHECKSTEAD_ENTRA_ALLOWED_TENANTS"] = ENTRA_TENANT
+        self.assertIsNone(entra_tenant_warning())

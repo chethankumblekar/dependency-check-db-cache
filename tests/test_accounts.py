@@ -136,3 +136,32 @@ class AccountTests(TestCase):
         self.store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
         with self.assertRaises(AccountError):
             self.store.sign_in(Identity("github", "99", "octocat", "Someone Else"))
+
+
+class StoreHardeningTests(TestCase):
+    def setUp(self) -> None:
+        import shutil
+
+        self.data = ROOT / "build" / "tests" / "accounts-hardening" / self.id().split(".")[-1]
+        shutil.rmtree(self.data, ignore_errors=True)
+
+    def test_the_store_is_private_to_this_user(self) -> None:
+        import os
+        import stat
+
+        AccountStore(self.data)
+        self.assertEqual(stat.S_IMODE(os.stat(self.data).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(self.data / "accounts.sqlite").st_mode), 0o600)
+
+    def test_expired_sessions_are_deleted_on_the_next_sign_in(self) -> None:
+        import sqlite3
+
+        store = AccountStore(self.data)
+        store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
+        with sqlite3.connect(store.path) as conn:
+            conn.execute("UPDATE sessions SET created_at = '2000-01-01T00:00:00Z'")
+        store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
+        with sqlite3.connect(store.path) as conn:
+            created = [row[0] for row in conn.execute("SELECT created_at FROM sessions")]
+        self.assertEqual(len(created), 1)
+        self.assertNotEqual(created[0], "2000-01-01T00:00:00Z")

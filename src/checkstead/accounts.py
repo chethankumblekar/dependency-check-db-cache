@@ -45,7 +45,16 @@ class AccountStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # Sessions and the GitHub App key live here. Only this user reads them.
+            os.chmod(self.data_dir, 0o700)
+        except OSError:
+            pass
         self.path = self.data_dir / "accounts.sqlite"
+        if not self.path.exists():
+            # Create the file 0600 before SQLite opens it, so it is never
+            # readable by others, not even for the first write.
+            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))
         self._lock = threading.Lock()
         with self._connect() as conn:
             conn.executescript(
@@ -118,6 +127,10 @@ class AccountStore:
                     (identity.subject, identity.login, identity.display_name, row["id"]),
                 )
                 user_id = row["id"]
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_DAYS)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            conn.execute("DELETE FROM sessions WHERE created_at < ?", (cutoff,))
             token = secrets.token_urlsafe(32)
             conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)",

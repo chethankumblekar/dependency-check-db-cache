@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -45,11 +46,19 @@ from checkstead.sso import (
     public_base,
     sso_status,
     state_cookie,
+    warn_entra_tenant,
 )
 
 PAGE = Path(__file__).resolve().with_name("ui_page.html")
 COOKIE = "checkstead_session"
 MAX_BODY = 8192
+# A client that stops sending or reading for this long is dropped. It bounds
+# a slow request, not the work a request starts.
+SOCKET_TIMEOUT_SECONDS = 30
+LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+# Requests that browsers send cross-site without credentials and that change
+# nothing. A webhook delivery comes from GitHub, not from a browser.
+_UNGUARDED_PATHS = frozenset({"/api/health", "/api/github/hook"})
 
 
 def choose_scans_dir(cwd: Path, packaged: Path, home: Path) -> Path:
@@ -147,6 +156,77 @@ def _local_sign_in(
     return localhost_client(client_host)
 
 
+def _host_name(value: str) -> str | None:
+    """Lowercased host name from a Host header or an origin netloc, without the port."""
+    text = value.strip()
+    if not text or any(char in text for char in "\r\n\x00 /\\@?#"):
+        return None
+    try:
+        parsed = urlsplit(f"//{text}")
+        name = parsed.hostname
+        _ = parsed.port  # raises ValueError on a bad port
+    except ValueError:
+        return None
+    if not name:
+        return None
+    return name.rstrip(".").lower()
+
+
+def allowed_hosts() -> frozenset[str]:
+    """Host names this server answers to.
+
+    Loopback names always. The host of ``CHECKSTEAD_PUBLIC_BASE`` and every
+    name in ``CHECKSTEAD_ALLOWED_HOSTS`` (comma separated) when set. Any other
+    Host header is refused, which is what stops a DNS-rebinding page from
+    reading this server through a name it controls.
+    """
+    names = set(LOOPBACK_NAMES)
+    base = os.environ.get("CHECKSTEAD_PUBLIC_BASE", "").strip()
+    if base:
+        parsed = urlsplit(base)
+        if parsed.hostname:
+            names.add(parsed.hostname.rstrip(".").lower())
+    for item in os.environ.get("CHECKSTEAD_ALLOWED_HOSTS", "").split(","):
+        name = _host_name(item)
+        if name:
+            names.add(name)
+    return frozenset(names)
+
+
+def host_allowed(host_header: str) -> bool:
+    name = _host_name(host_header)
+    return name is not None and name in allowed_hosts()
+
+
+def origin_allowed(origin: str, host_header: str, fetch_site: str = "") -> bool:
+    """Whether a state-changing request came from this server's own pages.
+
+    Browsers send ``Origin`` on every POST, PATCH, and DELETE. It has to name
+    the same host and port as ``Host``. ``Origin: null`` is refused. A request
+    with neither ``Origin`` nor ``Sec-Fetch-Site`` is not from a browser, so it
+    cannot ride a signed-in user's cookie, and it is allowed.
+    """
+    origin = origin.strip()
+    site = fetch_site.strip().lower()
+    if origin:
+        if origin == "null":
+            return False
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username:
+            return False
+        if parsed.netloc.lower() == host_header.strip().lower():
+            return True
+        # A reverse proxy may rewrite Host. The configured public origin is
+        # still this server's own pages.
+        base = os.environ.get("CHECKSTEAD_PUBLIC_BASE", "").strip().rstrip("/")
+        return bool(base) and f"{parsed.scheme}://{parsed.netloc}".lower() == base.lower()
+    if site:
+        return site in {"same-origin", "none"}
+    return True
+
+
 def _request_is_local(handler: BaseHTTPRequestHandler) -> bool:
     headers = handler.headers
     return _local_sign_in(
@@ -171,6 +251,31 @@ def _github_cookie(state: str) -> str:
     return "; ".join(parts)
 
 
+def content_security_policy() -> str:
+    """The pages are one inline document. Nothing loads from another origin.
+
+    The GitHub App manifest form posts to the GitHub web host, so that host is
+    the one extra ``form-action``.
+    """
+    from checkstead.identity import github_web_base
+
+    web = urlsplit(github_web_base())
+    github = f"{web.scheme}://{web.netloc}" if web.scheme and web.netloc else "https://github.com"
+    return "; ".join(
+        [
+            "default-src 'none'",
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            f"form-action 'self' {github}",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "object-src 'none'",
+        ]
+    )
+
+
 def bind_server(
     scans_dir: Path,
     host: str = "127.0.0.1",
@@ -185,9 +290,39 @@ def bind_server(
     scans_dir = scans_dir.resolve()
     store = AccountStore(data_dir or default_data_dir())
     project_cwd = config_cwd or Path.cwd()
+    # One repository scan batch at a time. A second request gets 409 instead
+    # of a second engine on the same snapshot data directory.
+    scan_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = SOCKET_TIMEOUT_SECONDS
+
+        def _guard(self, unsafe: bool) -> bool:
+            """Refuse a foreign Host, and a cross-site state change. True to continue."""
+            path = self.path.split("?", 1)[0]
+            if path in _UNGUARDED_PATHS:
+                return True
+            host = self.headers.get("Host", "")
+            if not host_allowed(host):
+                self._send(
+                    421,
+                    "text/plain; charset=utf-8",
+                    b"This Checkstead server does not answer to that host name. "
+                    b"Add it to CHECKSTEAD_ALLOWED_HOSTS or CHECKSTEAD_PUBLIC_BASE.\n",
+                )
+                return False
+            if unsafe and not origin_allowed(
+                self.headers.get("Origin", ""),
+                host,
+                self.headers.get("Sec-Fetch-Site", ""),
+            ):
+                self._json(403, {"error": "Cross-site request refused."})
+                return False
+            return True
+
         def do_GET(self) -> None:
+            if not self._guard(False):
+                return
             parsed = urlsplit(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
@@ -257,6 +392,8 @@ def bind_server(
             self._send(404, "text/plain; charset=utf-8", b"Not found\n")
 
         def do_POST(self) -> None:
+            if not self._guard(True):
+                return
             path = self.path.split("?", 1)[0]
             if path == "/api/session/local":
                 self._local_session()
@@ -317,6 +454,8 @@ def bind_server(
             self._send(404, "text/plain; charset=utf-8", b"Not found\n")
 
         def do_PATCH(self) -> None:
+            if not self._guard(True):
+                return
             user_id = self._user_id()
             if user_id is None:
                 return
@@ -333,6 +472,8 @@ def bind_server(
             self._json(200, {"user": user})
 
         def do_DELETE(self) -> None:
+            if not self._guard(True):
+                return
             path = self.path.split("?", 1)[0]
             if path == "/api/session":
                 store.sign_out(_cookie(self.headers.get("Cookie")))
@@ -398,7 +539,15 @@ def bind_server(
             self._json(200, {"user": user}, _session_cookie(token, SESSION_DAYS * 24 * 3600))
 
         def _github_ok(self) -> bool:
-            if localhost_client(self.client_address[0]):
+            """GitHub App administration. A loopback peer needs no session only on a laptop.
+
+            With ``CHECKSTEAD_LOCAL`` set to anything, the server is behind
+            Docker or a reverse proxy, and a loopback peer can be every remote
+            client. Those deployments need an administrator session.
+            """
+            if not os.environ.get("CHECKSTEAD_LOCAL", "").strip() and localhost_client(
+                self.client_address[0]
+            ):
                 return True
             return self._admin() is not None
 
@@ -492,6 +641,19 @@ def bind_server(
             )
 
         def _github_scan(self) -> None:
+            if not scan_lock.acquire(blocking=False):
+                message = "A scan is already running. Try again when it finishes."
+                if self._wants_json():
+                    self._json(409, {"error": message})
+                else:
+                    self._html(409, render_message("Scan", [message]))
+                return
+            try:
+                self._github_scan_locked()
+            finally:
+                scan_lock.release()
+
+        def _github_scan_locked(self) -> None:
             try:
                 scans = scan_installed_repositories(
                     store.data_dir,
@@ -591,8 +753,13 @@ def bind_server(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", content_security_policy())
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
             self.send_header("Cache-Control", "no-store")
+            if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
 
         def _redirect(self, location: str) -> None:
             self.send_response(302)
@@ -714,6 +881,7 @@ def serve(
     data_dir: Path | None = None,
 ) -> None:
     warn_exposed_local_sign_in(host)
+    warn_entra_tenant()
     server = bind_server(scans_dir, host, port, data_dir)
     shown_host, shown_port = server.server_address[:2]
     print(f"checkstead ui  http://{shown_host}:{shown_port}/")
