@@ -1,7 +1,13 @@
 # Pinned by digest. Dependabot proposes a new digest; review it like code.
-# Debian 13 (trixie). The bookworm base carried 61 High and 2 Critical
-# unfixed operating-system findings on 20 October 2026; see security-gates.md.
-FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+# Ubuntu 24.04, the scanner image's distribution, with its Python 3.12 in a
+# virtualenv. On 20 October 2026 the python:3.14-slim-bookworm base carried
+# 61 High and 2 Critical unfixed operating-system findings and slim-trixie
+# 44 High; the Ubuntu 24.04 scanner image carried none. See security-gates.md.
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # uid and gid 999 are what `useradd --system` gave this user in every earlier
 # image, so volumes those images created stay readable.
@@ -12,13 +18,13 @@ COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src
 COPY scripts/server-entrypoint.sh /usr/local/bin/checkstead-server
 
-# The official Python image vendors msgpack, setuptools, and urllib3 inside
-# pip and lists them in pip/_vendor/bom.cdx.json. Trivy reads that bill of
-# materials and fails the High language-package gate. The server does not
-# need pip after Checkstead is installed.
-RUN python -m pip install --no-cache-dir /opt/checkstead-src \
-    && python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
-    && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
+# pip is a build tool. It vendors packages Trivy reports, and the server does
+# not need it after Checkstead is installed, so it is removed from the venv.
+RUN python3 -m venv /opt/checkstead-venv \
+    && /opt/checkstead-venv/bin/pip install --no-cache-dir /opt/checkstead-src \
+    && /opt/checkstead-venv/bin/python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
+    && rm -f /opt/checkstead-venv/bin/pip /opt/checkstead-venv/bin/pip3 /opt/checkstead-venv/bin/pip3.* \
+    && ln -sf /opt/checkstead-venv/bin/checkstead /usr/local/bin/checkstead \
     && rm -rf /opt/checkstead-src \
     && chmod 0755 /usr/local/bin/checkstead-server \
     && mkdir -p /var/lib/checkstead/scans \
@@ -33,7 +39,7 @@ EXPOSE 8765
 VOLUME /var/lib/checkstead
 VOLUME /var/lib/checkstead/scans
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3).read()"
+    CMD ["/opt/checkstead-venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3).read()"]
 # Non-root by default. A fresh named volume takes this ownership from the
 # image. Run with --user 0 only to hand an old bind mount to uid 999 once.
 USER 999:999
