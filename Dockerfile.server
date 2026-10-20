@@ -1,6 +1,10 @@
-FROM python:3.14-slim-bookworm
+# Pinned by digest. Dependabot proposes a new digest; review it like code.
+FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83
 
-RUN useradd --system --create-home --home-dir /var/lib/checkstead checkstead
+# uid and gid 999 are what `useradd --system` gave this user in every earlier
+# image, so volumes those images created stay readable.
+RUN groupadd --system --gid 999 checkstead \
+    && useradd --system --uid 999 --gid 999 --create-home --home-dir /var/lib/checkstead checkstead
 
 COPY pyproject.toml README.md /opt/checkstead-src/
 COPY src /opt/checkstead-src/src
@@ -13,9 +17,11 @@ COPY scripts/server-entrypoint.sh /usr/local/bin/checkstead-server
 RUN python -m pip install --no-cache-dir /opt/checkstead-src \
     && python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
     && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
+    && rm -rf /opt/checkstead-src \
     && chmod 0755 /usr/local/bin/checkstead-server \
     && mkdir -p /var/lib/checkstead/scans \
-    && chown -R checkstead:checkstead /var/lib/checkstead
+    && chown -R checkstead:checkstead /var/lib/checkstead \
+    && chmod 0700 /var/lib/checkstead
 
 ENV CHECKSTEAD_DATA=/var/lib/checkstead
 ENV CHECKSTEAD_SCANS=/var/lib/checkstead/scans
@@ -26,4 +32,7 @@ VOLUME /var/lib/checkstead
 VOLUME /var/lib/checkstead/scans
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3).read()"
+# Non-root by default. A fresh named volume takes this ownership from the
+# image. Run with --user 0 only to hand an old bind mount to uid 999 once.
+USER 999:999
 ENTRYPOINT ["/usr/local/bin/checkstead-server"]
