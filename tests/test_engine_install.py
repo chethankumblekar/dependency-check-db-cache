@@ -299,6 +299,7 @@ class EngineInstallTests(TestCase):
         self.assertFalse(Path("/tmp/escape.txt").exists())
 
     def _setup(self, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        env.setdefault("ENGINE_OVERRIDES", "")
         script = root / "run-setup.sh"
         lines = [
             "set -euo pipefail",
@@ -447,3 +448,27 @@ class EngineInstallTests(TestCase):
             self.assertRegex(jar, r"^[A-Za-z0-9._-]+\.jar$")
             self.assertRegex(path, r"^[A-Za-z0-9._/-]+\.jar$")
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_setup_sh_applies_the_same_pinned_overrides(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-engine-override"
+        env, patched = self._signed_engine_with_jar(root)
+        digest = hashlib.sha256(patched.read_bytes()).hexdigest()
+        overrides = root / "overrides.txt"
+        overrides.write_text(f"lib-1.0.jar org/example/lib/1.1/lib-1.1.jar {digest}\n", encoding="utf-8")
+        env["ENGINE_OVERRIDES"] = str(overrides)
+        env["PIN"] = "1.2.3"
+        env["python"] = "/usr/bin/python3"
+        completed = self._setup(root, env)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        jar = root / "home" / "checkstead" / "dependency-check" / "lib" / "lib-1.0.jar"
+        self.assertEqual(jar.read_bytes(), b"patched 1.1")
+
+        overrides.write_text(f"lib-1.0.jar org/example/lib/1.1/lib-1.1.jar {'0' * 64}\n", encoding="utf-8")
+        refused = self._setup(root, env)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Expected SHA-256", refused.stderr)
+
+    def test_the_windows_installer_applies_the_overrides(self) -> None:
+        windows = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+        self.assertIn("Install-EngineOverrides -Src $src", windows)
+        self.assertIn("Assert-Sha256 -Path $download -Expected $fields[2]", windows)

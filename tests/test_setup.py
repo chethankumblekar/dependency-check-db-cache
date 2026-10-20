@@ -499,7 +499,7 @@ class SetupTests(TestCase):
         self.assertLess(shell_fn.index("gpg --batch --verify"), shell_fn.index('"$python" "$archive_py"'))
         installer_fn = installer.split("gpg --batch --import", 1)[1]
         self.assertLess(installer_fn.index("gpg --batch --verify"), installer_fn.index('python3 "$ARCHIVE"'))
-        engine = windows.split("function Install-Engine", 1)[1].split("function ", 1)[0]
+        engine = windows.split("function Install-Engine {", 1)[1].split("\nfunction ", 1)[0]
         self.assertLess(engine.index("gpg --batch --verify"), engine.index("dependency-check.bat"))
         self.assertNotIn("Expand-Archive", engine)
         self.assertIn("The release signature does not verify", engine)
@@ -531,8 +531,9 @@ class SetupTests(TestCase):
             self.assertNotIn("api.adoptium.net/v3/binary/latest", text)
             self.assertNotIn("get-pip.py", text)
             self.assertIn("jdk-21.0.12.1%2B1", text)
-        self.assertEqual(script.count("verify_sha256 \""), 2)
-        self.assertEqual(windows.count("Assert-Sha256 -Path"), 2)
+        # Python, the JDK, and each patched engine jar.
+        self.assertEqual(script.count("verify_sha256 \""), 3)
+        self.assertEqual(windows.count("Assert-Sha256 -Path"), 3)
 
     def test_checkstead_ref_must_be_a_ref_name(self) -> None:
         root = ROOT / "build" / "tests" / "setup-ref"

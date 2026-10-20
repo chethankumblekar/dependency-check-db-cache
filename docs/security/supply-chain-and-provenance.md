@@ -93,7 +93,8 @@ On 20 October 2026 an image with these overrides scanned a directory holding
 published `db-2026-10-18` snapshot. The engine reported CVE-2015-6420
 (Critical) and six lodash advisories, the same results as the unpatched
 engine. The overrides apply to the scanner image and to the snapshot updater.
-`scripts/setup.sh` and `scripts/setup.ps1` do not apply them yet.
+`scripts/setup.sh` and `scripts/setup.ps1` apply the same list to laptop installs
+(the PowerShell path was not executed).
 
 ## Installer downloads
 

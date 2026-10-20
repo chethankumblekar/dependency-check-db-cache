@@ -34,6 +34,8 @@ JDK_MARKER="# checkstead setup: bundled JDK"
 ENGINE_FPR_DEFAULT=259A55407DD6C00299E6607EFFDE55BE73A2D1ED
 ENGINE_KEY_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/scripts/keys/dependency-check-release.asc"
 ENGINE_ARCHIVE_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/src/checkstead/archive.py"
+ENGINE_OVERRIDES_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/scripts/engine-overrides.txt"
+MAVEN_CENTRAL="https://repo1.maven.org/maven2"
 
 # Every download is https only, retried on a transient failure, and bounded in
 # time. --retry-all-errors is not used because older Linux curl lacks it.
@@ -279,6 +281,7 @@ install_engine() {
     exit 1
   fi
   chmod +x "$src/bin/dependency-check.sh"
+  apply_engine_overrides "$src" "$tmp" "$script_dir"
   rm -rf "$ROOT/dependency-check"
   mkdir -p "$ROOT"
   mv "$src" "$ROOT/dependency-check"
@@ -288,6 +291,38 @@ install_engine() {
     exit 1
   fi
   echo "Installed Dependency-Check ${PIN} under $ROOT/dependency-check"
+}
+
+# Replace the vulnerable library jars the pinned engine bundles, the same way
+# scripts/install-engine.sh does for the container image. Each replacement is
+# pinned by SHA-256 in scripts/engine-overrides.txt. ENGINE_OVERRIDES= (empty)
+# skips this, which only the installer tests do.
+apply_engine_overrides() {
+  local src=$1 tmp=$2 script_dir=$3 list jar path digest extra actual
+  if [[ -n "${ENGINE_OVERRIDES+set}" ]]; then
+    list=$ENGINE_OVERRIDES
+  elif [[ -n "$script_dir" && -f "$script_dir/engine-overrides.txt" ]]; then
+    list=$script_dir/engine-overrides.txt
+  else
+    fetch "$tmp/engine-overrides.txt" "$ENGINE_OVERRIDES_URL"
+    list=$tmp/engine-overrides.txt
+  fi
+  [[ -n "$list" ]] || return 0
+  while read -r jar path digest extra; do
+    [[ -z "${jar:-}" || "$jar" == \#* ]] && continue
+    if [[ -n "${extra:-}" || ! "$jar" =~ ^[A-Za-z0-9._-]+\.jar$ || ! "$path" =~ ^[A-Za-z0-9._/-]+\.jar$ || "$path" == *..* || ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Refusing to install. Bad line in the engine override list: ${jar} ${path}" >&2
+      exit 1
+    fi
+    if [[ ! -f "$src/lib/$jar" ]]; then
+      echo "Refusing to install. ${jar} is not in Dependency-Check ${PIN}." >&2
+      exit 1
+    fi
+    fetch "$tmp/override.jar" "${MAVEN_CENTRAL}/${path}"
+    verify_sha256 "$tmp/override.jar" "$digest" "${path##*/}"
+    mv "$tmp/override.jar" "$src/lib/$jar"
+    echo "Replaced lib/${jar} with ${path##*/}"
+  done < "$list"
 }
 
 ensure_engine_wrapper() {

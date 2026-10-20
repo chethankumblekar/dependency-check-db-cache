@@ -38,8 +38,8 @@ Security:
   fixed JDK release instead of "latest", drop the unpinned `get-pip.py`
   fallback, and accept `CHECKSTEAD_REF=<tag>`.
 - The scanner image replaces the vulnerable Jackson and jsoup jars bundled in
-  Dependency-Check 13.0.0 with fixed releases pinned by SHA-256. The engine is
-  no longer skipped by the image gate.
+  Dependency-Check 13.0.0 with fixed releases pinned by SHA-256, and so do
+  `setup.sh` and `setup.ps1`. The engine is no longer skipped by the image gate.
 - The server image is pinned by digest, runs as uid 999, and the compose file
   drops every capability and mounts the root filesystem read-only.
 

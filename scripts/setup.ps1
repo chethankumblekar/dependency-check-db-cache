@@ -162,6 +162,37 @@ function Find-PinnedEngine {
     return $null
 }
 
+# Replace the vulnerable library jars the pinned engine bundles. Each one is
+# pinned by SHA-256 in scripts/engine-overrides.txt, as in the container image.
+function Install-EngineOverrides {
+    param([string]$Src, [string]$Tmp, [string]$Pin)
+    $list = $null
+    if (Test-Path Env:ENGINE_OVERRIDES) {
+        $list = $env:ENGINE_OVERRIDES
+    } elseif ($PSCommandPath -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $PSCommandPath) "engine-overrides.txt"))) {
+        $list = Join-Path (Split-Path -Parent $PSCommandPath) "engine-overrides.txt"
+    } else {
+        $list = Join-Path $Tmp "engine-overrides.txt"
+        Save-Download -Uri "$RawBase/scripts/engine-overrides.txt" -OutFile $list
+    }
+    if ([string]::IsNullOrWhiteSpace($list)) { return }
+    foreach ($line in Get-Content -LiteralPath $list) {
+        $text = $line.Trim()
+        if ($text -eq "" -or $text.StartsWith("#")) { continue }
+        $fields = $text -split '\s+'
+        if ($fields.Count -ne 3 -or $fields[0] -notmatch '^[A-Za-z0-9._-]+\.jar$' -or $fields[1] -notmatch '^[A-Za-z0-9._/-]+\.jar$' -or $fields[1].Contains("..") -or $fields[2] -notmatch '^[0-9a-f]{64}$') {
+            throw "Refusing to install. Bad line in the engine override list: $text"
+        }
+        $target = Join-Path $Src ("lib\" + $fields[0])
+        if (-not (Test-Path -LiteralPath $target)) { throw "Refusing to install. $($fields[0]) is not in Dependency-Check $Pin." }
+        $download = Join-Path $Tmp "override.jar"
+        Save-Download -Uri ("https://repo1.maven.org/maven2/" + $fields[1]) -OutFile $download
+        Assert-Sha256 -Path $download -Expected $fields[2] -What ($fields[1] -split '/')[-1]
+        Move-Item -Force $download $target
+        Write-Output "Replaced lib\$($fields[0])"
+    }
+}
+
 function Install-Engine {
     param([string]$Pin, [string]$Python)
     # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
@@ -219,6 +250,7 @@ function Install-Engine {
         $bat = Get-ChildItem -Path $unpacked -Filter dependency-check.bat -Recurse | Select-Object -First 1
         if ($null -eq $bat) { throw "The Dependency-Check archive did not contain bin\dependency-check.bat" }
         $src = $bat.Directory.Parent.FullName
+        Install-EngineOverrides -Src $src -Tmp $tmp -Pin $Pin
         if (Test-Path (Join-Path $Root "dependency-check")) { Remove-Item -Recurse -Force (Join-Path $Root "dependency-check") }
         New-Item -ItemType Directory -Path $Root -Force | Out-Null
         Move-Item $src (Join-Path $Root "dependency-check")

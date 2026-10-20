@@ -102,8 +102,8 @@ production-ready until each has evidence.
   `CHECKSTEAD_SNAPSHOT_TRUST`; the shipped key does not verify it.
 - The engine jar overrides are a patch Checkstead maintains on top of an
   upstream release. They are pinned and tested, but upstream has not tested
-  that combination. The laptop installers (`setup.sh`, `setup.ps1`) do not
-  apply them yet.
+  that combination. `setup.sh` and `setup.ps1` apply them too; the
+  PowerShell path was not executed.
 - The scanner image still runs as root by default so
   `docker run -v "$PWD:/work"` keeps working. The Action and Azure DevOps task
   pass `--user`.
