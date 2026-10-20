@@ -4,6 +4,67 @@ All notable changes to Checkstead are recorded here. The version matches the
 package version. Snapshots are dated releases (`db-YYYY-MM-DD`) and are not
 listed as product versions.
 
+## Unreleased
+
+Security:
+
+- The timeline server refuses a `Host` it was not configured for (421), which
+  stops DNS rebinding, and refuses a cross-site `POST`, `PATCH`, or `DELETE`
+  by `Origin` and `Sec-Fetch-Site` (403). New: `CHECKSTEAD_ALLOWED_HOSTS`.
+- GitHub App pages and actions need an administrator session whenever
+  `CHECKSTEAD_LOCAL` is set. Before, any loopback peer, including every user
+  of a reverse proxy on the same host, could reach them.
+- A strict Content-Security-Policy, `Cross-Origin-Opener-Policy`, and HSTS
+  with `CHECKSTEAD_COOKIE_SECURE=1`. Requests time out after 30 s of silence.
+- Microsoft Entra sign-in checks the ID token's audience and directory.
+  `CHECKSTEAD_ENTRA_TENANT=<id>` or `CHECKSTEAD_ENTRA_ALLOWED_TENANTS` limits
+  directories; the server warns when any directory may sign in.
+- Scans of untrusted trees turn off analyzers that run yarn, pnpm, go, mix,
+  bundle-audit, or swift inside the tree, which could run code from the
+  repository. GitHub App scans always do; the Action does for pull requests;
+  `--untrusted-source` or `CHECKSTEAD_UNTRUSTED_SOURCE=1` elsewhere. Every
+  credential-like variable is removed from the engine's environment.
+- Snapshots: a client refuses a snapshot older than one its cache already
+  used (`CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK=1` to override). Signatures use
+  the `cryptography` package instead of the `openssl` command.
+  `checkstead snapshot-key generate|public` creates keys and trust entries.
+- The production snapshot key `checkstead-2026-10` is pinned. Clients refuse
+  unsigned snapshots and keys that are not pinned. `CHECKSTEAD_SNAPSHOT_TRUST`
+  replaces the shipped trust store for a company mirror and must pin a key.
+- Zip extraction refuses archives over `CHECKSTEAD_MAX_ARCHIVE_BYTES` or
+  `CHECKSTEAD_MAX_ARCHIVE_MEMBERS`. An `Authorization` header is dropped when
+  a redirect changes host.
+- `setup.sh` and `setup.ps1` pin the Python and JDK downloads by SHA-256, use a
+  fixed JDK release instead of "latest", drop the unpinned `get-pip.py`
+  fallback, and accept `CHECKSTEAD_REF=<tag>`.
+- The scanner image replaces the vulnerable Jackson and jsoup jars bundled in
+  Dependency-Check 13.0.0 with fixed releases pinned by SHA-256, and so do
+  `setup.sh` and `setup.ps1`. The engine is no longer skipped by the image gate.
+- The server image is pinned by digest, runs as uid 999, and the compose file
+  drops every capability and mounts the root filesystem read-only.
+
+Fixes:
+
+- An NVD finding for a Java (or other namespaced) package was dropped when the
+  CPE vendor differed from the Maven group, even at HIGHEST confidence.
+  CVE-2015-6420 in commons-collections 3.2.1 and Log4Shell in log4j-core were
+  missing from reports and could not fail a build.
+- The client imported `fcntl` and could not start on Windows.
+- Dependency-Check runs stop after `CHECKSTEAD_SCAN_TIMEOUT_MINUTES` (120) with
+  their child processes. Parallel scans on one machine no longer extract over
+  each other's database. The server runs one repository scan batch at a time.
+- Snapshot downloads retry transient failures with backoff and cap the
+  manifest size.
+- The daily updater starts from the last verified snapshot, so it no longer
+  hits the job timeout; it rebuilds from the NVD on Sundays.
+- CI: Maven retries transient Central errors and caches dependencies.
+
+Release process:
+
+- The publish job pushes only `sha-<commit>`, runs the image gates on that
+  pushed digest for every platform, attests it, and only then moves `latest`
+  and the version tags to it. Release tags build without the layer cache.
+
 ## 0.1.0
 
 - Pins OWASP Dependency-Check 13.0.0. One updater publishes a checksummed

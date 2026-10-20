@@ -18,6 +18,10 @@ concurrency:
   # so it is left to finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # One Trivy release for every gate. trivy-action v0.36.0 used this one.
+  TRIVY_VERSION: v0.70.0
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,6 +29,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -36,6 +42,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+          # A Maven Central 502 failed main on 19 October. The cache means a
+          # transient outage no longer stops a build that resolved before.
+          cache: maven
+          cache-dependency-path: integrations/maven/pom.xml
 
       - name: Install lint and build tools
         # Versions live in pyproject.toml. A reviewed bump of ruff or build
@@ -58,12 +68,16 @@ jobs:
       matrix:
         include:
           - image: checkstead
+            kind: scanner
             file: Dockerfile
           - image: checkstead-server
+            kind: server
             file: Dockerfile.server
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -81,83 +95,23 @@ jobs:
           provenance: false
           tags: ${{ matrix.image }}:ci
 
-      - name: Fail on High and Critical language packages in the server image
-        if: matrix.image == 'checkstead-server'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          image-ref: checkstead-server:ci
-          format: table
-          exit-code: "1"
-          ignore-unfixed: false
-          vuln-type: library
-          severity: CRITICAL,HIGH
-          scanners: vuln
+          version: ${{ env.TRIVY_VERSION }}
 
-      # Exception unfixed-os-2026-10-19, review 2027-01-19.
-      # Scope: operating-system packages in these images that have no fixed version.
-      # On checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744
-      # that is 61 unfixed High findings and 2 unfixed Critical findings:
-      # CVE-2025-7458 (libsqlite3-0, affected, no fixed version) and
-      # CVE-2023-45853 (zlib1g, will_not_fix, no fixed version).
-      # ignore-unfixed: true is this exception. A fixed High or Critical OS
-      # package still fails the step. This is not a .trivyignore file.
-      # The six Dependency-Check jar findings stay in the report-only scan.
-      # engine.version stays 13.0.0.
-      - name: Fail on fixed High and Critical operating-system packages in the server image
-        if: matrix.image == 'checkstead-server'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: checkstead-server:ci
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os
-          severity: CRITICAL,HIGH
-          scanners: vuln
+      - name: Image gates
+        run: bash ./scripts/image-gates.sh "${{ matrix.kind }}" "${{ matrix.image }}:ci" build/trivy
 
-      - name: Fail on language packages outside the pinned engine
-        if: matrix.image == 'checkstead'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: checkstead:ci
-          format: table
-          exit-code: "1"
-          ignore-unfixed: false
-          vuln-type: library
-          severity: CRITICAL,HIGH
-          skip-dirs: /opt/dependency-check
-          scanners: vuln
+      - name: Smoke test the image
+        run: bash ./scripts/smoke-image.sh "${{ matrix.kind }}" "${{ matrix.image }}:ci"
 
-      # Same exception unfixed-os-2026-10-19. Fixed High and Critical OS packages still fail.
-      - name: Fail on fixed High and Critical operating-system packages in the scanner image
-        if: matrix.image == 'checkstead'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: checkstead:ci
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os
-          severity: CRITICAL,HIGH
-          scanners: vuln
-
-      - name: Write the scanner image vulnerability report
-        if: matrix.image == 'checkstead'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: checkstead:ci
-          format: json
-          output: trivy-scanner.json
-          exit-code: "0"
-          severity: CRITICAL,HIGH
-          scanners: vuln
-
-      - name: Upload the scanner image report
-        if: matrix.image == 'checkstead'
+      - name: Upload the image reports
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: trivy-scanner
-          path: trivy-scanner.json
+          name: trivy-${{ matrix.image }}
+          path: build/trivy/
 
   publish-images:
     name: Publish images
@@ -169,7 +123,7 @@ jobs:
        startsWith(github.ref, 'refs/tags/v'))
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -180,21 +134,31 @@ jobs:
       matrix:
         include:
           - image: checkstead
+            kind: scanner
             file: Dockerfile
             engine: true
+            platforms: linux/amd64
           - image: checkstead-server
+            kind: server
             file: Dockerfile.server
             engine: false
+            platforms: linux/amd64,linux/arm64
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - name: Read the engine pin
+      - name: Read the engine pin and the image name
         id: pin
-        run: echo "version=$(tr -d '[:space:]' < engine.version)" >> "$GITHUB_OUTPUT"
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          echo "version=$(tr -d '[:space:]' < engine.version)" >> "$GITHUB_OUTPUT"
+          echo "name=$(echo "ghcr.io/${GITHUB_REPOSITORY}/${IMAGE}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        if: matrix.image == 'checkstead-server'
+        if: contains(matrix.platforms, 'arm64')
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Buildx
@@ -211,7 +175,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          images: ${{ steps.pin.outputs.name }}
           flavor: |
             latest=false
           tags: |
@@ -223,25 +187,49 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=engine-${{ steps.pin.outputs.version }},enable=${{ matrix.engine && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
-      - name: Build and push
+      # Only the immutable sha- tag is pushed here. latest, the version tags,
+      # and engine-<pin> move to this digest after the gates pass on it.
+      - name: Build and push the candidate
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.file }}
-          platforms: ${{ matrix.image == 'checkstead-server' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          platforms: ${{ matrix.platforms }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.pin.outputs.name }}:sha-${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: true
+          provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # A release tag is built without the layer cache, so nothing a
+          # branch build left in the cache ends up in a release image.
+          no-cache: ${{ startsWith(github.ref, 'refs/tags/') }}
+          cache-from: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,scope={0}', matrix.image) || '' }}
+          cache-to: ${{ !startsWith(github.ref, 'refs/tags/') && format('type=gha,mode=max,scope={0}', matrix.image) || '' }}
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+
+      # The gates run on the digest that was pushed, for every platform it
+      # contains. This is the artifact the tags below will name.
+      - name: Image gates on the pushed digest
+        env:
+          PLATFORMS: ${{ matrix.platforms }}
+        run: bash ./scripts/image-gates.sh "${{ matrix.kind }}" "${{ steps.pin.outputs.name }}@${{ steps.push.outputs.digest }}" build/trivy
+
+      - name: Upload the image reports and SBOMs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-${{ matrix.image }}-${{ github.sha }}
+          path: build/trivy/
 
       - name: Attest image provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          subject-name: ${{ steps.pin.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           # The action defaults this to false, which stores the statement only
           # in the GitHub API. Container verification also needs it on the image.
@@ -250,15 +238,51 @@ jobs:
       - name: Verify the GitHub provenance attestation
         env:
           GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.pin.outputs.name }}@${{ steps.push.outputs.digest }}
         run: |
           set -eu
-          image="oci://ghcr.io/${{ github.repository }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}"
           ok=0
-          for _ in 1 2 3 4 5 6; do
-            if gh attestation verify "$image" --repo "${{ github.repository }}"; then
+          for attempt in 1 2 3 4 5 6; do
+            if gh attestation verify "oci://${IMAGE}" --repo "${GITHUB_REPOSITORY}"; then
               ok=1
               break
             fi
-            sleep 10
+            sleep $((attempt * 10))
           done
           test "$ok" = 1
+
+      - name: Promote the gated digest
+        env:
+          IMAGE: ${{ steps.pin.outputs.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tags=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && tags+=("$tag")
+          done <<< "$TAGS"
+          args=()
+          for tag in "${tags[@]}"; do
+            args+=(-t "$tag")
+          done
+          # imagetools create copies the index by digest. The tags name the
+          # same bytes the gates scanned and the attestation covers.
+          docker buildx imagetools create "${args[@]}" "${IMAGE}@${DIGEST}"
+          for tag in "${tags[@]}"; do
+            actual=$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])')
+            if [[ "$actual" != "$DIGEST" ]]; then
+              echo "Tag ${tag} names ${actual}, not the gated ${DIGEST}." >&2
+              exit 1
+            fi
+          done
+          {
+            echo "### ${IMAGE}"
+            echo
+            echo "Digest \`${DIGEST}\` passed the image gates and is attested."
+            echo
+            echo '```'
+            echo "docker pull ${IMAGE}@${DIGEST}"
+            echo "gh attestation verify oci://${IMAGE}@${DIGEST} --repo ${GITHUB_REPOSITORY}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

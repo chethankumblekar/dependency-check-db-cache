@@ -147,8 +147,14 @@ class SignatureTests(TestCase):
             verify_manifest(resigned, retired)
         self.assertIn("not accepted", str(expired.exception))
 
-    def test_the_shipped_trust_store_has_no_key_and_rejects_a_private_key(self) -> None:
-        self.assertEqual(load_trust().keys, {})
+    def test_the_shipped_trust_store_pins_the_production_key_and_rejects_a_private_key(self) -> None:
+        from checkstead.snapshot_auth import TRUST_FILE, signature_required
+
+        shipped = load_trust(TRUST_FILE)
+        self.assertEqual(sorted(shipped.keys), ["checkstead-2026-10"])
+        self.assertEqual(shipped.keys["checkstead-2026-10"].status, "current")
+        self.assertIn("MCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=", shipped.keys["checkstead-2026-10"].public_pem)
+        self.assertTrue(signature_required(shipped))
         with self.assertRaises(ChecksteadError):
             load_trust({"format": 1, "keys": [_entry("2026-10", self.private)]})
 
@@ -362,6 +368,21 @@ class SignatureTests(TestCase):
         self.assertNotIn("echo $CHECKSTEAD_SNAPSHOT_SIGNING_KEY", script)
         self.assertIn("secrets.CHECKSTEAD_SNAPSHOT_SIGNING_KEY", workflow)
         self.assertNotIn(self.private, script)
+
+    def test_a_trust_override_replaces_the_shipped_keys_and_cannot_be_empty(self) -> None:
+        import os
+        from unittest import mock
+
+        override = self.root / "override.json"
+        override.write_text(json.dumps({"format": 1, "keys": [_entry("company-key", self.public)]}), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"CHECKSTEAD_SNAPSHOT_TRUST": str(override)}):
+            self.assertEqual(sorted(load_trust().keys), ["company-key"])
+        empty = self.root / "empty.json"
+        empty.write_text(json.dumps({"format": 1, "keys": []}), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"CHECKSTEAD_SNAPSHOT_TRUST": str(empty)}):
+            with self.assertRaises(ChecksteadError) as caught:
+                load_trust()
+        self.assertIn("at least one public key", str(caught.exception))
 
 
 def _time(value: str):

@@ -13,16 +13,83 @@ case "$(uname -s)" in
 esac
 
 ROOT="$HOME/checkstead"
-PACKAGE_URL="https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
-PIN_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/engine.version"
+# CHECKSTEAD_REF installs a release tag instead of the main branch, for example
+# CHECKSTEAD_REF=v0.1.1. A tag is what a production install should name.
+REF=${CHECKSTEAD_REF:-main}
+if [[ ! "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ || "$REF" == *..* ]]; then
+  echo "CHECKSTEAD_REF is not a branch or tag name: ${REF}" >&2
+  exit 1
+fi
+if [[ "$REF" == v[0-9]* ]]; then
+  PACKAGE_URL="https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/tags/${REF}.tar.gz"
+else
+  PACKAGE_URL="https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/${REF}.tar.gz"
+fi
+PIN_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/engine.version"
 PATH_MARKER="# checkstead setup: user install on PATH"
 PATH_LINE='export PATH="$HOME/checkstead/bin:$PATH"'
 JDK_MARKER="# checkstead setup: bundled JDK"
 # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
 # ENGINE_KEY_FINGERPRINT overrides it only for the installer tests.
 ENGINE_FPR_DEFAULT=259A55407DD6C00299E6607EFFDE55BE73A2D1ED
-ENGINE_KEY_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/keys/dependency-check-release.asc"
-ENGINE_ARCHIVE_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/src/checkstead/archive.py"
+ENGINE_KEY_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/scripts/keys/dependency-check-release.asc"
+ENGINE_ARCHIVE_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/src/checkstead/archive.py"
+ENGINE_OVERRIDES_URL="https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/${REF}/scripts/engine-overrides.txt"
+MAVEN_CENTRAL="https://repo1.maven.org/maven2"
+
+# Every download is https only, retried on a transient failure, and bounded in
+# time. --retry-all-errors is not used because older Linux curl lacks it.
+fetch() {
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --retry 5 --retry-delay 3 --retry-connrefused \
+    --connect-timeout 30 --max-time 1200 \
+    -o "$1" "$2"
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Refuse a download whose SHA-256 is not the pinned value. The pins below were
+# read from the upstream release API and checked against GitHub's asset digest.
+verify_sha256() {
+  local file=$1 expected=$2 what=$3 actual
+  actual=$(sha256_of "$file")
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Refusing ${what}. Expected SHA-256 ${expected} but downloaded ${actual}." >&2
+    rm -f "$file"
+    exit 1
+  fi
+}
+
+# python-build-standalone 20261013, CPython 3.12.15, install_only archives.
+PYTHON_RELEASE="https://github.com/astral-sh/python-build-standalone/releases/download/20261013"
+python_sha256() {
+  case "$1" in
+    aarch64-apple-darwin) echo ba32036ad8f4c434d97a1ee7feef8b7edc0fac16777639b97e39c74a108e4440 ;;
+    x86_64-apple-darwin) echo 9686ddd8639b855905447ea4a16eb54a804a9ef12afbe7c9ecb1412d9c1fbc98 ;;
+    aarch64-unknown-linux-gnu) echo 34a43010cc05982d8b5debbad7d09f7b1200117ebf018f7acfd656895e408205 ;;
+    x86_64-unknown-linux-gnu) echo 5d546fc004fc2435fa142eb8f42ed8de5eb4725963dc22f7e6671014a80eb560 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Eclipse Temurin jdk-21.0.12.1+1. A fixed release, not "latest", so the
+# digest below is the file that is installed.
+JDK_RELEASE="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1"
+jdk_asset() {
+  case "$1" in
+    mac/aarch64) echo "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz 3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998" ;;
+    mac/x64) echo "OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz 44db0f08196daf19a47f90d13388b0c943b67663cb537f998fe29e836fa842ce" ;;
+    linux/aarch64) echo "OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.12.1_1.tar.gz 23e37e026f12f3e706f18938ff611db3032d075b09d0879a25d06718c773e223" ;;
+    linux/x64) echo "OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94" ;;
+    *) return 1 ;;
+  esac
+}
 
 python_ok() {
   local bin=$1
@@ -116,11 +183,13 @@ jdk_platform() {
 }
 
 install_python() {
-  local triple url tmp
+  local triple url tmp expected
   triple=$(python_triple)
-  url="https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15+20261013-${triple}-install_only.tar.gz"
+  expected=$(python_sha256 "$triple")
+  url="${PYTHON_RELEASE}/cpython-3.12.15+20261013-${triple}-install_only.tar.gz"
   tmp=$(mktemp -d)
-  curl -fsSL -o "$tmp/python.tar.gz" "$url"
+  fetch "$tmp/python.tar.gz" "$url"
+  verify_sha256 "$tmp/python.tar.gz" "$expected" "the Python download"
   tar -xzf "$tmp/python.tar.gz" -C "$tmp"
   rm -rf "$ROOT/python"
   mkdir -p "$ROOT"
@@ -130,11 +199,15 @@ install_python() {
 }
 
 install_jdk() {
-  local platform url tmp found home
+  local platform url tmp found home asset name expected
   platform=$(jdk_platform)
-  url="https://api.adoptium.net/v3/binary/latest/21/ga/${platform}/jdk/hotspot/normal/eclipse"
+  asset=$(jdk_asset "$platform")
+  name=${asset%% *}
+  expected=${asset##* }
+  url="${JDK_RELEASE}/${name}"
   tmp=$(mktemp -d)
-  curl -fsSL -L -o "$tmp/jdk.tgz" "$url"
+  fetch "$tmp/jdk.tgz" "$url"
+  verify_sha256 "$tmp/jdk.tgz" "$expected" "the JDK download"
   tar -xzf "$tmp/jdk.tgz" -C "$tmp"
   found=$(find "$tmp" -type f -path '*/bin/java' | head -n 1)
   if [[ -z "$found" ]]; then
@@ -160,8 +233,8 @@ install_engine() {
   tmp=$(mktemp -d)
   cleanup_engine() { rm -rf "$tmp"; unset GNUPGHOME; }
   trap cleanup_engine RETURN
-  curl -fsSL -o "$tmp/dc.zip" "$url"
-  curl -fsSL -o "$tmp/dc.zip.asc" "${url}.asc"
+  fetch "$tmp/dc.zip" "$url"
+  fetch "$tmp/dc.zip.asc" "${url}.asc"
   script_dir=""
   if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
     script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -171,13 +244,13 @@ install_engine() {
   elif [[ -n "$script_dir" && -f "$script_dir/keys/dependency-check-release.asc" ]]; then
     key_file=$script_dir/keys/dependency-check-release.asc
   else
-    curl -fsSL -o "$tmp/dependency-check-release.asc" "$ENGINE_KEY_URL"
+    fetch "$tmp/dependency-check-release.asc" "$ENGINE_KEY_URL"
     key_file=$tmp/dependency-check-release.asc
   fi
   if [[ -n "$script_dir" && -f "$script_dir/../src/checkstead/archive.py" ]]; then
     archive_py=$script_dir/../src/checkstead/archive.py
   else
-    curl -fsSL -o "$tmp/archive.py" "$ENGINE_ARCHIVE_URL"
+    fetch "$tmp/archive.py" "$ENGINE_ARCHIVE_URL"
     archive_py=$tmp/archive.py
   fi
   GNUPGHOME="$tmp/gnupg"
@@ -208,6 +281,7 @@ install_engine() {
     exit 1
   fi
   chmod +x "$src/bin/dependency-check.sh"
+  apply_engine_overrides "$src" "$tmp" "$script_dir"
   rm -rf "$ROOT/dependency-check"
   mkdir -p "$ROOT"
   mv "$src" "$ROOT/dependency-check"
@@ -217,6 +291,38 @@ install_engine() {
     exit 1
   fi
   echo "Installed Dependency-Check ${PIN} under $ROOT/dependency-check"
+}
+
+# Replace the vulnerable library jars the pinned engine bundles, the same way
+# scripts/install-engine.sh does for the container image. Each replacement is
+# pinned by SHA-256 in scripts/engine-overrides.txt. ENGINE_OVERRIDES= (empty)
+# skips this, which only the installer tests do.
+apply_engine_overrides() {
+  local src=$1 tmp=$2 script_dir=$3 list jar path digest extra actual
+  if [[ -n "${ENGINE_OVERRIDES+set}" ]]; then
+    list=$ENGINE_OVERRIDES
+  elif [[ -n "$script_dir" && -f "$script_dir/engine-overrides.txt" ]]; then
+    list=$script_dir/engine-overrides.txt
+  else
+    fetch "$tmp/engine-overrides.txt" "$ENGINE_OVERRIDES_URL"
+    list=$tmp/engine-overrides.txt
+  fi
+  [[ -n "$list" ]] || return 0
+  while read -r jar path digest extra; do
+    [[ -z "${jar:-}" || "$jar" == \#* ]] && continue
+    if [[ -n "${extra:-}" || ! "$jar" =~ ^[A-Za-z0-9._-]+\.jar$ || ! "$path" =~ ^[A-Za-z0-9._/-]+\.jar$ || "$path" == *..* || ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Refusing to install. Bad line in the engine override list: ${jar} ${path}" >&2
+      exit 1
+    fi
+    if [[ ! -f "$src/lib/$jar" ]]; then
+      echo "Refusing to install. ${jar} is not in Dependency-Check ${PIN}." >&2
+      exit 1
+    fi
+    fetch "$tmp/override.jar" "${MAVEN_CENTRAL}/${path}"
+    verify_sha256 "$tmp/override.jar" "$digest" "${path##*/}"
+    mv "$tmp/override.jar" "$src/lib/$jar"
+    echo "Replaced lib/${jar} with ${path##*/}"
+  done < "$list"
 }
 
 ensure_engine_wrapper() {
@@ -272,7 +378,11 @@ read_pin() {
     tr -d '[:space:]' < "$version_file"
     return 0
   fi
-  curl -fsSL "$PIN_URL"
+  local pin_tmp
+  pin_tmp=$(mktemp)
+  fetch "$pin_tmp" "$PIN_URL"
+  tr -d '[:space:]' < "$pin_tmp"
+  rm -f "$pin_tmp"
 }
 
 ensure_command() {
@@ -386,15 +496,16 @@ checkstead_current() {
 install_checkstead_package() {
   if [[ ! -x "$ROOT/venv/bin/python" ]]; then
     rm -rf "$ROOT/venv"
-    if "$python" -c 'import ensurepip' >/dev/null 2>&1; then
-      "$python" -m venv "$ROOT/venv"
-    else
-      "$python" -m venv --without-pip "$ROOT/venv"
-      pip_tmp=$(mktemp -d)
-      curl -fsSL -o "$pip_tmp/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-      "$ROOT/venv/bin/python" "$pip_tmp/get-pip.py"
-      rm -rf "$pip_tmp"
+    if ! "$python" -c 'import ensurepip' >/dev/null 2>&1; then
+      # A system Python without ensurepip (Debian without python3-venv).
+      # Use the pinned, checksummed Python instead of running pip's bootstrap
+      # script from the network, which has no pinned digest.
+      if ! python_ok "$ROOT/python/bin/python3"; then
+        install_python
+      fi
+      python="$ROOT/python/bin/python3"
     fi
+    "$python" -m venv "$ROOT/venv"
   fi
   "$ROOT/venv/bin/python" -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir "$PACKAGE_URL"
   echo "Installed checkstead under $ROOT/venv"

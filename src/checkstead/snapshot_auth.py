@@ -12,11 +12,13 @@ import base64
 import json
 import os
 import re
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from checkstead.errors import ChecksteadError, SnapshotRefused
 
@@ -58,9 +60,20 @@ def canonical_payload(manifest: dict) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def trust_source() -> Path:
+    """The trust store in use: ``CHECKSTEAD_SNAPSHOT_TRUST``, or the one shipped here.
+
+    A company that runs its own updater and mirror pins its own key this way.
+    The override replaces the shipped keys rather than adding to them.
+    """
+    override = os.environ.get("CHECKSTEAD_SNAPSHOT_TRUST", "").strip()
+    return Path(override) if override else TRUST_FILE
+
+
 def load_trust(source: Path | dict | None = None) -> TrustStore:
+    override = source is None and bool(os.environ.get("CHECKSTEAD_SNAPSHOT_TRUST", "").strip())
     if source is None:
-        source = TRUST_FILE
+        source = trust_source()
     if isinstance(source, Path):
         try:
             payload = json.loads(source.read_text(encoding="utf-8"))
@@ -79,6 +92,13 @@ def load_trust(source: Path | dict | None = None) -> TrustStore:
         if key.key_id in keys:
             raise ChecksteadError(f"Snapshot trust store repeats key {key.key_id}.")
         keys[key.key_id] = key
+    if override and not keys:
+        # An empty replacement would turn signature checks off. That is a
+        # downgrade, not a configuration.
+        raise ChecksteadError(
+            "CHECKSTEAD_SNAPSHOT_TRUST names a trust store with no keys. "
+            "It has to pin at least one public key."
+        )
     return TrustStore(keys)
 
 
@@ -94,6 +114,10 @@ def _trust_key(entry: object) -> TrustKey:
         raise ChecksteadError(f"Snapshot trust store key {key_id} has an unknown status.")
     if not isinstance(pem, str) or "BEGIN PUBLIC KEY" not in pem or "PRIVATE KEY" in pem:
         raise ChecksteadError(f"Snapshot trust store key {key_id} is not a public key.")
+    try:
+        _load_public(pem)
+    except SnapshotRefused as exc:
+        raise ChecksteadError(f"Snapshot trust store key {key_id} is not an Ed25519 public key.") from exc
     raw_after = entry.get("notAfter")
     not_after: date | None = None
     if raw_after is not None:
@@ -165,7 +189,7 @@ def verify_manifest(manifest: dict, trust: TrustStore | None = None) -> Authenti
             f"Snapshot signature key {key.key_id} is not accepted for this snapshot."
         )
     raw = base64.b64decode(parsed["value"])
-    if not _openssl_verify(key.public_pem, canonical_payload(manifest), raw):
+    if not _verify(key.public_pem, canonical_payload(manifest), raw):
         raise SnapshotRefused("Snapshot signature does not verify.")
     return Authenticity("signed", key.key_id)
 
@@ -191,9 +215,9 @@ def sign_manifest(
         raise ChecksteadError(f"Snapshot signing key {key_id} is not a current pinned key.")
     unsigned = {field: manifest[field] for field in SIGNED_FIELDS}
     payload = canonical_payload(unsigned)
-    signature = _openssl_sign(private_pem, payload)
-    check_pem = pinned.public_pem if pinned is not None else _public_pem(private_pem)
-    if not _openssl_verify(check_pem, payload, signature):
+    signature = _sign(private_pem, payload)
+    check_pem = pinned.public_pem if pinned is not None else public_pem_for(private_pem)
+    if not _verify(check_pem, payload, signature):
         if pinned is not None:
             raise ChecksteadError("Snapshot signing key does not match the pinned public key.")
         raise ChecksteadError("Snapshot signing key could not be checked.")
@@ -215,72 +239,42 @@ def _snapshot_day(value: object) -> date:
         raise SnapshotRefused("Snapshot manifest time must be UTC, like 2026-10-06T01:00:00Z.") from exc
 
 
-def _public_pem(private_pem: str) -> str:
-    with tempfile.TemporaryDirectory() as tmp:
-        key_path = Path(tmp) / "key.pem"
-        key_path.write_text(private_pem, encoding="utf-8")
-        key_path.chmod(0o600)
-        completed = _openssl("pkey", "-in", str(key_path), "-pubout")
-        if completed.returncode != 0 or b"PUBLIC KEY" not in completed.stdout:
-            raise ChecksteadError("Snapshot signing key is not a private key.")
-        return completed.stdout.decode("ascii")
-
-
-def _openssl_sign(private_pem: str, payload: bytes) -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        key_path = directory / "key.pem"
-        data_path = directory / "payload"
-        signature_path = directory / "signature"
-        key_path.write_text(private_pem, encoding="utf-8")
-        key_path.chmod(0o600)
-        data_path.write_bytes(payload)
-        completed = _openssl(
-            "pkeyutl",
-            "-sign",
-            "-inkey",
-            str(key_path),
-            "-rawin",
-            "-in",
-            str(data_path),
-            "-out",
-            str(signature_path),
-        )
-        if completed.returncode != 0 or not signature_path.is_file():
-            raise ChecksteadError("Could not sign the snapshot manifest.")
-        return signature_path.read_bytes()
-
-
-def _openssl_verify(public_pem: str, payload: bytes, signature: bytes) -> bool:
-    with tempfile.TemporaryDirectory() as tmp:
-        directory = Path(tmp)
-        key_path = directory / "key.pem"
-        data_path = directory / "payload"
-        signature_path = directory / "signature"
-        key_path.write_text(public_pem, encoding="utf-8")
-        data_path.write_bytes(payload)
-        signature_path.write_bytes(signature)
-        completed = _openssl(
-            "pkeyutl",
-            "-verify",
-            "-pubin",
-            "-inkey",
-            str(key_path),
-            "-rawin",
-            "-in",
-            str(data_path),
-            "-sigfile",
-            str(signature_path),
-        )
-        return completed.returncode == 0
-
-
-def _openssl(*args: str) -> subprocess.CompletedProcess[bytes]:
+def _load_private(private_pem: str) -> Ed25519PrivateKey:
     try:
-        return subprocess.run(
-            ["openssl", *args],
-            capture_output=True,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise ChecksteadError("openssl is required to verify a snapshot signature.") from exc
+        key = serialization.load_pem_private_key(private_pem.encode("utf-8"), password=None)
+    except (ValueError, TypeError, UnsupportedAlgorithm) as exc:
+        raise ChecksteadError("Snapshot signing key is not a private key.") from exc
+    if not isinstance(key, Ed25519PrivateKey):
+        raise ChecksteadError("Snapshot signing key is not an Ed25519 private key.")
+    return key
+
+
+def _load_public(public_pem: str) -> Ed25519PublicKey:
+    try:
+        key = serialization.load_pem_public_key(public_pem.encode("utf-8"))
+    except (ValueError, TypeError, UnsupportedAlgorithm) as exc:
+        raise SnapshotRefused("Snapshot trust store public key is not readable.") from exc
+    if not isinstance(key, Ed25519PublicKey):
+        raise SnapshotRefused("Snapshot trust store key is not an Ed25519 public key.")
+    return key
+
+
+def public_pem_for(private_pem: str) -> str:
+    """The PEM public key that pairs with a private signing key. It is safe to publish."""
+    key = _load_private(private_pem)
+    return key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+
+
+def _sign(private_pem: str, payload: bytes) -> bytes:
+    return _load_private(private_pem).sign(payload)
+
+
+def _verify(public_pem: str, payload: bytes, signature: bytes) -> bool:
+    try:
+        _load_public(public_pem).verify(signature, payload)
+    except InvalidSignature:
+        return False
+    return True

@@ -18,12 +18,14 @@ RUN apt-get update \
 COPY engine.version /tmp/engine.version
 COPY scripts/install-engine.sh /tmp/install-engine.sh
 COPY scripts/keys/dependency-check-release.asc /tmp/dependency-check-release.asc
+COPY scripts/engine-overrides.txt /tmp/engine-overrides.txt
 COPY src/checkstead/archive.py /tmp/archive.py
 RUN ENGINE_VERSION_FILE=/tmp/engine.version \
     ENGINE_PUBLIC_KEY=/tmp/dependency-check-release.asc \
+    ENGINE_OVERRIDES=/tmp/engine-overrides.txt \
     CHECKSTEAD_ARCHIVE=/tmp/archive.py \
     bash /tmp/install-engine.sh /opt/dependency-check \
-    && rm -f /tmp/install-engine.sh /tmp/engine.version /tmp/archive.py /tmp/dependency-check-release.asc \
+    && rm -f /tmp/install-engine.sh /tmp/engine.version /tmp/archive.py /tmp/dependency-check-release.asc /tmp/engine-overrides.txt \
     && apt-get purge -y gnupg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -46,6 +48,7 @@ RUN python3 -m venv /opt/checkstead-venv \
     && /opt/checkstead-venv/bin/python -c "import pathlib, shutil, pip; root = pathlib.Path(pip.__file__).resolve().parents[1]; shutil.rmtree(root / 'pip'); [shutil.rmtree(path) for path in root.glob('pip-*.dist-info')]" \
     && rm -f /opt/checkstead-venv/bin/pip /opt/checkstead-venv/bin/pip3 /opt/checkstead-venv/bin/pip3.* \
     && ln -sf /opt/checkstead-venv/bin/checkstead /usr/local/bin/checkstead \
+    && rm -rf /opt/checkstead-src \
     && apt-get update \
     && apt-get purge -y python3-pip curl unzip \
     && rm -rf /var/lib/apt/lists/*

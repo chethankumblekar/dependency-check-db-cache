@@ -17,11 +17,20 @@ else
   export CHECKSTEAD_LOCAL
 fi
 mkdir -p "$data" "$scans"
-# The image starts as root so a fresh volume can be handed to the checkstead
-# user. A container already running as that user skips chown and su.
+# The image runs as uid 999. Started as root (--user 0), the entrypoint hands
+# a directory that uid 999 does not own to it once, then drops to that user.
 if [ "$(id -u)" = 0 ] && id checkstead >/dev/null 2>&1; then
-  chown -R checkstead:checkstead "$data" "$scans"
+  owner=$(id -u checkstead)
+  for dir in "$data" "$scans"; do
+    if [ "$(stat -c %u "$dir")" != "$owner" ]; then
+      chown -R checkstead:checkstead "$dir"
+    fi
+  done
   # su without -p drops CHECKSTEAD_LOCAL and the optional OAuth variables.
   exec su -p -s /bin/sh checkstead -c "exec checkstead ui --host 0.0.0.0 --port 8765 --scans '$scans' --data '$data'"
+fi
+if [ ! -w "$data" ] || [ ! -w "$scans" ]; then
+  echo "checkstead: uid $(id -u) cannot write $data or $scans. Give the volume to uid 999, or start once with --user 0." >&2
+  exit 1
 fi
 exec checkstead ui --host 0.0.0.0 --port 8765 --scans "$scans" --data "$data"

@@ -5,9 +5,52 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Join-Path $env:USERPROFILE "checkstead"
-$PackageUrl = "https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/heads/main.tar.gz"
-$PinUrl = "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/engine.version"
+# CHECKSTEAD_REF installs a release tag instead of the main branch, for example v0.1.1.
+$Ref = if ($env:CHECKSTEAD_REF) { $env:CHECKSTEAD_REF } else { "main" }
+if ($Ref -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$' -or $Ref.Contains("..")) {
+    throw "CHECKSTEAD_REF is not a branch or tag name: $Ref"
+}
+$RefKind = if ($Ref -match '^v[0-9]') { "tags" } else { "heads" }
+$PackageUrl = "https://github.com/chethankumblekar/dependency-check-db-cache/archive/refs/$RefKind/$Ref.tar.gz"
+$RawBase = "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/$Ref"
+$PinUrl = "$RawBase/engine.version"
 $PythonRelease = "https://github.com/astral-sh/python-build-standalone/releases/download/20261013"
+# SHA-256 of each pinned download, read from the upstream release and checked
+# against GitHub's asset digest. A download that does not match is refused.
+$PythonSha256 = @{
+    "x86_64-pc-windows-msvc" = "bbc902d4d187ac4914915bf538196a064b49109a33a104965b5164ced5b80a1e"
+    "aarch64-pc-windows-msvc" = "5a2aa29c73e72b512279bfc3f795b51dc6ae09b8fb7cea801459f49896d3bac6"
+}
+$JdkRelease = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1"
+$JdkAssets = @{
+    "x64" = @("OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip", "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e")
+    "aarch64" = @("OpenJDK21U-jdk_aarch64_windows_hotspot_21.0.12.1_1.zip", "ccf2e51f527d542a70ba5794a600d3aac04b4e967950e227834c7566cb1bec7b")
+}
+
+function Save-Download {
+    param([string]$Uri, [string]$OutFile)
+    if (-not $Uri.StartsWith("https://")) { throw "Refusing a download that is not https: $Uri" }
+    $attempt = 0
+    while ($true) {
+        $attempt++
+        try {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -TimeoutSec 1200
+            return
+        } catch {
+            if ($attempt -ge 5) { throw }
+            Start-Sleep -Seconds (3 * $attempt)
+        }
+    }
+}
+
+function Assert-Sha256 {
+    param([string]$Path, [string]$Expected, [string]$What)
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $Expected) {
+        Remove-Item -Force -LiteralPath $Path
+        throw "Refusing $What. Expected SHA-256 $Expected but downloaded $actual."
+    }
+}
 
 function Test-Python311 {
     param([string]$Bin)
@@ -55,7 +98,8 @@ function Install-Python {
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("checkstead-python-" + [guid]::NewGuid().ToString("n"))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     $archive = Join-Path $tmp "python.tar.gz"
-    Invoke-WebRequest -Uri $url -OutFile $archive
+    Save-Download -Uri $url -OutFile $archive
+    Assert-Sha256 -Path $archive -Expected $PythonSha256[$triple] -What "the Python download"
     tar -xzf $archive -C $tmp
     $extracted = Join-Path $tmp "python"
     if (Test-Path (Join-Path $Root "python")) { Remove-Item -Recurse -Force (Join-Path $Root "python") }
@@ -68,11 +112,13 @@ function Install-Python {
 function Install-Jdk {
     $arch = Get-MachineArch
     $jdkArch = if ($arch -eq "arm64") { "aarch64" } else { "x64" }
-    $url = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/$jdkArch/jdk/hotspot/normal/eclipse"
+    $asset = $JdkAssets[$jdkArch]
+    $url = "$JdkRelease/$($asset[0])"
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("checkstead-jdk-" + [guid]::NewGuid().ToString("n"))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     $archive = Join-Path $tmp "jdk.zip"
-    Invoke-WebRequest -Uri $url -OutFile $archive
+    Save-Download -Uri $url -OutFile $archive
+    Assert-Sha256 -Path $archive -Expected $asset[1] -What "the JDK download"
     Expand-Archive -Path $archive -DestinationPath (Join-Path $tmp "unpacked") -Force
     $java = Get-ChildItem -Path (Join-Path $tmp "unpacked") -Filter java.exe -Recurse | Select-Object -First 1
     if ($null -eq $java) { throw "The JDK archive did not contain bin\java.exe." }
@@ -116,6 +162,37 @@ function Find-PinnedEngine {
     return $null
 }
 
+# Replace the vulnerable library jars the pinned engine bundles. Each one is
+# pinned by SHA-256 in scripts/engine-overrides.txt, as in the container image.
+function Install-EngineOverrides {
+    param([string]$Src, [string]$Tmp, [string]$Pin)
+    $list = $null
+    if (Test-Path Env:ENGINE_OVERRIDES) {
+        $list = $env:ENGINE_OVERRIDES
+    } elseif ($PSCommandPath -and (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $PSCommandPath) "engine-overrides.txt"))) {
+        $list = Join-Path (Split-Path -Parent $PSCommandPath) "engine-overrides.txt"
+    } else {
+        $list = Join-Path $Tmp "engine-overrides.txt"
+        Save-Download -Uri "$RawBase/scripts/engine-overrides.txt" -OutFile $list
+    }
+    if ([string]::IsNullOrWhiteSpace($list)) { return }
+    foreach ($line in Get-Content -LiteralPath $list) {
+        $text = $line.Trim()
+        if ($text -eq "" -or $text.StartsWith("#")) { continue }
+        $fields = $text -split '\s+'
+        if ($fields.Count -ne 3 -or $fields[0] -notmatch '^[A-Za-z0-9._-]+\.jar$' -or $fields[1] -notmatch '^[A-Za-z0-9._/-]+\.jar$' -or $fields[1].Contains("..") -or $fields[2] -notmatch '^[0-9a-f]{64}$') {
+            throw "Refusing to install. Bad line in the engine override list: $text"
+        }
+        $target = Join-Path $Src ("lib\" + $fields[0])
+        if (-not (Test-Path -LiteralPath $target)) { throw "Refusing to install. $($fields[0]) is not in Dependency-Check $Pin." }
+        $download = Join-Path $Tmp "override.jar"
+        Save-Download -Uri ("https://repo1.maven.org/maven2/" + $fields[1]) -OutFile $download
+        Assert-Sha256 -Path $download -Expected $fields[2] -What ($fields[1] -split '/')[-1]
+        Move-Item -Force $download $target
+        Write-Output "Replaced lib\$($fields[0])"
+    }
+}
+
 function Install-Engine {
     param([string]$Pin, [string]$Python)
     # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
@@ -129,8 +206,8 @@ function Install-Engine {
     try {
         $archive = Join-Path $tmp "dc.zip"
         $signature = Join-Path $tmp "dc.zip.asc"
-        Invoke-WebRequest -Uri $url -OutFile $archive
-        Invoke-WebRequest -Uri ($url + ".asc") -OutFile $signature
+        Save-Download -Uri $url -OutFile $archive
+        Save-Download -Uri ($url + ".asc") -OutFile $signature
         $keyFile = $env:ENGINE_PUBLIC_KEY
         $archivePy = $null
         if ($PSCommandPath) {
@@ -144,11 +221,11 @@ function Install-Engine {
         }
         if (-not $keyFile) {
             $keyFile = Join-Path $tmp "dependency-check-release.asc"
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/scripts/keys/dependency-check-release.asc" -OutFile $keyFile
+            Save-Download -Uri "$RawBase/scripts/keys/dependency-check-release.asc" -OutFile $keyFile
         }
         if (-not $archivePy) {
             $archivePy = Join-Path $tmp "archive.py"
-            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/main/src/checkstead/archive.py" -OutFile $archivePy
+            Save-Download -Uri "$RawBase/src/checkstead/archive.py" -OutFile $archivePy
         }
         $gnupg = Join-Path $tmp "gnupg"
         New-Item -ItemType Directory -Path $gnupg | Out-Null
@@ -173,6 +250,7 @@ function Install-Engine {
         $bat = Get-ChildItem -Path $unpacked -Filter dependency-check.bat -Recurse | Select-Object -First 1
         if ($null -eq $bat) { throw "The Dependency-Check archive did not contain bin\dependency-check.bat" }
         $src = $bat.Directory.Parent.FullName
+        Install-EngineOverrides -Src $src -Tmp $tmp -Pin $Pin
         if (Test-Path (Join-Path $Root "dependency-check")) { Remove-Item -Recurse -Force (Join-Path $Root "dependency-check") }
         New-Item -ItemType Directory -Path $Root -Force | Out-Null
         Move-Item $src (Join-Path $Root "dependency-check")

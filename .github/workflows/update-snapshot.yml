@@ -2,6 +2,11 @@ name: Update database snapshot
 
 on:
   workflow_dispatch:
+    inputs:
+      full_rebuild:
+        description: "Rebuild the database from the NVD instead of updating the last snapshot."
+        type: boolean
+        default: false
   schedule:
     # 01:00 UTC. One run a day is inside NIST's enterprise refresh guidance.
     - cron: "0 1 * * *"
@@ -16,10 +21,23 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # An incremental update takes minutes. The weekly full rebuild took up to
+    # 2.5 hours and three of ten runs before the seed was added hit 180.
+    timeout-minutes: 330
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Checkstead
+        # The updater verifies the seed and signs the manifest with this package.
+        run: python3 -m pip install --disable-pip-version-check .
 
       - name: Set up Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -33,6 +51,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CHECKSTEAD_SNAPSHOT_SIGNING_KEY: ${{ secrets.CHECKSTEAD_SNAPSHOT_SIGNING_KEY }}
           CHECKSTEAD_SNAPSHOT_KEY_ID: ${{ vars.CHECKSTEAD_SNAPSHOT_KEY_ID }}
+          CHECKSTEAD_FULL_REBUILD: ${{ inputs.full_rebuild && '1' || '' }}
         run: bash ./scripts/update-snapshot.sh
 
       - name: Upload updater log

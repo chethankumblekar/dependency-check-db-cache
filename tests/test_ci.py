@@ -49,39 +49,48 @@ class CiTests(TestCase):
         self.assertIn("packages: write", ci)
         self.assertIn("id-token: write", ci)
         self.assertIn("attestations: write", ci)
-        self.assertIn("provenance: true", ci)
+        self.assertIn("provenance: mode=max", ci)
         self.assertIn("sbom: true", ci)
         self.assertIn("provenance: false", ci)
         self.assertIn("load: true", ci)
         self.assertIn("push: false", ci)
-        self.assertIn('exit-code: "1"', ci)
-        self.assertIn('exit-code: "0"', ci)
-        self.assertIn("vuln-type: library", ci)
-        self.assertIn("severity: CRITICAL", ci)
-        self.assertIn("ghcr.io/${{ github.repository }}/", ci)
+        self.assertIn("ghcr.io/${GITHUB_REPOSITORY}/", ci)
         self.assertIn("image: checkstead-server", ci)
         self.assertIn("file: Dockerfile", ci)
         self.assertIn("file: Dockerfile.server", ci)
         self.assertIn("github.event_name != 'pull_request'", ci)
         self.assertIn("github.event.repository.default_branch", ci)
         self.assertIn("startsWith(github.ref, 'refs/tags/v')", ci)
-        self.assertIn("skip-dirs: /opt/dependency-check", ci)
-        self.assertIn("vuln-type: os", ci)
-        self.assertIn("severity: CRITICAL,HIGH", ci)
-        self.assertIn("ignore-unfixed: true", ci)
-        self.assertIn("Fail on fixed High and Critical operating-system packages", ci)
-        self.assertNotRegex(ci, r"(?m)^[ ]+severity: CRITICAL$")
-        self.assertIn("Exception unfixed-os-2026-10-19", ci)
-        self.assertIn("2027-01-19", ci)
-        self.assertIn("CVE-2025-7458", ci)
-        self.assertIn("CVE-2023-45853", ci)
-        self.assertIn("This is not a .trivyignore file.", ci)
+        # One gate policy, in one script, for pull requests and for publishing.
+        gates_script = (ROOT / "scripts" / "image-gates.sh").read_text(encoding="utf-8")
+        self.assertEqual(ci.count("bash ./scripts/image-gates.sh"), 2)
+        # The engine is gated too. Its vulnerable jars are replaced, not skipped.
+        self.assertNotIn("--skip-dirs", gates_script)
+        overrides = (ROOT / "scripts" / "engine-overrides.txt").read_text(encoding="utf-8")
+        self.assertRegex(overrides, r"(?m)^jackson-databind-[0-9.]+\.jar \S+ [0-9a-f]{64}$")
+        self.assertIn("--severity CRITICAL,HIGH --pkg-types library", gates_script)
+        self.assertIn("--severity CRITICAL,HIGH --pkg-types os", gates_script)
+        self.assertIn("--ignore-unfixed --exit-code 1", gates_script)
+        commands = "\n".join(
+            line for line in gates_script.splitlines() if not line.lstrip().startswith("#")
+        )
+        self.assertEqual(commands.count("--ignore-unfixed"), 1)
+        library_gate = commands[commands.index("--pkg-types library") : commands.index("--pkg-types os")]
+        self.assertNotIn("--ignore-unfixed", library_gate)
+        self.assertEqual(gates_script.count("--exit-code 1"), 2)
+        self.assertIn("Exception unfixed-os-2026-10-19", gates_script)
+        self.assertIn("2027-01-19", gates_script)
+        self.assertIn("CVE-2025-7458", gates_script)
+        self.assertIn("CVE-2023-45853", gates_script)
+        self.assertIn("This is not a .trivyignore file.", gates_script)
+        self.assertNotIn(".trivyignore", ci)
         self.assertFalse((ROOT / ".trivyignore").exists())
         gates = (ROOT / "docs" / "security" / "security-gates.md").read_text(encoding="utf-8")
         self.assertIn("unfixed-os-2026-10-19", gates)
         self.assertIn("2027-01-19", gates)
         images = (ROOT / "scripts" / "scan-images.sh").read_text(encoding="utf-8")
-        self.assertIn("Exception unfixed-os-2026-10-19", images)
+        self.assertIn("unfixed-os-2026-10-19", images)
+        self.assertIn("scripts/image-gates.sh", images)
         self.assertIn("type=semver,pattern={{version}},enable=${{ !contains(github.ref_name, '-') }}", ci)
         self.assertIn("type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}", ci)
         self.assertRegex(
@@ -91,6 +100,20 @@ class CiTests(TestCase):
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
         images, _marker, publish = ci.partition("publish-images:")
         self.assertIn("push-to-registry: true", publish)
+        # The publish job pushes only the immutable candidate tag, gates the
+        # pushed digest, attests it, and only then moves the other tags.
+        self.assertIn("tags: ${{ steps.pin.outputs.name }}:sha-${{ github.sha }}", publish)
+        order = [
+            "name: Build and push the candidate",
+            'image-gates.sh "${{ matrix.kind }}" "${{ steps.pin.outputs.name }}@${{ steps.push.outputs.digest }}"',
+            "name: Attest image provenance",
+            "name: Verify the GitHub provenance attestation",
+            "name: Promote the gated digest",
+        ]
+        positions = [publish.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("PLATFORMS: ${{ matrix.platforms }}", publish)
+        self.assertIn("no-cache: ${{ startsWith(github.ref, 'refs/tags/') }}", publish)
         self.assertNotIn("packages: write", images)
         self.assertIn("packages: write", publish)
         self.assertIn("push: false", images)
@@ -107,7 +130,9 @@ class CiTests(TestCase):
         self.assertEqual(build_push[0], build_push[1])
         self.assertIn("linux/amd64,linux/arm64", ci)
         self.assertRegex(ci, r"docker/setup-qemu-action@[0-9a-f]{40} # v\d")
-        self.assertRegex(ci, r"aquasecurity/trivy-action@[0-9a-f]{40} # v\d")
+        self.assertRegex(ci, r"aquasecurity/setup-trivy@[0-9a-f]{40} # v\d")
+        self.assertIn("TRIVY_VERSION: v", ci)
+        self.assertEqual(ci.count("persist-credentials: false"), 3)
         self.assertNotRegex(ci, r"uses: .+@v\d+")
         for workflow in workflows.glob("*.yml"):
             text = workflow.read_text(encoding="utf-8")
@@ -138,7 +163,8 @@ class CiTests(TestCase):
         self.assertIn("mvn -B -f integrations/maven/pom.xml verify", script)
         self.assertRegex(project, r'"ruff==[0-9]+\.[0-9]+\.[0-9]+"')
         self.assertRegex(project, r'"build==[0-9]+\.[0-9]+\.[0-9]+"')
-        self.assertIn('dependencies = ["certifi"]', project)
+        self.assertIn('"certifi>=', project)
+        self.assertIn('"cryptography>=', project)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("actions/workflows/ci.yml/badge.svg?branch=main", readme)

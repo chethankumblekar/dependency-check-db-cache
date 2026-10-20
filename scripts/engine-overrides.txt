@@ -1,0 +1,19 @@
+# Jars in the pinned Dependency-Check release replaced with a patch release
+# that fixes a published CVE. Upstream 13.0.0 is the latest release and still
+# ships the vulnerable versions. Remove a line when engine.version moves to an
+# upstream release that ships the fix; install-engine.sh refuses a line whose
+# jar is no longer in the release, so a stale override cannot linger.
+#
+# The engine starts with `java -jar dependency-check-cli-<pin>.jar`, whose
+# manifest names each library jar. The replacement keeps the original file
+# name for that reason. Trivy and the SBOM read the version inside the jar.
+#
+# Format: <jar in lib/> <path under https://repo1.maven.org/maven2/> <sha256>
+# Each SHA-256 is Maven Central's published .sha256 for that file.
+#
+# CVE-2026-89407, CVE-2026-89425 (High). Fixed in 2.22.3.
+jackson-core-2.22.1.jar com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar 8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c
+# CVE-2026-68497, CVE-2026-91776, CVE-2026-91777 (High). Fixed in 2.22.3.
+jackson-databind-2.22.1.jar com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar 556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9
+# CVE-2026-75140 (High). Fixed in 1.23.2.
+jsoup-1.23.1.jar org/jsoup/jsoup/1.23.2/jsoup-1.23.2.jar e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003

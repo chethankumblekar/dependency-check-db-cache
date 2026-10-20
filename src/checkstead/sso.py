@@ -7,10 +7,13 @@ has to be configured before either button works.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
 import secrets
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +25,8 @@ from checkstead.identity import AuthError, Identity, github_api_base, github_web
 
 STATE_COOKIE = "checkstead_sso"
 _TENANT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$")
+_GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_MULTI_TENANT = frozenset({"organizations", "common"})
 _ORIGIN_HOST = re.compile(
     r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
@@ -50,6 +55,74 @@ def entra_tenant() -> str:
     return tenant
 
 
+def entra_allowed_tenants() -> frozenset[str]:
+    """Directory (tenant) ids that may sign in.
+
+    A tenant id in CHECKSTEAD_ENTRA_TENANT is the only one allowed. With
+    ``organizations`` or ``common``, CHECKSTEAD_ENTRA_ALLOWED_TENANTS lists
+    them. Both empty means any Entra directory, which the server warns about.
+    """
+    configured = entra_tenant()
+    if _GUID.fullmatch(configured):
+        return frozenset({configured.lower()})
+    allowed = set()
+    for item in _env("CHECKSTEAD_ENTRA_ALLOWED_TENANTS").split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if not _GUID.fullmatch(item):
+            raise AuthError("CHECKSTEAD_ENTRA_ALLOWED_TENANTS must list directory (tenant) ids.")
+        allowed.add(item)
+    return frozenset(allowed)
+
+
+def entra_tenant_warning() -> str | None:
+    if not entra_enabled():
+        return None
+    if entra_tenant().lower() in _MULTI_TENANT and not entra_allowed_tenants():
+        return (
+            "checkstead: Microsoft Entra sign-in accepts any directory. An administrator "
+            "still has to add each login, but set CHECKSTEAD_ENTRA_TENANT or "
+            "CHECKSTEAD_ENTRA_ALLOWED_TENANTS to your directory id."
+        )
+    return None
+
+
+def _id_token_claims(token: object) -> dict:
+    """Claims of the ID token from the token endpoint.
+
+    The token came straight from the Entra token endpoint over TLS in exchange
+    for this server's client secret, so OpenID Connect Core 3.1.3.7 lets the
+    client skip the JWS signature. The claims are still checked.
+    """
+    if not isinstance(token, str) or token.count(".") != 2:
+        raise AuthError("Microsoft Entra did not return an ID token.")
+    segment = token.split(".")[1]
+    try:
+        raw = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        claims = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+        raise AuthError("Microsoft Entra returned an ID token that is not readable.") from exc
+    if not isinstance(claims, dict):
+        raise AuthError("Microsoft Entra returned an ID token that is not readable.")
+    return claims
+
+
+def _check_entra_claims(claims: dict) -> str:
+    """Audience and directory checks. Returns the directory id."""
+    audience = claims.get("aud")
+    client_id = _env("CHECKSTEAD_ENTRA_CLIENT_ID")
+    if audience != client_id and not (isinstance(audience, list) and client_id in audience):
+        raise AuthError("Microsoft Entra issued this sign-in for another application.")
+    tenant = claims.get("tid")
+    if not isinstance(tenant, str) or not _GUID.fullmatch(tenant):
+        raise AuthError("Microsoft Entra did not name the directory for this sign-in.")
+    allowed = entra_allowed_tenants()
+    if allowed and tenant.lower() not in allowed:
+        raise AuthError("This Microsoft Entra directory is not allowed on this server.")
+    return tenant.lower()
+
+
 def sso_status() -> dict:
     return {
         "github": {"enabled": github_enabled(), "start": "/api/sso/github/start"},
@@ -59,6 +132,12 @@ def sso_status() -> dict:
             "tenant": _env("CHECKSTEAD_ENTRA_TENANT") or "organizations",
         },
     }
+
+
+def warn_entra_tenant() -> None:
+    message = entra_tenant_warning()
+    if message:
+        print(message, file=sys.stderr)
 
 
 def new_state() -> str:
@@ -275,16 +354,22 @@ def exchange(kind: str, code: str, base: str) -> Identity:
         access_token = payload.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             raise AuthError("Microsoft Entra rejected this sign-in.")
+        claims = _id_token_claims(payload.get("id_token"))
+        _check_entra_claims(claims)
         userinfo = _env("CHECKSTEAD_ENTRA_USERINFO") or "https://graph.microsoft.com/oidc/userinfo"
         status, body = _request(
             userinfo,
             {"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
         )
         user = _json_body(status, body, "Microsoft Entra did not identify this sign-in.")
-        login = user.get("preferred_username") or user.get("email")
+        login = user.get("preferred_username") or user.get("email") or claims.get("preferred_username")
         subject = user.get("oid") or user.get("sub")
         if not isinstance(login, str) or not login.strip() or subject in (None, ""):
             raise AuthError("Microsoft Entra did not identify this sign-in.")
+        # userinfo and the ID token describe the same person for the same app.
+        token_sub = claims.get("sub")
+        if user.get("sub") and token_sub and user.get("sub") != token_sub:
+            raise AuthError("Microsoft Entra returned two different people for one sign-in.")
         name = user.get("name")
         display = name.strip() if isinstance(name, str) and name.strip() else login.strip()
         return Identity("entra", str(subject), login.strip(), display[:200])

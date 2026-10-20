@@ -46,24 +46,52 @@ def confirmed_vulnerability(dependency: dict, vulnerability: dict) -> bool:
 
 
 def _nvd_matches(dependency: dict, vulnerability: dict) -> bool:
+    """Whether an NVD record really belongs to this dependency.
+
+    Dependency-Check identifies a dependency by CPE and records how sure it
+    is. A HIGH or HIGHEST identification is the engine's evidence and is
+    trusted as is; a CPE vendor and product often differ from a Maven group
+    and artifact (apache:log4j for org.apache.logging.log4j/log4j-core), so a
+    name comparison would drop real findings such as Log4Shell. A MEDIUM
+    identification counts only when it names the package. LOW or fuzzy alone
+    is never enough. The record's own CPEs then have to name the same vendor,
+    product, and version as a trusted identification.
+    """
     identity = ecosystem_identity(dependency)
     identifiers = _cpe_identifiers(dependency)
     vuln_cpes = _vulnerability_cpes(vulnerability)
-    if identity is None:
-        if not identifiers:
-            return True
-        return any(not _fuzzy(item) for item in identifiers)
-    name, version = identity
-    concrete = [item for item in identifiers if not _fuzzy(item) and _cpe_matches(str(item.get("id") or ""), name, version)]
+    concrete = [item for item in identifiers if not _fuzzy(item)]
     if identifiers and not concrete:
         return False
-    if not identifiers:
+    if concrete:
+        trusted = [
+            str(item.get("id") or "")
+            for item in concrete
+            if _confidence_rank(str(item.get("confidence") or "")) >= 3
+            or (identity is not None and _cpe_matches(str(item.get("id") or ""), *identity))
+        ]
+        if not trusted:
+            return False
         if not vuln_cpes:
             return True
-        return any(_cpe_matches(cpe, name, version) for cpe in vuln_cpes)
-    if vuln_cpes and not any(_cpe_matches(cpe, name, version) for cpe in vuln_cpes):
+        return any(_same_software(cpe, known) for cpe in vuln_cpes for known in trusted)
+    if identity is None or not vuln_cpes:
+        return True
+    name, version = identity
+    return any(_cpe_matches(cpe, name, version) for cpe in vuln_cpes)
+
+
+def _same_software(vulnerable: str, identified: str) -> bool:
+    """The vulnerable CPE names the identified vendor and product, and its version."""
+    vendor, product, version = _cpe_parts(vulnerable)
+    known_vendor, known_product, known_version = _cpe_parts(identified)
+    if not product or _compact(product) != _compact(known_product):
         return False
-    return True
+    if vendor and known_vendor and _compact(vendor) != _compact(known_vendor):
+        return False
+    if version in {"", "*", "-"} or known_version in {"", "*", "-"}:
+        return True
+    return version == known_version
 
 
 def _cpe_identifiers(dependency: dict) -> list[dict]:
@@ -150,10 +178,15 @@ def _cpe_matches(cpe: str, name: str, version: str) -> bool:
 
 
 def _name_matches(name: str, vendor: str, product: str) -> bool:
-    plain = name[1:] if name.startswith("@") else name
+    scoped = name.startswith("@")
+    plain = name[1:] if scoped else name
     product_key = _compact(product)
     if "/" not in plain:
         return product_key == _compact(plain)
+    if not scoped:
+        # A Maven group/artifact or a Go module path. The last segment is the
+        # package; the namespace is not a CPE vendor.
+        return product_key == _compact(plain.rsplit("/", 1)[1])
     scope, unscoped = plain.split("/", 1)
     if product_key == _compact(scope + "/" + unscoped) or product_key == _compact(scope + unscoped):
         return True

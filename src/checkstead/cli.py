@@ -65,8 +65,11 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     from checkstead.snapshot import max_snapshot_age_days
     from checkstead.snapshot_auth import load_trust, signature_required
 
+    from checkstead.snapshot_auth import trust_source
+
     trust = load_trust()
-    print(f"snapshot-trust-keys: {len(trust.keys)}")
+    print(f"snapshot-trust: {trust_source()}")
+    print(f"snapshot-trust-keys: {len(trust.keys)} ({', '.join(sorted(trust.keys)) or 'none'})")
     print(f"snapshot-signature: {'required' if signature_required(trust) else 'optional'}")
     print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
@@ -102,6 +105,85 @@ def _cmd_write_manifest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _trust_entry(key_id: str, public_pem: str, not_after: str | None) -> str:
+    import json
+
+    entry: dict = {"id": key_id, "status": "current", "publicKeyPem": public_pem}
+    if not_after:
+        entry["notAfter"] = not_after
+    return json.dumps(entry, indent=2)
+
+
+def _cmd_snapshot_key(args: argparse.Namespace) -> int:
+    """Create a signing key, or print the trust entry for an existing one.
+
+    The private key never goes to stdout. The trust entry is the JSON object a
+    maintainer adds to src/checkstead/snapshot_trust.json.
+    """
+    import re as _re
+
+    from checkstead.snapshot_auth import KEY_ID, public_pem_for
+
+    if not KEY_ID.fullmatch(args.id):
+        raise ChecksteadError("--id must be letters, digits, dot, dash, or underscore.")
+    if args.not_after and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.not_after):
+        raise ChecksteadError("--not-after must be YYYY-MM-DD.")
+    if args.action == "generate":
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        if not args.out:
+            raise ChecksteadError("generate needs --out for the private key file.")
+        out = Path(args.out)
+        pem = Ed25519PrivateKey.generate().private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        try:
+            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError as exc:
+            raise ChecksteadError(f"Refusing to overwrite {out}.") from exc
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(pem)
+        print(f"private-key: {out} (mode 0600). Store it as the CHECKSTEAD_SNAPSHOT_SIGNING_KEY secret.", file=sys.stderr)
+        private = pem.decode("ascii")
+    else:
+        if args.key:
+            private = Path(args.key).read_text(encoding="utf-8")
+        else:
+            private = os.environ.get("CHECKSTEAD_SNAPSHOT_SIGNING_KEY", "")
+        if "PRIVATE KEY" not in private:
+            raise ChecksteadError("Pass --key FILE or set CHECKSTEAD_SNAPSHOT_SIGNING_KEY.")
+    print(_trust_entry(args.id, public_pem_for(private), args.not_after))
+    return 0
+
+
+def _cmd_seed_data(args: argparse.Namespace) -> int:
+    """Extract the latest verified snapshot so the updater can update it in place.
+
+    The manifest checksum and, when a key is pinned, the signature are checked
+    exactly as a scan checks them. Any failure leaves --dest empty, and the
+    updater then builds the database from nothing.
+    """
+    import shutil
+
+    from checkstead.snapshot import resolve_snapshot, safe_extract
+
+    dest = Path(args.dest)
+    cache = Path(args.cache)
+    try:
+        snapshot = resolve_snapshot(args.url, cache, _today())
+        if dest.exists():
+            shutil.rmtree(dest)
+        safe_extract(snapshot.database_path, dest)
+    except Exception:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+    print(f"seed: {snapshot.snapshot_time} checksum={snapshot.checksum} authenticity={snapshot.authenticity}")
+    return 0
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     if not args.scan:
         raise ChecksteadError("Pass at least one --scan path.")
@@ -130,6 +212,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         branch=args.branch or None,
         author=args.author or None,
         author_email=args.author_email or None,
+        untrusted=True if args.untrusted_source else None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -174,6 +257,15 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--author", help="Commit author recorded on the report.")
     scan.add_argument("--author-email", help="Commit author email recorded on the report.")
     scan.add_argument(
+        "--untrusted-source",
+        action="store_true",
+        help=(
+            "The scanned tree is not trusted, such as a fork pull request. Turns off analyzers "
+            "that run yarn, pnpm, go, mix, bundle-audit, or swift inside it. "
+            "Same as CHECKSTEAD_UNTRUSTED_SOURCE=1."
+        ),
+    )
+    scan.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve and verify the snapshot, write the report header, and do not start the engine.",
@@ -198,6 +290,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="Print versions and configuration without secrets.")
     doctor.set_defaults(func=_cmd_doctor)
+
+    key = sub.add_parser(
+        "snapshot-key",
+        help="Create a snapshot signing key, or print the trust entry to pin for one.",
+    )
+    key.add_argument("action", choices=["generate", "public"])
+    key.add_argument("--id", required=True, help="Key id, for example checkstead-2026-10.")
+    key.add_argument("--out", help="generate: where to write the new private key (mode 0600).")
+    key.add_argument("--key", help="public: private key file. Defaults to CHECKSTEAD_SNAPSHOT_SIGNING_KEY.")
+    key.add_argument("--not-after", help="Last UTC day this key may sign, YYYY-MM-DD.")
+    key.set_defaults(func=_cmd_snapshot_key)
+
+    seed = sub.add_parser(
+        "seed-data",
+        help="Extract the latest verified snapshot for an incremental update. Used by the updater.",
+    )
+    seed.add_argument("--url", required=True, help="Snapshot manifest URL.")
+    seed.add_argument("--dest", required=True, help="Directory to extract the database into.")
+    seed.add_argument("--cache", required=True, help="Download cache for the seed.")
+    seed.set_defaults(func=_cmd_seed_data)
     return parser
 
 

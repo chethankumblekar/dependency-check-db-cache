@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
+
+# The database snapshot is about 120 MB zipped and under 2 GB extracted. A
+# GitHub repository archive is attacker-shaped, so a declared size or member
+# count past these limits is refused before anything is written.
+DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024
+DEFAULT_MAX_MEMBERS = 500_000
 
 
 class ArchiveRejected(Exception):
@@ -55,13 +62,43 @@ def _symlink_stays_inside(root: Path, link_path: Path, link_text: str, name: str
         raise ArchiveRejected(f"Snapshot archive symlink escapes its directory: {name}")
 
 
+def _limit(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return default
+
+
+def _check_size(infos: list[zipfile.ZipInfo]) -> None:
+    max_members = _limit("CHECKSTEAD_MAX_ARCHIVE_MEMBERS", DEFAULT_MAX_MEMBERS)
+    max_bytes = _limit("CHECKSTEAD_MAX_ARCHIVE_BYTES", DEFAULT_MAX_BYTES)
+    if len(infos) > max_members:
+        raise ArchiveRejected(
+            f"Archive has {len(infos)} members, more than {max_members}. "
+            "Raise CHECKSTEAD_MAX_ARCHIVE_MEMBERS if this is expected."
+        )
+    total = sum(max(info.file_size, 0) for info in infos)
+    if total > max_bytes:
+        raise ArchiveRejected(
+            f"Archive expands to {total} bytes, more than {max_bytes}. "
+            "Raise CHECKSTEAD_MAX_ARCHIVE_BYTES if this is expected."
+        )
+
+
 def safe_extract(zip_path: Path, dest: Path) -> None:
+    """Extract ``zip_path`` into ``dest``.
+
+    zipfile stops reading a member at its declared size and checks its CRC,
+    so the declared sizes checked here bound what is written.
+    """
     dest.mkdir(parents=True, exist_ok=True)
     if dest.is_symlink():
         raise ArchiveRejected(f"Refusing to extract into a symlink: {dest}")
     root = dest.resolve()
     with zipfile.ZipFile(zip_path) as archive:
-        for info in archive.infolist():
+        infos = archive.infolist()
+        _check_size(infos)
+        for info in infos:
             target = _destination(root, info.filename)
             mode = info.external_attr >> 16
             if stat.S_ISLNK(mode):

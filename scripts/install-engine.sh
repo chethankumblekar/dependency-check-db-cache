@@ -12,6 +12,9 @@ VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
 KEY_FILE=${ENGINE_PUBLIC_KEY:-"$ROOT/scripts/keys/dependency-check-release.asc"}
 EXPECTED_FPR=${ENGINE_KEY_FINGERPRINT:-259A55407DD6C00299E6607EFFDE55BE73A2D1ED}
 ARCHIVE=${CHECKSTEAD_ARCHIVE:-"$ROOT/src/checkstead/archive.py"}
+# Patched library jars. Empty string skips them, which only tests should do.
+OVERRIDES=${ENGINE_OVERRIDES-"$ROOT/scripts/engine-overrides.txt"}
+MAVEN_CENTRAL=${ENGINE_MAVEN_CENTRAL:-https://repo1.maven.org/maven2}
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Refusing to install. engine.version is not a release number: ${VERSION}" >&2
@@ -33,8 +36,14 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 URL="https://github.com/dependency-check/DependencyCheck/releases/download/v${VERSION}/dependency-check-${VERSION}-release.zip"
-curl -fsSL -o "$TMP/dc.zip" "$URL"
-curl -fsSL -o "$TMP/dc.zip.asc" "${URL}.asc"
+fetch() {
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --retry 5 --retry-delay 3 --retry-connrefused \
+    --connect-timeout 30 --max-time 1200 \
+    -o "$1" "$2"
+}
+fetch "$TMP/dc.zip" "$URL"
+fetch "$TMP/dc.zip.asc" "${URL}.asc"
 
 GNUPGHOME="$TMP/gnupg"
 export GNUPGHOME
@@ -65,6 +74,41 @@ if [[ -z "${SRC}" || ! -f "${SRC}/bin/dependency-check.sh" ]]; then
   exit 1
 fi
 chmod +x "${SRC}/bin/dependency-check.sh"
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+if [[ -n "$OVERRIDES" ]]; then
+  if [[ ! -f "$OVERRIDES" ]]; then
+    echo "Refusing to install. Engine override list is missing: ${OVERRIDES}" >&2
+    exit 1
+  fi
+  while read -r jar path digest extra; do
+    [[ -z "${jar:-}" || "$jar" == \#* ]] && continue
+    if [[ -n "${extra:-}" || ! "$jar" =~ ^[A-Za-z0-9._-]+\.jar$ || ! "$path" =~ ^[A-Za-z0-9._/-]+\.jar$ || "$path" == *..* || ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Refusing to install. Bad line in ${OVERRIDES}: ${jar} ${path}" >&2
+      exit 1
+    fi
+    if [[ ! -f "${SRC}/lib/${jar}" ]]; then
+      echo "Refusing to install. ${jar} is not in Dependency-Check ${VERSION}. Remove its override." >&2
+      exit 1
+    fi
+    fetch "$TMP/override.jar" "${MAVEN_CENTRAL}/${path}"
+    actual=$(sha256_of "$TMP/override.jar")
+    if [[ "$actual" != "$digest" ]]; then
+      echo "Refusing ${path}. Expected SHA-256 ${digest} but downloaded ${actual}." >&2
+      exit 1
+    fi
+    mv "$TMP/override.jar" "${SRC}/lib/${jar}"
+    echo "Replaced lib/${jar} with ${path##*/}"
+  done < "$OVERRIDES"
+fi
+
 rm -rf "$DEST"
 mkdir -p "$(dirname "$DEST")"
 mv "$SRC" "$DEST"

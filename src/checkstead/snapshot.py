@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -20,6 +19,7 @@ from checkstead.archive import safe_extract as extract_archive
 from checkstead.engine import pinned_engine
 from checkstead.errors import ChecksteadError, SnapshotRefused
 from checkstead.http import download, read_text
+from checkstead.locking import exclusive_lock
 from checkstead.snapshot_auth import Authenticity, TrustStore, load_trust, signature_fields, verify_manifest
 
 SNAPSHOT_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -184,13 +184,8 @@ def resolve_snapshot(
     that day names, even if the published manifest changes afterward.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = cache_dir / ".lock"
-    with lock_path.open("a", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            return _resolve_snapshot(manifest_url, cache_dir, today, opener, trust)
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    with exclusive_lock(cache_dir / ".lock"):
+        return _resolve_snapshot(manifest_url, cache_dir, today, opener, trust)
 
 
 def _resolve_snapshot(
@@ -236,6 +231,7 @@ def _resolve_snapshot(
         ) from exc
     manifest = parse_manifest(payload)
     authenticity = _accept_manifest(manifest, trust)
+    _refuse_rollback(cache_dir, manifest["snapshotTime"])
     database_url = _database_url(manifest_url, manifest["database"])
     try:
         actual = download(database_url, database_path, opener)
@@ -248,7 +244,55 @@ def _resolve_snapshot(
             "Refusing snapshot: the database checksum does not match the manifest."
         )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    _record_newest(cache_dir, manifest["snapshotTime"])
     return _snapshot(manifest, database_path, data_dir, manifest_path, today, "fetched", authenticity)
+
+
+NEWEST_FILE = "newest-snapshot"
+
+
+def _refuse_rollback(cache_dir: Path, snapshot_time: str) -> None:
+    """Refuse a published manifest older than one this cache already accepted.
+
+    A signature proves who made a snapshot, not that it is the latest one.
+    Serving an old, validly signed snapshot would hide every vulnerability
+    published since. CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK=1 accepts it, for the
+    day a maintainer withdraws a bad snapshot on purpose.
+    """
+    newest = _read_newest(cache_dir)
+    if newest is None or snapshot_time >= newest:
+        return
+    if os.environ.get("CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK", "").strip() == "1":
+        print(
+            f"checkstead: accepting snapshot {snapshot_time}, older than {newest}, "
+            "because CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK=1.",
+            file=sys.stderr,
+        )
+        return
+    raise SnapshotRefused(
+        f"Refusing snapshot {snapshot_time}: this cache already used the newer {newest}. "
+        "An older snapshot can hide newer vulnerabilities. If the publisher withdrew the "
+        "newer one on purpose, set CHECKSTEAD_ALLOW_SNAPSHOT_ROLLBACK=1 for one scan."
+    )
+
+
+def _read_newest(cache_dir: Path) -> str | None:
+    path = cache_dir / NEWEST_FILE
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text if SNAPSHOT_TIME_RE.fullmatch(text) else None
+
+
+def _record_newest(cache_dir: Path, snapshot_time: str) -> None:
+    newest = _read_newest(cache_dir)
+    if newest is not None and newest >= snapshot_time:
+        return
+    path = cache_dir / NEWEST_FILE
+    temporary = path.with_name(path.name + ".partial")
+    temporary.write_text(snapshot_time + "\n", encoding="utf-8")
+    temporary.replace(path)
 
 
 def _database_url(manifest_url: str, name: str) -> str:

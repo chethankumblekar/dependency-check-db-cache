@@ -4,7 +4,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import date
@@ -14,6 +16,7 @@ from urllib.request import OpenerDirector
 from checkstead.commit import lookup_branch, lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
+from checkstead.locking import exclusive_lock
 from checkstead.report import write_report
 from checkstead.roles import roles_from_paths
 from checkstead.sarif import write_sarif
@@ -36,6 +39,32 @@ from checkstead.suppressions import (
 
 # Removed from the engine process so a key in the parent environment cannot be used.
 _KEY_ENV_NAMES = ("NVD_API_KEY", "NVD_APIKEY")
+# Any variable whose name contains one of these is a credential. The engine
+# does not need one: it runs with --noupdate and reads a local database.
+_SECRET_NAME_PARTS = (
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PRIVATE_KEY",
+    "SIGNING_KEY",
+    "API_KEY",
+    "APIKEY",
+    "CREDENTIAL",
+)
+# Analyzers that start a package manager or build tool inside the scanned
+# tree. Each of those tools reads configuration from that tree, and some of it
+# is code: Yarn's yarnPath, mix.exs, Package.swift, a Gemfile. A repository
+# that is not trusted must not get to run that code on the scanner.
+UNTRUSTED_SOURCE_FLAGS = (
+    "--disableYarnAudit",
+    "--disablePnpmAudit",
+    "--disableGolangMod",
+    "--disableMixAudit",
+    "--disableBundleAudit",
+    "--disableSwiftPackageManagerAnalyzer",
+)
+DEFAULT_SCAN_TIMEOUT_MINUTES = 120
 
 
 @dataclass(frozen=True)
@@ -48,10 +77,84 @@ class ScanResult:
     dry_run: bool
 
 
+def _is_secret_name(name: str) -> bool:
+    upper = name.upper()
+    if upper in {item.upper() for item in _KEY_ENV_NAMES}:
+        return True
+    return any(part in upper for part in _SECRET_NAME_PARTS)
+
+
 def scrub_environment(source: dict[str, str]) -> dict[str, str]:
-    """Copy the environment without an NVD API key."""
-    blocked = {name.upper() for name in _KEY_ENV_NAMES}
-    return {key: value for key, value in source.items() if key.upper() not in blocked}
+    """Copy the environment without an NVD API key or any other credential."""
+    return {key: value for key, value in source.items() if not _is_secret_name(key)}
+
+
+def untrusted_source(env: dict[str, str] | None = None) -> bool:
+    """``CHECKSTEAD_UNTRUSTED_SOURCE=1`` marks the scanned tree as not trusted."""
+    source = env if env is not None else os.environ
+    return source.get("CHECKSTEAD_UNTRUSTED_SOURCE", "").strip() == "1"
+
+
+def scan_timeout_seconds(env: dict[str, str] | None = None) -> int:
+    """Wall-clock limit for one Dependency-Check process. 0 means no limit."""
+    source = env if env is not None else os.environ
+    raw = source.get("CHECKSTEAD_SCAN_TIMEOUT_MINUTES", "").strip()
+    if not raw:
+        return DEFAULT_SCAN_TIMEOUT_MINUTES * 60
+    if not re.fullmatch(r"[0-9]{1,5}", raw):
+        raise ChecksteadError("CHECKSTEAD_SCAN_TIMEOUT_MINUTES must be a whole number of minutes.")
+    return int(raw) * 60
+
+
+def run_engine(command: list[str], env: dict[str, str], timeout: int) -> int:
+    """Run one Dependency-Check process and stop the whole process group on timeout.
+
+    dependency-check.sh starts java as a child. Killing only the shell would
+    leave java running, so the engine gets its own process group.
+    """
+    kwargs: dict = {"env": env}
+    if os.name == "nt":  # pragma: no cover - Windows only
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    process = subprocess.Popen(command, **kwargs)
+    try:
+        return process.wait(timeout=timeout or None)
+    except subprocess.TimeoutExpired:
+        _stop(process)
+        raise ChecksteadError(
+            f"Dependency-Check did not finish within {timeout // 60} minutes and was stopped. "
+            "Raise CHECKSTEAD_SCAN_TIMEOUT_MINUTES for a very large tree.",
+            exit_code=124,
+        ) from None
+    except BaseException:
+        _stop(process)
+        raise
+
+
+def _stop(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":  # pragma: no cover - Windows only
+        process.kill()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=15)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+    try:
+        process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        print(f"checkstead: Dependency-Check process {process.pid} did not exit.", file=sys.stderr)
 
 
 def home_root(env: dict[str, str] | None = None) -> Path:
@@ -200,8 +303,12 @@ def build_scan_command(
     out_dir: Path,
     env: dict[str, str] | None = None,
     suppressions: list[Path] | None = None,
+    untrusted: bool = False,
 ) -> list[str]:
-    """The Dependency-Check invocation. No API key and no update."""
+    """The Dependency-Check invocation. No API key and no update.
+
+    ``untrusted`` turns off every analyzer that runs a tool inside the tree.
+    """
     if not scans:
         raise ChecksteadError("Pass at least one path to scan.")
     command = [
@@ -220,7 +327,9 @@ def build_scan_command(
         "JSON",
         "--prettyPrint",
     ]
-    if not yarn_runs(env):
+    if untrusted:
+        command.extend(UNTRUSTED_SOURCE_FLAGS)
+    elif not yarn_runs(env):
         command.append("--disableYarnAudit")
     for suppression in suppressions or []:
         command.extend(["--suppression", str(suppression)])
@@ -366,7 +475,16 @@ def run_scan(
     branch: str | None = None,
     author: str | None = None,
     author_email: str | None = None,
+    untrusted: bool | None = None,
 ) -> ScanResult:
+    """Scan ``scans`` with the pinned engine and the day's snapshot.
+
+    ``untrusted`` defaults to ``CHECKSTEAD_UNTRUSTED_SOURCE``. The GitHub App
+    path always passes True, because an installed repository's contents are
+    controlled by whoever can push to it.
+    """
+    untrusted = untrusted_source() if untrusted is None else untrusted
+    timeout = scan_timeout_seconds()
     base_paths = list(base or [])
     for scan in scans:
         if not scan.exists():
@@ -406,6 +524,7 @@ def run_scan(
         out_dir,
         dict(os.environ),
         suppressions,
+        untrusted,
     )
     commands = [command]
     base_dir: Path | None = None
@@ -420,6 +539,7 @@ def run_scan(
                 base_dir,
                 dict(os.environ),
                 suppressions,
+                untrusted,
             )
         )
     header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
@@ -468,14 +588,17 @@ def run_scan(
             )
         if not os.access(engine_path, os.X_OK):
             raise ChecksteadError(f"Dependency-Check is not executable: {engine_path}")
-        safe_extract(snapshot.database_path, snapshot.data_dir)
-        for item in commands:
-            completed = subprocess.run(item, env=command_environment(dict(os.environ)), check=False)
-            if completed.returncode != 0:
-                raise ChecksteadError(
-                    f"Dependency-Check exited {completed.returncode}.",
-                    exit_code=completed.returncode,
-                )
+        # The engine opens the extracted database read-write. One scan at a
+        # time per snapshot directory, and each starts from the verified zip.
+        with exclusive_lock(snapshot.data_dir.parent / ".data.lock"):
+            safe_extract(snapshot.database_path, snapshot.data_dir)
+            for item in commands:
+                returncode = run_engine(item, command_environment(dict(os.environ)), timeout)
+                if returncode != 0:
+                    raise ChecksteadError(
+                        f"Dependency-Check exited {returncode}.",
+                        exit_code=returncode,
+                    )
         _write_scored_report(
             out_dir,
             snapshot.engine_version,

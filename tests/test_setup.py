@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from unittest import TestCase, mock
+from unittest import TestCase, mock, skipUnless
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -40,6 +41,27 @@ def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+
+_UNAME_LINUX = """#!/bin/sh
+case "$1" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *) echo Linux ;;
+esac
+"""
+
+# Writes junk to the -o target, so the download exists but is not the pinned file.
+_CURL_TAMPERED = """#!/bin/sh
+printf '%s\\n' "$*" >> "$SETUP_CURL_LOG"
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out=$2; shift; fi
+  shift
+done
+[ -n "$out" ] && printf 'not the pinned archive' > "$out"
+exit 0
+"""
 
 
 class SetupTests(TestCase):
@@ -126,6 +148,7 @@ class SetupTests(TestCase):
             self.assertIn(line, completed.stdout)
         self.assertNotIn("Open a new terminal", completed.stdout)
 
+    @skipUnless(shutil.which("gpg"), "gpg is not installed")
     def test_a_missing_engine_requests_the_pinned_zip_and_not_nvd(self) -> None:
         root = ROOT / "build" / "tests" / "setup-engine"
         subprocess.run(["rm", "-rf", str(root)], check=True)
@@ -151,8 +174,11 @@ class SetupTests(TestCase):
         self.assertNotIn("services.nvd.nist.gov", recorded)
         script = SETUP.read_text(encoding="utf-8")
         self.assertNotIn("sudo", script)
-        self.assertIn("--without-pip", script)
-        self.assertIn("https://bootstrap.pypa.io/get-pip.py", script)
+        # No unpinned bootstrap script. A Python without ensurepip gets the
+        # pinned, checksummed Python instead.
+        self.assertNotIn("bootstrap.pypa.io", script)
+        self.assertIn("import ensurepip", script)
+        self.assertIn('python="$ROOT/python/bin/python3"', script)
         self.assertNotIn("services.nvd.nist.gov", script)
         self.assertNotIn("--updateonly", script)
         self.assertNotIn("nvdApiKey", script)
@@ -257,6 +283,12 @@ class SetupTests(TestCase):
             captured["env"] = kwargs.get("env")
             return subprocess.CompletedProcess(command, 0)
 
+        def fake_engine(command, env, timeout):
+            captured["command"] = command
+            captured["env"] = env
+            captured["timeout"] = timeout
+            return 0
+
         with mock.patch.dict(
             os.environ,
             {"HOME": str(home), "PATH": str(stub), "NVD_API_KEY": "secret"},
@@ -265,7 +297,9 @@ class SetupTests(TestCase):
             os.environ.pop("CHECKSTEAD_ENGINE", None)
             with mock.patch("checkstead.scan.resolve_snapshot", return_value=snapshot), mock.patch(
                 "checkstead.scan.safe_extract"
-            ), mock.patch("checkstead.scan.subprocess.run", side_effect=fake_run):
+            ), mock.patch("checkstead.scan.subprocess.run", side_effect=fake_run), mock.patch(
+                "checkstead.scan.run_engine", side_effect=fake_engine
+            ):
                 run_scan(
                     [project],
                     project="genesis",
@@ -280,6 +314,7 @@ class SetupTests(TestCase):
         self.assertEqual(child["JAVA_HOME"], str(home / "checkstead" / "jdk"))
         self.assertEqual(child["PATH"].split(os.pathsep)[0], str(jdk_java.parent))
         self.assertNotIn("NVD_API_KEY", child)
+        self.assertEqual(captured["timeout"], 120 * 60)
         command = captured["command"]
         self.assertIn("--noupdate", command)
         self.assertNotIn("nvdApiKey", command)
@@ -305,6 +340,8 @@ class SetupTests(TestCase):
         log = root / "curl.log"
         _write(bindir / "curl", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SETUP_CURL_LOG\"\nexit 1\n")
         _write(bindir / "java", "#!/bin/sh\nexit 0\n")
+        # The test describes a Linux x86_64 host whatever machine runs it.
+        _write(bindir / "uname", _UNAME_LINUX)
         for name in ("python3", "python3.11", "python3.12", "python3.13", "python"):
             _write(bindir / name, "#!/bin/sh\nexit 1\n")
         env = self._env(home, bindir)
@@ -319,6 +356,8 @@ class SetupTests(TestCase):
         self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         recorded = log.read_text(encoding="utf-8")
         self.assertIn("x86_64-unknown-linux-gnu-install_only.tar.gz", recorded)
+        self.assertIn("--proto =https", recorded)
+        self.assertIn("--retry", recorded)
         self.assertNotIn("apple-darwin", recorded)
         self.assertNotIn("services.nvd.nist.gov", recorded)
         script = SETUP.read_text(encoding="utf-8")
@@ -460,9 +499,50 @@ class SetupTests(TestCase):
         self.assertLess(shell_fn.index("gpg --batch --verify"), shell_fn.index('"$python" "$archive_py"'))
         installer_fn = installer.split("gpg --batch --import", 1)[1]
         self.assertLess(installer_fn.index("gpg --batch --verify"), installer_fn.index('python3 "$ARCHIVE"'))
-        engine = windows.split("function Install-Engine", 1)[1].split("function ", 1)[0]
+        engine = windows.split("function Install-Engine {", 1)[1].split("\nfunction ", 1)[0]
         self.assertLess(engine.index("gpg --batch --verify"), engine.index("dependency-check.bat"))
         self.assertNotIn("Expand-Archive", engine)
         self.assertIn("The release signature does not verify", engine)
         self.assertIn("gpg is required", shell)
         self.assertIn("gpg is required", windows)
+
+    def test_a_download_that_is_not_the_pinned_digest_is_refused(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-tampered"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        log = root / "curl.log"
+        _write(bindir / "curl", _CURL_TAMPERED)
+        _write(bindir / "uname", _UNAME_LINUX)
+        _write(bindir / "java", "#!/bin/sh\nexit 0\n")
+        for name in ("python3", "python3.11", "python3.12", "python3.13", "python"):
+            _write(bindir / name, "#!/bin/sh\nexit 1\n")
+        env = self._env(home, bindir)
+        env["SETUP_CURL_LOG"] = str(log)
+        completed = subprocess.run(["bash", str(SETUP)], env=env, text=True, capture_output=True, check=False)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("Refusing the Python download. Expected SHA-256", completed.stderr)
+        self.assertFalse((home / "checkstead" / "python").exists())
+
+    def test_installers_pin_every_runtime_download(self) -> None:
+        script = SETUP.read_text(encoding="utf-8")
+        windows = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+        for text in (script, windows):
+            self.assertNotIn("api.adoptium.net/v3/binary/latest", text)
+            self.assertNotIn("get-pip.py", text)
+            self.assertIn("jdk-21.0.12.1%2B1", text)
+        # Python, the JDK, and each patched engine jar.
+        self.assertEqual(script.count("verify_sha256 \""), 3)
+        self.assertEqual(windows.count("Assert-Sha256 -Path"), 3)
+
+    def test_checkstead_ref_must_be_a_ref_name(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-ref"
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "home"
+        bindir = root / "bin"
+        _write(bindir / "java", "#!/bin/sh\nexit 0\n")
+        env = self._env(home, bindir)
+        env["CHECKSTEAD_REF"] = "../../evil"
+        completed = subprocess.run(["bash", str(SETUP)], env=env, text=True, capture_output=True, check=False)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("CHECKSTEAD_REF is not a branch or tag name", completed.stderr)

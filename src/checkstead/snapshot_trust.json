@@ -1,4 +1,10 @@
 {
   "format": 1,
-  "keys": []
+  "keys": [
+    {
+      "id": "checkstead-2026-10",
+      "status": "current",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAZlOjfZkbdiFa5N/3wSNY/1hyouEj0DcAJ4omeFQJR+w=\n-----END PUBLIC KEY-----\n"
+    }
+  ]
 }

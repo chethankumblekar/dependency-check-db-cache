@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import zipfile
 from pathlib import Path
-from unittest import TestCase
+from unittest import TestCase, skipUnless
+
+# Signing tests need gpg. CI installs it; a workstation without it reports
+# these tests as skipped, never as passed.
+HAVE_GPG = shutil.which("gpg") is not None
+if os.environ.get("CI") and not HAVE_GPG:
+    raise RuntimeError("gpg is required for the engine signature tests in CI.")
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -122,8 +130,11 @@ def _engine_zip(path: Path, reported: str) -> None:
         archive.writestr(info, f"#!/bin/sh\necho {reported}\n")
 
 
+@skipUnless(HAVE_GPG, "gpg is not installed")
 class EngineInstallTests(TestCase):
     def _run(self, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        # Fake engines have no library jars to patch. The override tests set this.
+        env.setdefault("ENGINE_OVERRIDES", "")
         return subprocess.run(
             ["bash", str(ROOT / "scripts" / "install-engine.sh"), str(root / "dest")],
             cwd=ROOT,
@@ -288,6 +299,7 @@ class EngineInstallTests(TestCase):
         self.assertFalse(Path("/tmp/escape.txt").exists())
 
     def _setup(self, root: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        env.setdefault("ENGINE_OVERRIDES", "")
         script = root / "run-setup.sh"
         lines = [
             "set -euo pipefail",
@@ -356,3 +368,107 @@ class EngineInstallTests(TestCase):
         self.assertTrue(binary.is_file())
         reported = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
         self.assertIn("9.9.9", reported.stdout)
+
+    def _signed_engine_with_jar(self, root: Path) -> tuple[dict[str, str], Path]:
+        subprocess.run(["rm", "-rf", str(root)], check=True)
+        home = root / "gnupg"
+        public_key = root / "key.asc"
+        fingerprint = _generate_key(home, public_key)
+        archive = root / "dc.zip"
+        _engine_zip(archive, "1.2.3")
+        with zipfile.ZipFile(archive, "a") as bundle:
+            bundle.writestr("dependency-check/lib/lib-1.0.jar", b"vulnerable 1.0")
+        signature = root / "dc.zip.asc"
+        _sign(home, archive, signature)
+        version = root / "engine.version"
+        version.write_text("1.2.3\n", encoding="utf-8")
+        patched = root / "lib-1.1.jar"
+        patched.write_bytes(b"patched 1.1")
+        stub = root / "bin"
+        stub.mkdir()
+        _curl_stub(stub, archive, signature)
+        # Jar URLs are served from the patched file.
+        tool = stub / "curl"
+        tool.write_text(
+            tool.read_text(encoding="utf-8").replace(
+                'case "$url" in\n', f'case "$url" in\n  *.jar) cp "{patched}" "$out" ;;\n'
+            ),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["ENGINE_VERSION_FILE"] = str(version)
+        env["ENGINE_PUBLIC_KEY"] = str(public_key)
+        env["ENGINE_KEY_FINGERPRINT"] = fingerprint
+        env["PATH"] = str(stub) + os.pathsep + env.get("PATH", "")
+        return env, patched
+
+    def test_an_override_replaces_the_vulnerable_jar_under_its_name(self) -> None:
+        root = ROOT / "build" / "tests" / "engine-override"
+        env, patched = self._signed_engine_with_jar(root)
+        overrides = root / "overrides.txt"
+        digest = hashlib.sha256(patched.read_bytes()).hexdigest()
+        overrides.write_text(f"# test\nlib-1.0.jar org/example/lib/1.1/lib-1.1.jar {digest}\n", encoding="utf-8")
+        env["ENGINE_OVERRIDES"] = str(overrides)
+        completed = self._run(root, env)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Replaced lib/lib-1.0.jar with lib-1.1.jar", completed.stdout)
+        self.assertEqual((root / "dest" / "lib" / "lib-1.0.jar").read_bytes(), b"patched 1.1")
+
+    def test_an_override_with_the_wrong_digest_is_refused(self) -> None:
+        root = ROOT / "build" / "tests" / "engine-override-digest"
+        env, _patched = self._signed_engine_with_jar(root)
+        overrides = root / "overrides.txt"
+        overrides.write_text(f"lib-1.0.jar org/example/lib/1.1/lib-1.1.jar {'0' * 64}\n", encoding="utf-8")
+        env["ENGINE_OVERRIDES"] = str(overrides)
+        completed = self._run(root, env)
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        self.assertIn("Expected SHA-256", completed.stderr)
+        self.assertFalse((root / "dest").exists())
+
+    def test_a_stale_override_is_refused(self) -> None:
+        root = ROOT / "build" / "tests" / "engine-override-stale"
+        env, patched = self._signed_engine_with_jar(root)
+        overrides = root / "overrides.txt"
+        digest = hashlib.sha256(patched.read_bytes()).hexdigest()
+        overrides.write_text(f"gone-2.0.jar org/example/gone/2.1/gone-2.1.jar {digest}\n", encoding="utf-8")
+        env["ENGINE_OVERRIDES"] = str(overrides)
+        completed = self._run(root, env)
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        self.assertIn("Remove its override", completed.stderr)
+
+    def test_the_shipped_override_list_is_well_formed(self) -> None:
+        lines = [
+            line
+            for line in (ROOT / "scripts" / "engine-overrides.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        self.assertTrue(lines)
+        for line in lines:
+            jar, path, digest = line.split()
+            self.assertRegex(jar, r"^[A-Za-z0-9._-]+\.jar$")
+            self.assertRegex(path, r"^[A-Za-z0-9._/-]+\.jar$")
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_setup_sh_applies_the_same_pinned_overrides(self) -> None:
+        root = ROOT / "build" / "tests" / "setup-engine-override"
+        env, patched = self._signed_engine_with_jar(root)
+        digest = hashlib.sha256(patched.read_bytes()).hexdigest()
+        overrides = root / "overrides.txt"
+        overrides.write_text(f"lib-1.0.jar org/example/lib/1.1/lib-1.1.jar {digest}\n", encoding="utf-8")
+        env["ENGINE_OVERRIDES"] = str(overrides)
+        env["PIN"] = "1.2.3"
+        env["python"] = "/usr/bin/python3"
+        completed = self._setup(root, env)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        jar = root / "home" / "checkstead" / "dependency-check" / "lib" / "lib-1.0.jar"
+        self.assertEqual(jar.read_bytes(), b"patched 1.1")
+
+        overrides.write_text(f"lib-1.0.jar org/example/lib/1.1/lib-1.1.jar {'0' * 64}\n", encoding="utf-8")
+        refused = self._setup(root, env)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Expected SHA-256", refused.stderr)
+
+    def test_the_windows_installer_applies_the_overrides(self) -> None:
+        windows = (ROOT / "scripts" / "setup.ps1").read_text(encoding="utf-8")
+        self.assertIn("Install-EngineOverrides -Src $src", windows)
+        self.assertIn("Assert-Sha256 -Path $download -Expected $fields[2]", windows)
