@@ -12,9 +12,11 @@ from unittest import TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from checkstead.history import branch_groups, diff_scans, history_payload, load_history, load_scan  # noqa: E402
 from checkstead.ui import bind_server  # noqa: E402
+from ui_assets import ui_source  # noqa: E402
 
 
 def write_scan(directory: Path, project: str, dependencies: list[dict]) -> None:
@@ -118,12 +120,15 @@ class HistoryTests(TestCase):
         self.addCleanup(server.server_close)
         host, port = server.server_address[:2]
         page = urllib.request.urlopen(f"http://{host}:{port}/").read().decode()
-        self.assertIn("Checkstead", page)
-        self.assertIn("Suppressions", page)
-        self.assertIn("Administration", page)
-        self.assertIn('id="i-github"', page)
-        self.assertIn('id="i-azure-devops"', page)
-        self.assertIn('id="i-clock"', page)
+        self.assertIn("<title>Checkstead</title>", page)
+        self.assertIn('src="/static/js/main.js"', page)
+        module = urllib.request.urlopen(f"http://{host}:{port}/static/js/main.js")
+        self.assertIn("javascript", module.headers.get("Content-Type", ""))
+        source = ui_source()
+        for label in ("Overview", "Scans", "Evidence", "CI runs", "Access"):
+            self.assertIn(f'"{label}"', source)
+        for name in ("github", "microsoft", "clock", "shield"):
+            self.assertIn(f"  {name}: ", source)
         denied = urllib.request.Request(f"http://{host}:{port}/api/history")
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(denied)
@@ -203,40 +208,25 @@ class HistoryTests(TestCase):
         )
         self.assertEqual(payload["scans"][0]["branch"], "main")
         self.assertEqual(payload["drifts"][0]["dependencies"]["added"][0]["name"], "gamma")
-        page = (ROOT / "src" / "checkstead" / "ui_page.html").read_text(encoding="utf-8")
-        self.assertIn("branch-group", page)
-        self.assertIn("function branchGroups", page)
-        self.assertIn("scan.branch", page)
-        self.assertIn("finding-table", page)
-        self.assertIn("finding-group", page)
-        self.assertIn("Direct · Production", page)
-        self.assertIn("function packageLabel", page)
-        self.assertIn("finding-window", page)
-        self.assertIn('"Score"', page)
-        self.assertIn('"Vulnerability"', page)
-        self.assertIn('"Package"', page)
-        self.assertIn('"Relationship"', page)
-        self.assertIn('"Scope"', page)
-        self.assertIn('"Source"', page)
-        self.assertIn("position: sticky", page)
-        self.assertIn("finding-description", page)
-        self.assertNotIn("finding-extra", page)
-        self.assertNotIn("finding-split", page)
-        self.assertNotIn("finding-selected", page)
-        self.assertIn("findingsSection", page)
-        self.assertIn("finding-filters", page)
-        self.assertIn("function findingRank", page)
-        self.assertIn("findingRank(b) - findingRank(a)", page)
-        self.assertIn("state.findingSortDescending", page)
-        self.assertIn("state.openFinding = items.length ? findingKey(items[0]) : null", page)
-        self.assertIn('setAttribute("aria-selected", "true")', page)
-        self.assertNotIn("findingPageSize", page)
-        self.assertNotIn("CVSS and score source", page)
-        self.assertIn('filterGroup("Relationship"', page)
-        self.assertIn('filterGroup("Scope"', page)
-        self.assertIn("state.openFinding = key", page)
-        self.assertIn("No findings were added or removed between the two scans.", page)
-        self.assertNotIn("No findings in either report.", page)
+        source = ui_source()
+        # Scans grouped by branch, newest first, with drift kept inside a branch.
+        self.assertIn("export function branchGroups(scans)", source)
+        self.assertIn("scan.branch", source)
+        # Findings: grouped by relationship and scope, sortable, filterable,
+        # keyboard-selectable, with a detail panel for the chosen row.
+        for label in ("Direct, production", "Direct, development", "Transitive, production", "Transitive, development"):
+            self.assertIn(label, source)
+        for column in ('"Severity"', '"Vulnerability"', '"Package"', '"Score source"'):
+            self.assertIn(column, source)
+        self.assertIn('segmented("Relationship"', source)
+        self.assertIn('segmented("Scope"', source)
+        self.assertIn('"aria-sort"', source)
+        self.assertIn('"aria-selected"', source)
+        self.assertIn("function findingDetail(finding)", source)
+        self.assertIn("position: sticky", source)
+        self.assertIn("Findings and dependencies are the same as in the previous scan on this branch.", source)
+        # Report data is only ever set as text.
+        self.assertNotRegex(source, r"\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write")
 
     def test_a_scan_records_the_git_branch(self) -> None:
         import os

@@ -16,11 +16,13 @@ from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from checkstead.commit import lookup_branch, lookup_commit  # noqa: E402
 from checkstead.identity import AuthError  # noqa: E402
 from checkstead.sso import public_base  # noqa: E402
 from checkstead.ui import _local_sign_in, bind_server  # noqa: E402
+from ui_assets import ui_source  # noqa: E402
 
 
 ENTRA_TENANT = "11111111-2222-3333-4444-555555555555"
@@ -213,13 +215,14 @@ class SsoTests(TestCase):
         self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
         self.assertEqual(headers.get("X-Frame-Options"), "DENY")
         self.assertIn("frame-ancestors 'none'", headers.get("Content-Security-Policy", ""))
-        self.assertIn(b"Sign in on this computer", body)
-        self.assertIn(b'id="sign-in-local"', body)
-        self.assertNotIn(b'id="local-sign-in" hidden', body)
-        self.assertNotIn(b"need an app registration", body)
-        self.assertIn(b"An OAuth app only signs a person in.", body)
-        self.assertIn(b"reads and scans repositories.", body)
-        self.assertNotIn(b'name="token"', body)
+        self.assertIn(b'src="/static/js/main.js"', body)
+        source = ui_source()
+        self.assertIn("Sign in on this computer", source)
+        self.assertIn("status.local && status.local.enabled", source)
+        self.assertNotIn("need an app registration", source)
+        self.assertIn("Signing in only identifies you.", source)
+        self.assertIn("reads and scans repositories", source)
+        self.assertNotIn('name="token"', source)
         self.assertNotIn(b"paste", body.lower())
         status, body, _headers = self.open("/api/sso")
         payload = json.loads(body)

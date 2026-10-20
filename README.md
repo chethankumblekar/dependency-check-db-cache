@@ -129,23 +129,35 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 
 ## Screenshots
 
-On localhost, the first person uses **Sign in on this computer**. That button is enabled. GitHub and Microsoft stay inactive until their variables are set. An OAuth app only signs a person in. Local sign-in needs no OAuth app. The GitHub App from `/github` reads and scans repositories. A personal GitHub account is supported. GitLab is not connected.
+These screenshots come from a local server reading real scan reports. The newest scan used the signed daily snapshot. The UI's design system, page map, and the states each page handles are in [docs/ui-design.md](docs/ui-design.md).
 
-The timeline lists Checkstead workflow runs beside the scans when the GitHub App is installed. A run is queued, in progress, success, or failure. A run on a pull request is labeled with that pull request number and links to the pull request. Rerun is on each run and uses the credentials already stored.
+The Overview opens with the evidence chain for the newest scan: how fresh the vulnerability data is, whether its signature verified, whether the checksum matched, and which engine ran. Below that, Needs attention lists what to act on: actively exploited findings first, then critical findings, new findings, stale data, and unsigned snapshots. Every count comes from a report. A value a report does not record is shown as "Not recorded", never guessed.
 
-![Sign-in page. Sign in on this computer is enabled. GitHub and Microsoft are inactive.](docs/screenshots/sign-in.png)
+![Overview. The evidence chain shows current data, a verified signature, a matched checksum, and Dependency-Check 13.0.0. Needs attention lists two critical findings and ten new findings.](docs/screenshots/overview.png)
 
-The first scan on a branch is the scan view. This one records branch `main`. Findings are one table, split into Direct · Production, Direct · Dev, Transitive · Production, and Transitive · Dev. A path inside `node_modules` is shown as the package name, not as the file. The columns are Score, Vulnerability, Package, Relationship, Scope, and Source. The header sticks while the rows scroll inside the table. Score starts highest first inside each group, and clicking a column sorts by that column. The selected row is highlighted. Its description is one line under the table. The filters and the count stay on one line above the table. Dependencies stay closed until opened.
+A scan has four tabs. Findings groups vulnerabilities into direct and transitive, production and development. Each group is sorted highest score first, and selecting a row explains the finding and what to do about it. Changes lists what the scan introduced or fixed since the previous scan on the branch. Dependencies lists every component. Evidence shows the snapshot, signature, policy, and the commands to check it yourself.
 
-![Scan of billing on branch main. Findings are grouped into direct production and the other dependency types, with the description on one line under the table.](docs/screenshots/scan.png)
+![Findings for a scan on branch main, grouped by relationship and scope, with the selected finding's detail below the table.](docs/screenshots/scan.png)
 
-The next scan on that branch is the drift. The branch is `main`. Guava moved from 31.1-jre to 32.1.3-jre, commons-text moved from 1.9 to 1.10.0, and gson arrived. The drift line says no findings were added or removed between the two scans. That detail stays closed until opened. The same table is on the screen.
+![Changes since the previous scan: ten findings introduced, sorted by severity, then the dependency changes.](docs/screenshots/changes.png)
 
-![Drift on branch main. The grouped finding table stays on one screen, with drift closed.](docs/screenshots/drift.png)
+![The Evidence tab: snapshot time and freshness, zip digest, signature key, engine, and the policy the scan applied.](docs/screenshots/evidence.png)
 
-The first person to sign in is the administrator. Administration is where that person adds later accounts.
+On localhost, the first person signs in with **Sign in on this computer**. GitHub and Microsoft sign-in appear only once their variables are set. Signing in only identifies a person. Scanning repositories uses the separate GitHub App from `/github`.
 
-![Administration, with GitHub and Microsoft Entra accounts](docs/screenshots/administration.png)
+![Sign-in page with only Sign in on this computer offered.](docs/screenshots/sign-in.png)
+
+CI runs lists Checkstead workflow runs once the GitHub App is installed. Until then, the page says GitHub is not connected and links to the setup. Access is for administrators only. They add people and change roles there, and removing someone takes a second press to confirm.
+
+![CI runs before the GitHub App is installed.](docs/screenshots/ci-runs.png)
+
+![Access, with the add form and the signed-in administrator marked You.](docs/screenshots/access.png)
+
+The theme follows the system setting, and you can switch it with Auto, Light, or Dark. Below 900 pixels, the navigation moves to the top and tables drop secondary columns.
+
+![Overview in the dark theme.](docs/screenshots/overview-dark.png)
+
+<img src="docs/screenshots/overview-mobile.png" alt="Overview on a 375 pixel wide phone screen." width="375">
 
 ## Architecture
 
@@ -503,7 +515,7 @@ The two reports already in `ui/scans` are a pair of fixture scans on the same sn
 
 A scan records a revision when you pass `--revision`, and the GitHub Action passes `GITHUB_SHA`. When that revision is a commit git can see, the report also names the author. The sample reports use the commits of the fixture trees. Both were committed by Cursor Agent.
 
-A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The timeline reads `branch:` from `checkstead.txt` and groups scans into one section per branch. Drift is the change from the previous scan on that same branch. Findings are one table, split into direct and transitive, and into production and dev. A `node_modules` path is shown as the package name. The header sticks while the rows scroll inside the table. Score starts highest first inside each group, and clicking a column sorts by that column. The selected row is highlighted, and its description is one line under the table. The page does not grow with the finding count. Filters and the count stay on one line above the table. Dependency and drift details stay closed until opened.
+A scan records the git branch of the tree it scanned, the branch you pass with `--branch`, or `GITHUB_REF_NAME` from the Action. The scan list reads `branch:` from `checkstead.txt` and groups scans by branch. Changes are measured from the previous scan on that same branch. The page loads a summary of every scan first. A scan's full dependency list loads only when you open its Changes or Dependencies tab. Long dependency tables show their first 500 rows and say how many there are in total.
 
 When the GitHub App is installed, the timeline also lists recent Checkstead workflow runs for those repositories. A run is queued, in progress, success, or failure. A run on a pull request is labeled with that pull request number and links to the pull request. Rerun starts that same workflow again through the GitHub API, using the app credentials already stored. There is no token field.
 
@@ -589,6 +601,16 @@ bash scripts/self-test.sh
 ```
 
 That is the same lint, package build, unit tests, and Maven plugin tests that CI runs before it publishes images. The tests publish no database. They serve a tiny zip, run two scans on the same UTC day, and record every URL the scan client requests. Both reports name the same snapshot. None of the requests are to `services.nvd.nist.gov`. A manifest built by engine 12.1.8 is refused before the zip is downloaded. `checkstead doctor` prints the pin and whether secrets are set, and it does not print the secret values.
+
+The web UI is plain ES modules in `src/checkstead/static`, with no build step. Node is used only to check it. The CI job named Web UI runs the same commands:
+
+```bash
+cd web
+npm ci --ignore-scripts
+npm run check
+```
+
+That type-checks the modules with TypeScript in `checkJs` mode and runs the component, flow, and axe accessibility tests in jsdom. Node 22.22.2 or later is required.
 
 What the tests cover, and what still needs Docker, is in [Verification](docs/testing/verification-matrix.md). The trust boundaries are in [Threat model](docs/security/threat-model.md).
 

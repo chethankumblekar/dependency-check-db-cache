@@ -381,8 +381,9 @@ def _write_scored_report(
     base_scans: list[Path] | None = None,
     pull_request: str | None = None,
     branch: str | None = None,
+    provenance: list[str] | None = None,
 ) -> None:
-    extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
+    extra = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private) + list(provenance or [])
     payload = _load_engine_payload(out_dir / "dependency-check-report.json")
     scored = evaluate_report(
         payload,
@@ -542,7 +543,11 @@ def run_scan(
                 untrusted,
             )
         )
-    header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private)
+    provenance = [
+        f"snapshot-authenticity: {snapshot.authenticity}",
+        f"snapshot-key: {snapshot.signature_key_id or 'none'}",
+    ]
+    header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private) + provenance
     report_path = write_report(
         out_dir,
         snapshot.engine_version,
@@ -619,6 +624,7 @@ def run_scan(
             base_paths,
             pull_request,
             branch_name,
+            provenance,
         )
         return ScanResult(
             engine_version=snapshot.engine_version,

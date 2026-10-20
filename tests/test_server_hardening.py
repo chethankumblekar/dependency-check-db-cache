@@ -174,7 +174,14 @@ class ServerGuards(TestCase):
         policy = headers.get("Content-Security-Policy", "")
         self.assertIn("default-src 'none'", policy)
         self.assertIn("frame-ancestors 'none'", policy)
-        self.assertIn("form-action 'self' https://github.com", policy)
+        # The app loads no inline script or style at all.
+        self.assertIn("script-src 'self';", policy)
+        self.assertIn("style-src 'self';", policy)
+        self.assertNotIn("unsafe-inline", policy)
+        self.assertIn("form-action 'self';", policy)
+        # The GitHub App pages keep their one inline script and GitHub form target.
+        _, _, legacy = self.call("GET", "/github")
+        self.assertIn("form-action 'self' https://github.com", legacy.get("Content-Security-Policy", ""))
         self.assertEqual(headers.get("X-Frame-Options"), "DENY")
         self.assertIsNone(headers.get("Strict-Transport-Security"))
         os.environ["CHECKSTEAD_COOKIE_SECURE"] = "1"
@@ -340,3 +347,80 @@ class KeepAliveBodyTests(TestCase):
             self.assertEqual(response.getheader("Connection", "").lower(), "close")
         finally:
             connection.close()
+
+
+class StaticAssetTests(TestCase):
+    """The web UI's files are served from a fixed allowlist, without sign-in."""
+
+    def setUp(self) -> None:
+        saved = {name: os.environ.pop(name, None) for name in ENV_NAMES}
+        self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in saved.items() if v is not None])
+        data = ROOT / "build" / "tests" / "server-static" / self.id().split(".")[-1]
+        if data.exists():
+            shutil.rmtree(data)
+        self.server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def _get(self, path: str, headers: dict[str, str] | None = None) -> tuple[int, dict[str, str], bytes]:
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            connection.request("GET", path, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, {k.lower(): v for k, v in response.getheaders()}, response.read()
+        finally:
+            connection.close()
+
+    def test_known_files_are_served_with_their_type(self) -> None:
+        for path, content_type in (
+            ("/static/js/main.js", "text/javascript; charset=utf-8"),
+            ("/static/app.css", "text/css; charset=utf-8"),
+            ("/static/icon.svg", "image/svg+xml"),
+        ):
+            with self.subTest(path=path):
+                status, headers, body = self._get(path)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["content-type"], content_type)
+                self.assertEqual(headers["cache-control"], "no-cache")
+                self.assertEqual(headers["x-content-type-options"], "nosniff")
+                self.assertTrue(body)
+
+    def test_every_served_font_is_checksummed_and_licensed(self) -> None:
+        fonts = ui.STATIC_DIR / "fonts"
+        served = [path.rsplit("/", 1)[1] for path in ui.static_files() if path.endswith(".woff2")]
+        self.assertTrue(served)
+        sums = (fonts / "SHA256SUMS").read_text()
+        for name in served:
+            self.assertIn(name, sums)
+        self.assertTrue((fonts / "OFL-atkinson-hyperlegible-next.txt").is_file())
+        self.assertTrue((fonts / "OFL-jetbrains-mono.txt").is_file())
+
+    def test_a_matching_etag_answers_not_modified(self) -> None:
+        _, headers, _ = self._get("/static/app.css")
+        status, again, body = self._get("/static/app.css", {"If-None-Match": headers["etag"]})
+        self.assertEqual(status, 304)
+        self.assertEqual(body, b"")
+        self.assertEqual(again["etag"], headers["etag"])
+
+    def test_unknown_and_traversal_paths_are_not_found(self) -> None:
+        for path in (
+            "/static/nope.js",
+            "/static/../ui.py",
+            "/static/%2e%2e/ui.py",
+            "/static/js/../../ui.py",
+            "/static/ui_page.html",
+            "/static/",
+        ):
+            with self.subTest(path=path):
+                status, _, body = self._get(path)
+                self.assertEqual(status, 404)
+                self.assertNotIn(b"import", body)
+
+    def test_the_page_loads_only_same_origin_assets(self) -> None:
+        status, headers, body = self._get("/")
+        self.assertEqual(status, 200)
+        self.assertNotIn("unsafe-inline", headers["content-security-policy"])
+        self.assertNotIn(b"<script>", body)
+        self.assertIn(b'src="/static/js/main.js"', body)

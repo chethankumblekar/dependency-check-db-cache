@@ -6,6 +6,24 @@ listed as product versions.
 
 ## Unreleased
 
+Web UI:
+
+- The timeline is redesigned around evidence. Overview opens with the newest
+  scan's evidence chain (data freshness, signature, checksum, engine) and a
+  Needs attention list, with exploited and critical findings first. Each scan
+  has Findings, Changes, Dependencies, and Evidence tabs. See
+  [docs/ui-design.md](docs/ui-design.md).
+- Reports record `snapshot-authenticity` and `snapshot-key`; the history API
+  returns them with each scan's policy and each finding's KEV flag.
+- New `GET /api/history/summary` (scans without dependency lists) and
+  `GET /api/scans/<id>`. The page no longer downloads every dependency of
+  every scan on load.
+- The page's Content-Security-Policy no longer allows inline script or style.
+  Scripts, styles, and the vendored OFL fonts are served from a fixed
+  allowlist under `/static/`, with ETags.
+- Light and dark themes, keyboard navigation, and axe-checked views. The NVD
+  attribution is shown wherever NVD data is.
+
 Verification pass (pull request 25):
 
 - The updater refuses to publish unless the new database finds
@@ -18,6 +36,8 @@ Verification pass (pull request 25):
 - The timeline history is cached and gzip-compressed (42 to 940 req/s with
   204 scans), the server speaks HTTP/1.1 keep-alive, and
   `CHECKSTEAD_MAX_CONNECTIONS` (256) caps connections with a fast 503.
+- A request body the handler did not read no longer corrupts the next request
+  on a keep-alive connection.
 - The scanner image drops root to the owner of the mounted directory with no
   capabilities. The server image is built on Ubuntu 24.04: 0 High or
   Critical findings, down from 63.

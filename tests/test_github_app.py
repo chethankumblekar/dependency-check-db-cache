@@ -21,6 +21,7 @@ from unittest import TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from checkstead.config import DEFAULT_SNAPSHOT_URL  # noqa: E402
 from checkstead.errors import ChecksteadError, RefusedHost  # noqa: E402
@@ -40,6 +41,7 @@ from checkstead.github_app import (  # noqa: E402
 )
 from checkstead.identity import github_api_base, github_web_base  # noqa: E402
 from checkstead.ui import bind_server  # noqa: E402
+from ui_assets import ui_source  # noqa: E402
 
 LOCAL_COMMAND = (
     "curl -fsSL https://raw.githubusercontent.com/chethankumblekar/dependency-check-db-cache/"
@@ -965,13 +967,10 @@ class GitHubAppTests(TestCase):
             self.assertNotIn(b"ghs_test", body)
             self.assertNotIn(b"token", body.lower())
 
-        page = (ROOT / "src" / "checkstead" / "ui_page.html").read_text(encoding="utf-8")
-        self.assertIn('id="builds"', page)
-        self.assertIn("Rerun", page)
+        page = ui_source()
+        self.assertIn("export function renderBuilds(ctx)", page)
+        self.assertIn('"Rerun"', page)
         self.assertIn("pullRequestUrl", page)
-        self.assertIn("Direct · Production", page)
-        self.assertIn("Direct · Dev", page)
-        self.assertIn("Transitive · Production", page)
-        self.assertIn("Transitive · Dev", page)
+        self.assertIn("ctx.api.rerun(", page)
         self.assertNotIn('name="token"', page)
         self.assertNotIn("personal access", page.lower())
