@@ -18,7 +18,7 @@ function tokenBlock(selector) {
   const match = css.match(new RegExp(`(?:^|\\n)\\s*${escaped}\\s*\\{([^}]+)\\}`));
   assert.ok(match, `CSS token block not found: ${selector}`);
   return Object.fromEntries(
-    [...match[1].matchAll(/(--[a-z-]+)\\s*:\\s*(#[0-9a-fA-F]{6})\\s*;/g)]
+    [...match[1].matchAll(/(--[a-z-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)]
       .map(([, name, value]) => [name, value]),
   );
 }
