@@ -82,25 +82,20 @@ jobs:
           python -m pip install --disable-pip-version-check ".[dev]"
           python -m unittest -v tests.test_scan_safety tests.test_snapshot_resilience tests.test_key_management tests.test_match_regressions tests.test_server_hardening tests.test_score
 
-      - name: Install GnuPG for Windows
-        timeout-minutes: 8
-        # What a Windows user installs for setup.ps1, from gnupg.org, pinned by
-        # the SHA-256 published on gnupg.org/download/integrity_check.html.
-        # Not Git's MSYS gpg, whose usr\bin also puts GNU tar ahead of tar.exe.
+      - name: Put gpg on PATH
+        # Git for Windows ships gpg. Only gpg goes on PATH, through a shim:
+        # adding Git's usr\bin would also put GNU tar ahead of Windows' tar.exe.
+        # The GnuPG for Windows installer hung on the hosted runner, even
+        # with only its own process waited on.
+        timeout-minutes: 2
         run: |
-          $installer = Join-Path $env:RUNNER_TEMP "gnupg-w32.exe"
-          Invoke-WebRequest -Uri "https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.5.24_20260923.exe" -OutFile $installer
-          $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
-          if ($actual -ne "ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8") { throw "GnuPG installer digest $actual" }
-          # Wait for the installer process only. -Wait also waits for every
-          # process it starts, and gpg-agent keeps running.
-          $process = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
-          if (-not $process.WaitForExit(300000)) { throw "The GnuPG installer did not finish in 5 minutes." }
-          if ($process.ExitCode -ne 0) { throw "The GnuPG installer exited $($process.ExitCode)." }
-          $bin = @("C:\Program Files\GnuPG\bin", "C:\Program Files (x86)\GnuPG\bin") | Where-Object { Test-Path (Join-Path $_ "gpg.exe") } | Select-Object -First 1
-          if (-not $bin) { throw "gpg.exe was not installed" }
-          Add-Content -Path $env:GITHUB_PATH -Value $bin
-          & (Join-Path $bin "gpg.exe") --version | Select-Object -First 1
+          $gpg = "C:\Program Files\Git\usr\bin\gpg.exe"
+          if (-not (Test-Path $gpg)) { throw "Git for Windows gpg is not on this runner." }
+          $shim = Join-Path $env:RUNNER_TEMP "gpg-shim"
+          New-Item -ItemType Directory -Force -Path $shim | Out-Null
+          Set-Content -Path (Join-Path $shim "gpg.cmd") -Value "@`"$gpg`" %*" -Encoding ascii
+          Add-Content -Path $env:GITHUB_PATH -Value $shim
+          & $gpg --version | Select-Object -First 1
 
       - name: Install with setup.ps1
         timeout-minutes: 15
