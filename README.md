@@ -342,20 +342,19 @@ The scanner image runs as root by default so this mounted-directory command can 
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work checkstead scan --scan . --project my-service
 ```
 
-The server image runs as the `checkstead` user. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. Pin the attested digests from commit `f3731b37f3033191eda7d6211de8e51f94dfc79f`. `gh attestation verify` exited 0 for both. The detail is in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md).
+The server image runs as uid 999. Pull-request CI builds both images and does not push them. A push of the default branch, or a version tag, publishes them. BuildKit attaches an SBOM and SLSA provenance to the image index. Pin the attested digests from merge commit `031a6e0`, the first publish that gated the pushed digest before tagging. `gh attestation verify` exited 0 for both. The detail is in [Supply chain and provenance](docs/security/supply-chain-and-provenance.md).
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:063cde562cec605672518f5951af861b512b8df08b7f2096b930b89bb92cb740 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead@sha256:a20843ff0d9180404230788ef7d32a7db2a6f5f6fcc32b0639acf3efc306d7d5 \
   --repo chethankumblekar/dependency-check-db-cache
 
 gh attestation verify \
-  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:1a94da1ead8757e90d4df7ce4fff959f9319b1da617a4096c69186df0b301744 \
+  oci://ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead-server@sha256:7e31a3dbed8c1f3dbcc3c17fa1023172ea445587233b9247c4fed14ed49c2df5 \
   --repo chethankumblekar/dependency-check-db-cache
 ```
 
-[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push. The publish job pushes `sha-<commit>` first, runs the same Trivy gates as a pull request on that pushed digest for every platform, attests it, and only then points `latest` and the version tags at it. The run summary prints the digest to pin. The digests above predate that change.
-
+[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push. The publish job pushes `sha-<commit>` first, runs the same Trivy gates as a pull request on that pushed digest for every platform, attests it, and only then points `latest` and the version tags at it. The run summary prints the digest to pin. 
 The scanner image replaces the Jackson and jsoup jars that Dependency-Check 13.0.0 bundles with fixed releases pinned by SHA-256 ([`scripts/engine-overrides.txt`](scripts/engine-overrides.txt)). The server image runs as uid 999; [`docker-compose.yml`](docker-compose.yml) also drops every capability and mounts the root filesystem read-only.
 
 | Image | What it is |

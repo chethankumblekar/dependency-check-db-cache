@@ -16,15 +16,25 @@ BuildKit attestations that GitHub's attestation API does not currently serve.
 from __future__ import annotations
 
 import json
+import ssl
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 
 
+def _context() -> ssl.SSLContext:
+    """certifi when installed: python.org builds on macOS ship without a CA bundle."""
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 def _token(repository: str) -> str:
     url = f"https://ghcr.io/token?service=ghcr.io&scope=repository:{repository}:pull"
-    with urllib.request.urlopen(url, timeout=30) as response:
+    with urllib.request.urlopen(url, timeout=30, context=_context()) as response:
         payload = json.load(response)
     token = payload.get("token") or ""
     if not token:
@@ -37,7 +47,7 @@ def _get(repository: str, token: str, url: str, accept: str) -> dict:
         url,
         headers={"Authorization": f"Bearer {token}", "Accept": accept},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=60, context=_context()) as response:
         return json.load(response)
 
 

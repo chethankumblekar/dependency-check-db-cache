@@ -7,9 +7,10 @@ Engine pin: Dependency-Check 13.0.0.
 
 **Verdict: not production-ready yet.** The code-level findings below are fixed
 and tested, CI on this branch is green, the production snapshot key is
-pinned, and the first snapshot signed by it (`db-2026-10-20`) verifies. Still
-open: the first gated and attested publish, and the incremental updater
-against the live NVD. They are listed under
+pinned, the first snapshot signed by it (`db-2026-10-20`) verifies, and the
+first publish from `main` gated, attested, and tagged one digest per image.
+Still open: the incremental updater against the live NVD, Windows, and real
+identity-provider tenants. They are listed under
 [Not verified](#not-verified). Checkstead should not be called
 production-ready until each has evidence.
 
@@ -65,9 +66,16 @@ production-ready until each has evidence.
   `Build images` jobs (Trivy gates and smoke tests on the amd64 images), and
   CodeQL. The publish path (gating a pushed digest, `imagetools create`) only
   runs after merge.
-- **First publish.** No image from this change has been pushed, gated by
-  digest, attested, or promoted. The amd64 images CI builds have not been
-  scanned; the local scans were arm64.
+- **First publish** is no longer open. Run 39387651283 on merge commit
+  `031a6e0` pushed `sha-031a6e0…`, ran the image gates on the pushed digests
+  (server on both platforms), attested them, and only then moved the tags.
+  Checked from a workstation afterwards: `latest`, `engine-13.0.0`, and the
+  `sha-` tag name `checkstead@sha256:a20843ff…d7d5`; `latest` and `main` name
+  `checkstead-server@sha256:7e31a3db…2df5`. `gh attestation verify` exited 0
+  for both (SLSA v1, signer `ci.yml@refs/heads/main`), and
+  `scripts/verify-published-images.py` exited 0 for both (SPDX and SLSA on the
+  registry index). Scanner: 0 High or Critical findings. Server: 63 unfixed
+  Debian findings under exception `unfixed-os-2026-10-19`, none fixable.
 - **Snapshot signing** is no longer open. The maintainer supplied the public
   key for `checkstead-2026-10`; it is pinned. Run 39375412803 published
   `db-2026-10-20` (snapshot `2026-10-20T05:32:17Z`) signed with that key id.
@@ -131,7 +139,7 @@ production-ready until each has evidence.
 | Security | Untrusted source code never executed by a scan | Done, tested |
 | Security | Secrets kept out of the engine process and the report | Done, tested |
 | Supply chain | Engine signature and fingerprint; installer downloads pinned by digest | Done, tested |
-| Supply chain | Images gated, attested, and tagged by one digest | Done in workflow; **not yet run** |
+| Supply chain | Images gated, attested, and tagged by one digest | Done, verified on run 39387651283 |
 | Supply chain | SBOM per image and platform | Done in workflow; local SBOMs generated |
 | Snapshot integrity | Checksum, signature verification, rotation, rollback and freshness checks | Done, tested |
 | Snapshot integrity | A production key pinned | Done (`checkstead-2026-10`) |
