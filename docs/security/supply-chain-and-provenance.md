@@ -20,7 +20,10 @@ reviewed Dependabot SHA update does not fail for a second hardcoded copy.
 Actions stay pinned. A floating `@v1` tag still fails CI.
 
 Pins recorded on 19 October 2026, after the setup-python 7.0.0 and setup-node
-7.1.0 bumps. This table can lag a later Dependabot merge. Read the workflow
+7.1.0 bumps. On 20 October 2026 every pin below was resolved again with
+`gh api repos/<owner>/<repo>/git/ref/tags/<tag>` and matched its tag, and
+`trivy-action` was replaced by `setup-trivy` plus `scripts/image-gates.sh`.
+This table can lag a later Dependabot merge. Read the workflow
 for the SHA that CI actually runs:
 
 | Action | Tag | Commit |
@@ -38,7 +41,7 @@ for the SHA that CI actually runs:
 | `github/codeql-action/upload-sarif` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
 | `github/codeql-action/init` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
 | `github/codeql-action/analyze` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
-| `aquasecurity/trivy-action` | v0.36.0 | `ed142fd0673e97e23eac54620cfb913e5ce36c25` |
+| `aquasecurity/setup-trivy` | v0.3.1 | `81e514348e19b6112ce2a7e3ecbafe19c1e1f567` (installs Trivy `v0.70.0`) |
 | `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` |
 
 ## Engine
@@ -72,6 +75,42 @@ archive with no `dependency-check.sh`, a signed archive that path-escapes,
 and a signed archive that reports the requested version. They use a test key.
 They do not download the upstream zip.
 
+### Patched engine jars
+
+Dependency-Check 13.0.0 is the latest upstream release and bundles
+`jackson-core` 2.22.1, `jackson-databind` 2.22.1, and `jsoup` 1.23.1, which
+carry six High CVEs fixed in 2.22.3 and 1.23.2. After the release signature
+verifies, `scripts/install-engine.sh` replaces those jars with the fixed
+releases from Maven Central. `scripts/engine-overrides.txt` names each jar,
+its Central path, and the SHA-256 Central publishes for it. A digest mismatch,
+a malformed line, or an override for a jar the release no longer contains
+stops the install. The replacement keeps the original file name because the
+engine's `java -jar` manifest names each library jar. Trivy and the SBOM read
+the real version from inside the jar.
+
+On 20 October 2026 an image with these overrides scanned a directory holding
+`commons-collections-3.2.1.jar` and a lodash 4.17.15 lockfile against the
+published `db-2026-10-18` snapshot. The engine reported CVE-2015-6420
+(Critical) and six lodash advisories, the same results as the unpatched
+engine. The overrides apply to the scanner image and to the snapshot updater.
+`scripts/setup.sh` and `scripts/setup.ps1` do not apply them yet.
+
+## Installer downloads
+
+`scripts/setup.sh` and `scripts/setup.ps1` download a Python runtime and a JDK
+when the machine has none. Both are now fixed releases with pinned SHA-256
+values, and a mismatch stops the install:
+
+| Download | Release | Digest source |
+| --- | --- | --- |
+| CPython `install_only` archives | python-build-standalone `20261013`, CPython 3.12.15 | Release `SHA256SUMS`, matched against GitHub's asset digest |
+| Temurin JDK | `jdk-21.0.12.1+1` (was `api.adoptium.net/.../latest`) | Adoptium API checksum, matched against GitHub's asset digest |
+
+The `get-pip.py` fallback, which ran an unpinned script from
+`bootstrap.pypa.io`, is removed. A system Python without `ensurepip` now gets
+the pinned Python above. Every download is https only, with retries and a
+time limit. `CHECKSTEAD_REF=<tag>` installs a release tag instead of `main`.
+
 ## Source SBOM
 
 `python3 scripts/write-sbom.py build/checkstead-sbom.cdx.json` writes a
@@ -89,11 +128,14 @@ push an image.
 run on a pull request. The pull-request job sets `provenance: false`,
 `push: false`, and `contents: read`.
 
-The publish job sets BuildKit `provenance: true` and `sbom: true`, then runs
-`actions/attest-build-provenance` on the pushed digest with
-`push-to-registry: true`. That input is not the action default. Without it,
-the statement is not attached to the image. `gh attestation verify` checks
-the GitHub attestation for that same digest.
+The publish job pushes only `sha-<commit>` with BuildKit
+`provenance: mode=max` and `sbom: true`, runs the image gates on that pushed
+digest for every platform, runs `actions/attest-build-provenance` on it with
+`push-to-registry: true`, verifies that with `gh attestation verify`, and only
+then points `latest` and the version tags at the same digest. The scanned
+image, the attested image, and the tagged image are one digest. The job
+summary prints that digest and the verify command. Each run uploads the
+Trivy reports and a CycloneDX SBOM per platform as an artifact.
 
 ### Digests to verify
 

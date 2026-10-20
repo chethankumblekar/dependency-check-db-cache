@@ -180,6 +180,21 @@ and `su` to `checkstead`. A process that is already non-root skips `chown`.
 `docker-compose.yml` sets `no-new-privileges:true` and still publishes
 `127.0.0.1:8765:8765`. That Compose file was not started in this workspace.
 
+## Threats addressed on 20 October 2026
+
+| Threat | Control | Test |
+| --- | --- | --- |
+| A web page the user visits rebinds its DNS name to 127.0.0.1 and reads or drives the timeline | `Host` allowlist; unknown names get 421 before any handler runs | `tests/test_server_hardening.py` |
+| A cross-site form or fetch signs in as `local`, creates a GitHub App, or starts a scan | `Origin` must equal `Host` (or `CHECKSTEAD_PUBLIC_BASE`); `Origin: null` and `Sec-Fetch-Site: cross-site` refused | same |
+| Every client of a same-host reverse proxy arrives from 127.0.0.1 | Loopback grants nothing when `CHECKSTEAD_LOCAL` is set; GitHub App endpoints need an administrator | same |
+| A repository the GitHub App can read, or a fork pull request, carries `.yarnrc.yml` `yarnPath`, `mix.exs`, `Package.swift`, or a Gemfile that runs code when the analyzer starts the tool | Untrusted-source mode turns off YarnAudit, PnpmAudit, GolangMod, MixAudit, BundleAudit, and the Swift Package Manager analyzer; the engine environment holds no credentials | `tests/test_scan_safety.py` |
+| An attacker who cannot sign serves an older, validly signed snapshot to hide newer CVEs | Each cache refuses a snapshot older than the newest it used | `tests/test_snapshot_resilience.py` |
+| A repository zip expands to fill the disk | Declared size and member limits before extraction | same |
+| A redirect sends the GitHub App token to another host | `Authorization` dropped on a cross-host redirect | same |
+| A user in another Entra directory signs in with a login an administrator added | `tid` checked against `CHECKSTEAD_ENTRA_TENANT` or `CHECKSTEAD_ENTRA_ALLOWED_TENANTS`; `aud` checked | `tests/test_sso.py` |
+| A tampered Python or JDK download during `setup.sh`/`setup.ps1` | Fixed releases pinned by SHA-256 | `tests/test_setup.py` |
+| A published tag names an image that was never scanned | Gates run on the pushed digest; tags move only after the gates and attestation pass | `tests/test_ci.py` |
+
 ## What this project does not guarantee
 
 - That a CVE, CPE match, or score from Dependency-Check is correct.
@@ -189,8 +204,8 @@ and `su` to `checkstead`. A process that is already non-root skips `chown`.
 - That a GitHub tag such as `latest` on the container image is immutable.
   Pin a digest after you have inspected a published image.
 - That the scanner image has no vulnerabilities in the jars Dependency-Check
-  ships. The pull-request report records them. The failing gate skips
-  `/opt/dependency-check` so those upstream jars do not fail the build by
-  themselves. See [Security gates](security-gates.md).
+  ships. Known High and Critical ones are replaced with fixed releases
+  (`scripts/engine-overrides.txt`) and the gate covers the engine, so a new
+  one fails CI. See [Security gates](security-gates.md).
 - That a snapshot signature is an independent publisher. No signing key is
   pinned until `snapshot_trust.json` lists one.

@@ -354,7 +354,9 @@ gh attestation verify \
   --repo chethankumblekar/dependency-check-db-cache
 ```
 
-[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push.
+[CI](.github/workflows/ci.yml) publishes both images to GitHub Container Registry after the tests pass, on the default branch and on a `v*` tag. A pull request builds the images and does not push. The publish job pushes `sha-<commit>` first, runs the same Trivy gates as a pull request on that pushed digest for every platform, attests it, and only then points `latest` and the version tags at it. The run summary prints the digest to pin. The digests above predate that change.
+
+The scanner image replaces the Jackson and jsoup jars that Dependency-Check 13.0.0 bundles with fixed releases pinned by SHA-256 ([`scripts/engine-overrides.txt`](scripts/engine-overrides.txt)). The server image runs as uid 999; [`docker-compose.yml`](docker-compose.yml) also drops every capability and mounts the root filesystem read-only.
 
 | Image | What it is |
 | --- | --- |
@@ -546,7 +548,9 @@ GitHub and Microsoft sign-in work only when the server variables are set. Leave 
 | `CHECKSTEAD_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
 | `CHECKSTEAD_ENTRA_CLIENT_ID` | Microsoft Entra client id. This app only signs a person in. |
 | `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Microsoft Entra client secret |
-| `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is work and school accounts. Set a tenant id to lock one organization. |
+| `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is any work or school directory; the server warns about that. Set your directory (tenant) id to allow only it. |
+| `CHECKSTEAD_ENTRA_ALLOWED_TENANTS` | Optional. With `organizations`, the directory ids that may sign in, comma separated. |
+| `CHECKSTEAD_ALLOWED_HOSTS` | Optional. Host names the server answers to besides loopback and the `CHECKSTEAD_PUBLIC_BASE` host. Any other `Host` gets 421, which stops DNS rebinding. |
 
 The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Set `CHECKSTEAD_PUBLIC_BASE` to that origin. A remote connection does not use the `Host` header as the origin. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
 
@@ -573,6 +577,10 @@ The first person to sign in becomes the administrator. After that, Administratio
 GitLab and other Git hosts are not connected. Adding one is a new identity provider beside GitHub and Azure DevOps. The server does not pretend they are available.
 
 Put the server behind TLS when it is not on your own machine, and set `CHECKSTEAD_COOKIE_SECURE=1` so the session cookie is marked Secure. Do not bake a token into the image or the repository.
+
+The server refuses a cross-site `POST`, `PATCH`, or `DELETE`. With `CHECKSTEAD_LOCAL` set to anything, `/github` and its API need an administrator session, even from a loopback address, because behind Docker or a proxy that address can be anyone. `Dockerfile.server` has no Dependency-Check engine, so a scan started from `/github` there reports that the engine is missing; run `checkstead ui` from the scanner image to scan from the server. Those scans always run with the analyzers that execute tools in a repository turned off.
+
+Deployment behind a proxy, secrets, snapshot keys, monitoring, backup, release, and rollback are in [Production operations](docs/operations/production-operations.md).
 
 ## Develop
 
