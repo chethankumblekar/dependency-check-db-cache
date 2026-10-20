@@ -425,11 +425,15 @@ def bind_server(
 
         def _guard(self, unsafe: bool) -> bool:
             """Refuse a foreign Host, and a cross-site state change. True to continue."""
+            self._raw: bytes | None = None
             path = self.path.split("?", 1)[0]
             if path in _UNGUARDED_PATHS:
                 return True
             host = self.headers.get("Host", "")
             if not host_allowed(host):
+                # The body, if any, is not read. With keep-alive its bytes would
+                # be parsed as the next request, so the connection ends here.
+                self.close_connection = True
                 self._send(
                     421,
                     "text/plain; charset=utf-8",
@@ -442,8 +446,33 @@ def bind_server(
                 host,
                 self.headers.get("Sec-Fetch-Site", ""),
             ):
+                self.close_connection = True
                 self._json(403, {"error": "Cross-site request refused."})
                 return False
+            if unsafe:
+                return self._read_request_body()
+            return True
+
+        def _read_request_body(self) -> bool:
+            """Read the whole body once, before any handler runs.
+
+            Every POST, PATCH, and DELETE body is consumed whether or not its
+            handler uses it, so the next request on a keep-alive connection
+            starts at a request line.
+            """
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                length = -1
+            if length < 0:
+                self.close_connection = True
+                self._json(400, {"error": "Request body is not valid."})
+                return False
+            if length > MAX_BODY:
+                self.close_connection = True
+                self._json(413, {"error": "Request is too large."})
+                return False
+            self._raw = self.rfile.read(length) if length else b""
             return True
 
         def do_GET(self) -> None:
@@ -852,15 +881,8 @@ def bind_server(
             return "application/json" in self.headers.get("Accept", "")
 
         def _fields(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             content_type = self.headers.get("Content-Type", "")
             if "application/json" in content_type or raw[:1] == b"{":
                 try:
@@ -887,6 +909,8 @@ def bind_server(
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.send_header("Cache-Control", "no-store")
             if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
                 self.send_header("Strict-Transport-Security", "max-age=31536000")
@@ -942,15 +966,8 @@ def bind_server(
             return user
 
         def _body(self) -> dict | None:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(400, {"error": "Request body is not valid."})
-                return None
-            if length < 0 or length > MAX_BODY:
-                self._json(413, {"error": "Request is too large."})
-                return None
-            raw = self.rfile.read(length) if length else b""
+            # _guard read and size-checked the body before the handler ran.
+            raw = self._raw or b""
             try:
                 body = json.loads(raw.decode("utf-8")) if raw else {}
             except (UnicodeDecodeError, json.JSONDecodeError):

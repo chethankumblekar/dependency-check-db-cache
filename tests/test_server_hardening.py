@@ -269,3 +269,62 @@ class ConnectionHandlingTests(TestCase):
             os.environ.pop("CHECKSTEAD_GITHUB_CLIENT_SECRET", None)
         self.assertEqual(status, 302)
         self.assertEqual(headers.get("Content-Length"), "0")
+
+
+class KeepAliveBodyTests(TestCase):
+    """Every request body is consumed, so the next request on the connection parses."""
+
+    def setUp(self) -> None:
+        saved = {name: os.environ.pop(name, None) for name in ENV_NAMES}
+        self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in saved.items() if v is not None])
+        data = ROOT / "build" / "tests" / "server-keepalive" / self.id().split(".")[-1]
+        if data.exists():
+            shutil.rmtree(data)
+        self.server = bind_server(ROOT / "ui" / "scans", "127.0.0.1", 0, data)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def _connection(self) -> http.client.HTTPConnection:
+        return http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+
+    def test_a_body_the_handler_ignores_does_not_corrupt_the_next_request(self) -> None:
+        connection = self._connection()
+        try:
+            origin = {"Origin": f"http://127.0.0.1:{self.port}", "Content-Type": "application/json"}
+            connection.request("POST", "/api/session/local", body=b"{}", headers=origin)
+            response = connection.getresponse()
+            cookie = response.getheader("Set-Cookie", "").split(";", 1)[0]
+            response.read()
+            self.assertEqual(response.status, 200)
+            connection.request("GET", "/api/session", headers={"Cookie": cookie})
+            again = connection.getresponse()
+            self.assertEqual(again.status, 200, again.read())
+        finally:
+            connection.close()
+
+    def test_a_refused_request_with_a_body_closes_the_connection(self) -> None:
+        connection = self._connection()
+        try:
+            connection.request("POST", "/api/session/local", body=b'{"x": 1}', headers={"Origin": "https://evil.example"})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 403)
+            self.assertEqual(response.getheader("Connection", "").lower(), "close")
+        finally:
+            connection.close()
+
+    def test_an_oversized_body_is_refused_and_closed(self) -> None:
+        connection = self._connection()
+        try:
+            connection.putrequest("POST", "/api/admin/users")
+            connection.putheader("Origin", f"http://127.0.0.1:{self.port}")
+            connection.putheader("Content-Length", str(10 * 1024 * 1024))
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 413)
+            self.assertEqual(response.getheader("Connection", "").lower(), "close")
+        finally:
+            connection.close()
