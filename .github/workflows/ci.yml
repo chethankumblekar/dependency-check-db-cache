@@ -55,6 +55,76 @@ jobs:
       - name: Lint, build, and test
         run: bash ./scripts/self-test.sh
 
+  windows:
+    name: Windows
+    # The Windows client, the msvcrt lock, and setup.ps1 run here on a real
+    # Windows runner, ending in a scan against the published signed snapshot.
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Portable unit tests
+        run: |
+          python -m pip install --disable-pip-version-check ".[dev]"
+          python -m unittest -v tests.test_scan_safety tests.test_snapshot_resilience tests.test_key_management tests.test_match_regressions tests.test_server_hardening tests.test_score
+
+      - name: Put Git's gpg on PATH
+        run: Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\Git\usr\bin"
+
+      - name: Install with setup.ps1
+        env:
+          # The branch this run is for. setup.ps1 installs the package from it.
+          CHECKSTEAD_REF: ${{ github.head_ref || github.ref_name }}
+          CHECKSTEAD_INSTALL_RUNTIMES: "1"
+        run: |
+          ./scripts/setup.ps1
+          $exe = Join-Path $env:USERPROFILE "checkstead\venv\Scripts\checkstead.exe"
+          & $exe version
+          & $exe doctor
+          $lib = Join-Path $env:USERPROFILE "checkstead\dependency-check\lib"
+          $expected = @{
+            "jackson-core-2.22.1.jar" = "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c"
+            "jackson-databind-2.22.1.jar" = "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9"
+            "jsoup-1.23.1.jar" = "e9d8c856856680427f096d156f02a414289985c930998fcb519ce5be39b42003"
+          }
+          foreach ($name in $expected.Keys) {
+            $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $lib $name)).Hash.ToLowerInvariant()
+            if ($actual -ne $expected[$name]) { throw "$name was not replaced: $actual" }
+          }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE "checkstead\jdk\bin\java.exe"))) { throw "The pinned JDK was not installed." }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE "checkstead\python\python.exe"))) { throw "The pinned Python was not installed." }
+
+      - name: Scan with the published signed snapshot
+        run: |
+          $exe = Join-Path $env:USERPROFILE "checkstead\venv\Scripts\checkstead.exe"
+          $env:JAVA_HOME = Join-Path $env:USERPROFILE "checkstead\jdk"
+          $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+          $project = Join-Path $env:RUNNER_TEMP "canary"
+          New-Item -ItemType Directory -Force -Path $project | Out-Null
+          $jar = Join-Path $project "commons-collections-3.2.1.jar"
+          Invoke-WebRequest -Uri "https://repo1.maven.org/maven2/commons-collections/commons-collections/3.2.1/commons-collections-3.2.1.jar" -OutFile $jar
+          if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne "87363a4c94eaabeefd8b930cb059f66b64c9f7d632862f23de3012da7660047b") { throw "canary jar digest" }
+          $env:CHECKSTEAD_UNTRUSTED_SOURCE = "1"
+          $output = & $exe scan --scan $project --project windows-canary --out (Join-Path $env:RUNNER_TEMP "report") 2>&1 | Out-String
+          Write-Output $output
+          if ($LASTEXITCODE -ne 0) { throw "scan exited $LASTEXITCODE" }
+          if ($output -notmatch "snapshot-authenticity: signed key=checkstead-2026-10") { throw "the snapshot was not verified as signed" }
+          if ($output -notmatch "CVE-2015-6420") { throw "the scan did not report CVE-2015-6420" }
+
   images:
     name: Build images
     if: github.event_name == 'pull_request'

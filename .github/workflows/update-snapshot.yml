@@ -7,6 +7,10 @@ on:
         description: "Rebuild the database from the NVD instead of updating the last snapshot."
         type: boolean
         default: false
+      validate_only:
+        description: "Run the update, canary, and signing against the real NVD without publishing a release."
+        type: boolean
+        default: false
   schedule:
     # 01:00 UTC. One run a day is inside NIST's enterprise refresh guidance.
     - cron: "0 1 * * *"
@@ -52,7 +56,20 @@ jobs:
           CHECKSTEAD_SNAPSHOT_SIGNING_KEY: ${{ secrets.CHECKSTEAD_SNAPSHOT_SIGNING_KEY }}
           CHECKSTEAD_SNAPSHOT_KEY_ID: ${{ vars.CHECKSTEAD_SNAPSHOT_KEY_ID }}
           CHECKSTEAD_FULL_REBUILD: ${{ inputs.full_rebuild && '1' || '' }}
+          CHECKSTEAD_VALIDATE_ONLY: ${{ inputs.validate_only && '1' || '' }}
         run: bash ./scripts/update-snapshot.sh
+
+      - name: Keep the validation output
+        if: always() && inputs.validate_only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: snapshot-validation
+          path: |
+            build/snapshot/manifest.json
+            build/snapshot/checkstead-db.zip.sha256
+            build/snapshot/dependency-check.log
+            build/snapshot/canary/out/dependency-check-report.json
+          if-no-files-found: warn
 
       - name: Upload updater log
         if: failure()

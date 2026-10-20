@@ -332,7 +332,11 @@ function Install-UserPath {
 
 New-Item -ItemType Directory -Path $Root -Force | Out-Null
 
-$python = Select-Python
+# CHECKSTEAD_INSTALL_RUNTIMES=1 installs the pinned Python and JDK even when the
+# machine has its own, so their checksum paths are exercised (CI does this).
+$forceRuntimes = $env:CHECKSTEAD_INSTALL_RUNTIMES -eq "1"
+
+$python = if ($forceRuntimes) { $null } else { Select-Python }
 if ($python) {
     Write-Output "Python 3.11+ already present."
 } else {
@@ -341,9 +345,9 @@ if ($python) {
 }
 
 $bundledJdk = $false
-if (Test-JavaRuns) {
+if ((-not $forceRuntimes) -and (Test-JavaRuns)) {
     Write-Output "java already runs."
-} elseif (Test-Path (Join-Path $Root "jdk\bin\java.exe")) {
+} elseif ((-not $forceRuntimes) -and (Test-Path (Join-Path $Root "jdk\bin\java.exe"))) {
     Write-Output "JDK already installed."
     $bundledJdk = $true
 } else {

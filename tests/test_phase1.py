@@ -38,6 +38,12 @@ def _test_signing_key() -> str:
 
     from checkstead.snapshot_auth import public_pem_for
 
+    # This module can be imported twice in one run (as test_phase1 and as
+    # tests.test_phase1). Both imports must sign with the key the trust file
+    # names, so the first key is kept for the rest of the process.
+    existing = os.environ.get("CHECKSTEAD_TEST_SIGNING_KEY", "")
+    if existing and os.environ.get("CHECKSTEAD_SNAPSHOT_TRUST") == str(_TEST_TRUST) and _TEST_TRUST.is_file():
+        return existing
     private = Ed25519PrivateKey.generate().private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
     ).decode("ascii")
@@ -49,6 +55,7 @@ def _test_signing_key() -> str:
         encoding="utf-8",
     )
     os.environ["CHECKSTEAD_SNAPSHOT_TRUST"] = str(_TEST_TRUST)
+    os.environ["CHECKSTEAD_TEST_SIGNING_KEY"] = private
     return private
 
 
