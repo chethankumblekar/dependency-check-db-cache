@@ -236,15 +236,15 @@ function Install-Engine {
         $gnupg = Join-Path $tmp "gnupg"
         New-Item -ItemType Directory -Path $gnupg | Out-Null
         $env:GNUPGHOME = $gnupg
-        & gpg --batch --import $keyFile 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported." }
+        $imported = & gpg --batch --import $keyFile 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
         $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
         if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
         if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
-        & gpg --batch --verify $signature $archive 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify." }
+        $verified = & gpg --batch --verify $signature $archive 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify. gpg said: $verified" }
         $unpacked = Join-Path $tmp "unpacked"
         New-Item -ItemType Directory -Path $unpacked | Out-Null
         if ($Python -eq "py -3") {
