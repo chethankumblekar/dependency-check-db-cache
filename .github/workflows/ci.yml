@@ -60,7 +60,7 @@ jobs:
     # The Windows client, the msvcrt lock, and setup.ps1 run here on a real
     # Windows runner, ending in a scan against the published signed snapshot.
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     permissions:
       contents: read
     defaults:
@@ -83,12 +83,19 @@ jobs:
           python -m unittest -v tests.test_scan_safety tests.test_snapshot_resilience tests.test_key_management tests.test_match_regressions tests.test_server_hardening tests.test_score
 
       - name: Install GnuPG for Windows
-        # What a Windows user installs for setup.ps1. Not Git's MSYS gpg,
-        # whose usr\bin also puts GNU tar ahead of Windows' tar.exe.
+        # What a Windows user installs for setup.ps1, from gnupg.org, pinned by
+        # the SHA-256 published on gnupg.org/download/integrity_check.html.
+        # Not Git's MSYS gpg, whose usr\bin also puts GNU tar ahead of tar.exe.
         run: |
-          choco install gnupg --no-progress -y
-          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files (x86)\GnuPG\bin"
-          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\GnuPG\bin"
+          $installer = Join-Path $env:RUNNER_TEMP "gnupg-w32.exe"
+          Invoke-WebRequest -Uri "https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.5.24_20260923.exe" -OutFile $installer
+          $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          if ($actual -ne "ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8") { throw "GnuPG installer digest $actual" }
+          Start-Process -FilePath $installer -ArgumentList "/S" -Wait
+          $bin = @("C:\Program Files\GnuPG\bin", "C:\Program Files (x86)\GnuPG\bin") | Where-Object { Test-Path (Join-Path $_ "gpg.exe") } | Select-Object -First 1
+          if (-not $bin) { throw "gpg.exe was not installed" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          & (Join-Path $bin "gpg.exe") --version | Select-Object -First 1
 
       - name: Install with setup.ps1
         env:
