@@ -199,6 +199,20 @@ function Install-EngineOverrides {
     }
 }
 
+# The gpg in Git for Windows is an MSYS build. It treats only paths that
+# start with "/" as absolute, so "C:\x" and "C:/x" both become relative to
+# the working directory. It reports its home as "/c/..." in --version; native
+# GnuPG (GnuPG for Windows, Gpg4win) reports "C:\..." and takes Windows paths.
+function ConvertTo-GpgPath {
+    param([string]$Path)
+    $homeLine = (& gpg --version 2>$null | Select-String -Pattern '^Home:' | Select-Object -First 1)
+    if ($homeLine -and ($homeLine.ToString() -match '^Home:\s*/')) {
+        $drive = $Path.Substring(0, 1).ToLowerInvariant()
+        return "/" + $drive + $Path.Substring(2).Replace('\', '/')
+    }
+    return $Path
+}
+
 function Install-Engine {
     param([string]$Pin, [string]$Python)
     # Jeremy Long's Dependency-Check release key. The fingerprint is the pin.
@@ -235,17 +249,15 @@ function Install-Engine {
         }
         $gnupg = Join-Path $tmp "gnupg"
         New-Item -ItemType Directory -Path $gnupg | Out-Null
-        # Forward slashes: the gpg in Git for Windows is an MSYS build and reads
-        # "C:\..." as a relative path. Native GnuPG accepts both forms.
-        $env:GNUPGHOME = $gnupg.Replace('\', '/')
-        $imported = & gpg --batch --import $keyFile 2>&1 | Out-String
+        $env:GNUPGHOME = ConvertTo-GpgPath $gnupg
+        $imported = & gpg --batch --import (ConvertTo-GpgPath $keyFile) 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing to install. The engine signing key could not be imported. gpg said: $imported" }
-        $shown = & gpg --batch --with-colons --show-keys $keyFile 2>$null
+        $shown = & gpg --batch --with-colons --show-keys (ConvertTo-GpgPath $keyFile) 2>$null
         $fprLine = $shown | Where-Object { $_ -like "fpr:*" } | Select-Object -First 1
         $fpr = ""
         if ($fprLine) { $fpr = $fprLine.Split(":")[9] }
         if ($fpr -ne $ExpectedFingerprint) { throw "Refusing engine key. Expected fingerprint $ExpectedFingerprint but found $fpr." }
-        $verified = & gpg --batch --verify $signature $archive 2>&1 | Out-String
+        $verified = & gpg --batch --verify (ConvertTo-GpgPath $signature) (ConvertTo-GpgPath $archive) 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw "Refusing the downloaded engine. The release signature does not verify. gpg said: $verified" }
         $unpacked = Join-Path $tmp "unpacked"
         New-Item -ItemType Directory -Path $unpacked | Out-Null

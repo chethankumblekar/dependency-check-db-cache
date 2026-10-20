@@ -538,7 +538,7 @@ class SetupTests(TestCase):
         # $home is PowerShell's read-only $HOME; assigning it aborts the install.
         self.assertNotRegex(windows, r"(?im)^\s*\$home\s*=")
         # MSYS gpg (Git for Windows) reads a backslash GNUPGHOME as relative.
-        self.assertIn("$env:GNUPGHOME = $gnupg.Replace('\\', '/')", windows)
+        self.assertIn("$env:GNUPGHOME = ConvertTo-GpgPath $gnupg", windows)
 
     def test_checkstead_ref_must_be_a_ref_name(self) -> None:
         root = ROOT / "build" / "tests" / "setup-ref"
