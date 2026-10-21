@@ -431,6 +431,30 @@ class SsoTests(TestCase):
         self.assertEqual(status, 401)
         self.assertIn(b"directory is not allowed", body)
 
+    def test_a_failed_callback_clears_the_state_and_a_replay_is_refused(self) -> None:
+        os.environ["CHECKSTEAD_COOKIE_SECURE"] = "1"
+        os.environ["CHECKSTEAD_ENTRA_ALLOWED_TENANTS"] = "99999999-9999-9999-9999-999999999999"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        os.environ["CHECKSTEAD_ENTRA_AUTHORIZE"] = self.provider + "/authorize"
+        os.environ["CHECKSTEAD_ENTRA_TOKEN"] = self.provider + "/token"
+        os.environ["CHECKSTEAD_ENTRA_USERINFO"] = self.provider + "/userinfo"
+        _status, _body, headers = self.open("/api/sso/entra/start")
+        state = parse_qs(urlsplit(headers.get("Location")).query)["state"][0]
+        callback = f"/api/sso/entra/callback?code=demo-code&state={state}"
+        status, _body, headers = self.open(callback, cookie=f"checkstead_sso={state}")
+        self.assertEqual(status, 401)
+        cleared = headers.get("Set-Cookie") or ""
+        self.assertTrue(cleared.startswith("checkstead_sso=;"), cleared)
+        for attribute in ("HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0", "Secure"):
+            self.assertIn(attribute, cleared)
+        # The browser has dropped the cookie, so a replay carries none.
+        self.provider_server.posted = None
+        status, body, headers = self.open(callback)
+        self.assertEqual(status, 400, body)
+        self.assertIsNone(self.provider_server.posted)
+        self.assertIn("checkstead_sso=;", headers.get("Set-Cookie") or "")
+
     def test_entra_accepts_the_configured_directory_id(self) -> None:
         os.environ["CHECKSTEAD_ENTRA_TENANT"] = ENTRA_TENANT
         status, body = self._entra_callback()

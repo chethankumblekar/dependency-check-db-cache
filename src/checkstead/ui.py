@@ -44,6 +44,7 @@ from checkstead.identity import AuthError, Identity, identify, list_providers
 from checkstead.sso import (
     STATE_COOKIE,
     authorize_url,
+    clear_state_cookie,
     exchange,
     new_state,
     public_base,
@@ -789,7 +790,7 @@ def bind_server(
             state = (query.get("state") or [""])[0]
             saved = _cookie_named(self.headers.get("Cookie"), STATE_COOKIE)
             if not code or not state or state != saved:
-                self._page(400, "Sign-in could not be confirmed. Start again.")
+                self._page(400, "Sign-in could not be confirmed. Start again.", clear_state_cookie())
                 return
             try:
                 identity = exchange(
@@ -799,12 +800,12 @@ def bind_server(
                 )
                 token, _user = store.sign_in(identity)
             except (AuthError, AccountError) as exc:
-                self._page(getattr(exc, "status", 401), str(exc))
+                self._page(getattr(exc, "status", 401), str(exc), clear_state_cookie())
                 return
             self.send_response(302)
             self.send_header("Location", "/")
             self.send_header("Set-Cookie", _session_cookie(token, SESSION_DAYS * 24 * 3600))
-            self.send_header("Set-Cookie", f"{STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+            self.send_header("Set-Cookie", clear_state_cookie())
             self.send_header("Content-Length", "0")
             self._common_headers()
             self.end_headers()
@@ -1061,13 +1062,13 @@ def bind_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def _page(self, status: int, message: str) -> None:
+        def _page(self, status: int, message: str, cookie: str | None = None) -> None:
             body = (
                 "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
                 f"<title>Checkstead</title><p>{escape(message)}</p>"
                 "<p><a href=\"/\">Back to sign in</a></p></html>"
             ).encode("utf-8")
-            self._send(status, "text/html; charset=utf-8", body)
+            self._send(status, "text/html; charset=utf-8", body, cookie)
 
         def _user_id(self) -> int | None:
             path = unquote(self.path.split("?", 1)[0])
@@ -1158,11 +1159,15 @@ def bind_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def _send(self, status: int, content_type: str, body: bytes) -> None:
+        def _send(
+            self, status: int, content_type: str, body: bytes, cookie: str | None = None
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self._common_headers()
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
             self.end_headers()
             self.wfile.write(body)
 
