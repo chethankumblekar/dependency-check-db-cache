@@ -40,7 +40,7 @@ Contrast was computed with the WCAG 2.x formula. Every text token is at least 4.
 ## Information architecture
 
 ```
-Sign in (gate)                      shown until a session exists
+Sign in (gate)                      shown until a session exists; Azure DevOps form once an Azure DevOps login exists
 └─ Shell: rail navigation + main
    ├─ Overview            #/                       evidence chain, needs attention, counts, newest scan per project
    ├─ Scans               #/scans                  opens the newest scan
