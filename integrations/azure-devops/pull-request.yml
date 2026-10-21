@@ -15,14 +15,21 @@ steps:
 
   # The head and the target branch are scanned with the same snapshot. Only
   # findings the pull request adds count against the score policy.
+  # Values come from environment variables, never $(...) macros: a macro is
+  # pasted into the script text, and a branch name such as a$(curl ...) is a
+  # valid git ref that the pull request author chooses.
   - script: |
       set -euo pipefail
-      head="$(System.PullRequest.SourceCommitId)"
-      target="$(System.PullRequest.TargetBranch)"
-      source="$(System.PullRequest.SourceBranch)"
-      base="$(git rev-parse "origin/${target#refs/heads/}")"
-      work="$(Agent.TempDirectory)/checkstead-pr"
-      out="$(Build.SourcesDirectory)/checkstead-report"
+      if [[ "${BUILD_REASON:-}" != "PullRequest" ]]; then
+        echo "##vso[task.logissue type=error]This pipeline scans pull requests. Run it as a Build validation branch policy."
+        exit 1
+      fi
+      head="$SYSTEM_PULLREQUEST_SOURCECOMMITID"
+      target="$SYSTEM_PULLREQUEST_TARGETBRANCH"
+      source="$SYSTEM_PULLREQUEST_SOURCEBRANCH"
+      base="$(git rev-parse --verify "refs/remotes/origin/${target#refs/heads/}^{commit}")"
+      work="$AGENT_TEMPDIRECTORY/checkstead-pr"
+      out="$BUILD_SOURCESDIRECTORY/checkstead-report"
       rm -rf "$work"
       mkdir -p "$work/head" "$work/base" "$out"
       git archive "$head" | tar -x -C "$work/head"
@@ -34,13 +41,13 @@ steps:
         -v "$out:/out" \
         -w /head \
         -e CHECKSTEAD_UNTRUSTED_SOURCE=1 \
-        "$(checksteadImage)" \
+        "$CHECKSTEADIMAGE" \
         scan \
         --scan /head \
         --base /base \
         --out /out \
-        --pull-request "$(System.PullRequest.PullRequestId)" \
-        --project "$(Build.Repository.Name)" \
+        --pull-request "$SYSTEM_PULLREQUEST_PULLREQUESTID" \
+        --project "$BUILD_REPOSITORY_NAME" \
         --revision "$head" \
         --branch "${source#refs/heads/}"
     displayName: Checkstead scan
@@ -51,14 +58,14 @@ steps:
       docker run --rm \
         --user 10001:10001 \
         --entrypoint python3 \
-        -v "$(Build.SourcesDirectory)/checkstead-report:/out:ro" \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
         -e SYSTEM_ACCESSTOKEN \
         -e SYSTEM_COLLECTIONURI \
         -e SYSTEM_TEAMPROJECTID \
         -e BUILD_REPOSITORY_ID \
         -e SYSTEM_PULLREQUEST_PULLREQUESTID \
         -e COMMENT_FILE=/out/checkstead-comment.md \
-        "$(checksteadImage)" \
+        "$CHECKSTEADIMAGE" \
         /usr/local/bin/checkstead-ado-comment
     displayName: Comment on the pull request
     condition: and(always(), eq(variables['Build.Reason'], 'PullRequest'))

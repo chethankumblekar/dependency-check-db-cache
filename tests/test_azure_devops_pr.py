@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -127,6 +128,14 @@ class AzureDevOpsPullRequestCommentTest(TestCase):
         self.assertIn("SYSTEM_ACCESSTOKEN: $(System.AccessToken)", example)
         self.assertIn("--pull-request", example)
         self.assertNotIn("NVD_API_KEY", example)
+        # A $(...) macro is pasted into the script text before bash runs it, and the
+        # pull request author picks the source branch name. Only the token mapping
+        # under env: may use a macro.
+        self.assertEqual(
+            re.findall(r"\$\((?:System|Build|Agent)\.[A-Za-z.]+\)", example),
+            ["$(System.AccessToken)"],
+        )
+        self.assertIn('if [[ "${BUILD_REASON:-}" != "PullRequest" ]]', example)
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("COPY scripts/ado-pr-comment.py /usr/local/bin/checkstead-ado-comment", dockerfile)
         self.assertIn("/usr/local/bin/checkstead-ado-comment", example)
