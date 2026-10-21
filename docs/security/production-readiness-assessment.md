@@ -28,7 +28,7 @@ on the checklist has evidence.
 | Soak after the leak fix | same | 871,666 requests, 0 errors, p95 109 to 248 ms. Open files flat at 38; memory flat at about 34 MB. |
 | Server image OS findings | Trivy 0.70.0 report on pull request 25 | `python:3.14-slim-bookworm` 61 High + 2 Critical (all unfixed); `slim-trixie` 44 High; Ubuntu 24.04 **0 High, 0 Critical**. Scanner image: 0. |
 | Scanner root drop | `smoke-image.sh scanner` in CI | A default run (no `--user`) writes its output as the owner of the mounted directory, not root. |
-| Identity-provider preflight | `scripts/idp-preflight.py` against a local server with placeholder client ids | PASS for GitHub and Entra up to the provider's login page. No real tenant. |
+| Identity-provider preflight | `scripts/idp-preflight.py` against a local server with real GitHub and Entra client ids (21 October 2026) | PASS for GitHub and Entra. Real sign-ins: 7 of 12 manual cases pass, 5 need a second account or directory; see [Identity provider testing](../operations/identity-provider-testing.md#results-21-october-2026). |
 
 ### Defects found and fixed in this pass
 
@@ -89,7 +89,7 @@ means another rotation.
 | No High/Critical findings in either image | Server had 63 unfixed | Done (0 and 0) |
 | Scanner never runs as root | Open | Done |
 | Signing key out of repository secrets | Open | Done (rotated into `snapshot-signing`; repository copy deleted 20 October 2026) |
-| Real identity-provider tenants | Open | **Open (needs test accounts)** |
+| Real identity-provider tenants | Open | **Partly done**: GitHub and Entra sign-in pass against real providers; the Azure DevOps `connectionData` fix is merged (PR 32) and the sign-in form is in PR 34, neither re-tested against a real organization yet; second-account cases not run |
 
 ## 20 October 2026 audit
 
