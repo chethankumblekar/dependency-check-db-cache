@@ -14,9 +14,11 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
+from checkstead import avatars
+from checkstead.avatars import Avatar
 from checkstead.errors import ChecksteadError
 from checkstead.http import USER_AGENT, build_opener, ensure_allowed
 
@@ -39,6 +41,9 @@ class Identity:
     subject: str
     login: str
     display_name: str
+    # Fetched at sign-in and stored by the server; None when the provider has
+    # none or it could not be read.
+    avatar: Avatar | None = field(default=None, compare=False, repr=False)
 
 
 Fetch = Callable[[str, dict[str, str]], dict]
@@ -89,6 +94,39 @@ def azure_api_base() -> str:
     return os.environ.get("CHECKSTEAD_AZURE_DEVOPS_API", "https://dev.azure.com").rstrip("/")
 
 
+def azure_profile_base(org: str) -> str | None:
+    """Profile service for an Azure DevOps Services organization.
+
+    Azure DevOps Server (a custom CHECKSTEAD_AZURE_DEVOPS_API) has no
+    separate profile host, so it gets no picture.
+    """
+    if azure_api_base() != "https://dev.azure.com":
+        return None
+    return f"https://vssps.dev.azure.com/{org}"
+
+
+def github_avatar(payload: dict) -> Avatar | None:
+    url = payload.get("avatar_url")
+    if not isinstance(url, str) or not url:
+        return None
+    # Public image host: the token is not sent.
+    return avatars.fetch(avatars.sized(url))
+
+
+def _azure_avatar(org: str, basic: str, fetch: Fetch) -> Avatar | None:
+    base = azure_profile_base(org)
+    if base is None:
+        return None
+    try:
+        payload = fetch(
+            f"{base}/_apis/profile/profiles/me/avatar?size=medium&api-version=7.1-preview.1",
+            {"Authorization": f"Basic {basic}"},
+        )
+    except Exception:
+        return None
+    return avatars.from_azure_payload(payload)
+
+
 def default_fetch(url: str, headers: dict[str, str]) -> dict:
     ensure_allowed(url)
     request = urllib.request.Request(
@@ -127,7 +165,7 @@ def identify_github(token: str, organization: str | None, fetch: Fetch) -> Ident
         raise AuthError("GitHub did not identify this token.")
     name = payload.get("name")
     display = name.strip() if isinstance(name, str) and name.strip() else login.strip()
-    return Identity("github", str(subject), login.strip(), display[:200])
+    return Identity("github", str(subject), login.strip(), display[:200], github_avatar(payload))
 
 
 def identify_azure(token: str, organization: str | None, fetch: Fetch) -> Identity:
@@ -135,8 +173,10 @@ def identify_azure(token: str, organization: str | None, fetch: Fetch) -> Identi
         raise AuthError("Azure DevOps needs the organization name.")
     org = organization.strip()
     basic = base64.b64encode(f":{_secret(token)}".encode("utf-8")).decode("ascii")
+    # connectionData is a preview resource: Azure DevOps answers a plain "7.1"
+    # with 400 "The -preview flag must be supplied".
     payload = fetch(
-        f"{azure_api_base()}/{org}/_apis/connectionData?api-version=7.1",
+        f"{azure_api_base()}/{org}/_apis/connectionData?api-version=7.1-preview.1",
         {"Authorization": f"Basic {basic}"},
     )
     user = payload.get("authenticatedUser")
@@ -153,7 +193,13 @@ def identify_azure(token: str, organization: str | None, fetch: Fetch) -> Identi
         raise AuthError("Azure DevOps did not identify this token.")
     display = user.get("customDisplayName") or user.get("providerDisplayName") or login
     display_name = display.strip() if isinstance(display, str) and display.strip() else login
-    return Identity("azure-devops", str(subject), login.strip(), display_name[:200])
+    return Identity(
+        "azure-devops",
+        str(subject),
+        login.strip(),
+        display_name[:200],
+        _azure_avatar(org, basic, fetch),
+    )
 
 
 def identify_entra(token: str, organization: str | None, fetch: Fetch) -> Identity:

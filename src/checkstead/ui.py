@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -44,6 +45,7 @@ from checkstead.identity import AuthError, Identity, identify, list_providers
 from checkstead.sso import (
     STATE_COOKIE,
     authorize_url,
+    clear_state_cookie,
     exchange,
     new_state,
     public_base,
@@ -53,6 +55,7 @@ from checkstead.sso import (
 )
 
 PAGE = Path(__file__).resolve().with_name("ui_page.html")
+_AVATAR_PATH = re.compile(r"/api/users/([0-9]{1,12})/avatar")
 COOKIE = "checkstead_session"
 MAX_BODY = 8192
 # A client that stops sending or reading for this long is dropped. It bounds
@@ -617,6 +620,9 @@ def bind_server(
                     return
                 self._json(200, {"user": user})
                 return
+            if path.startswith("/api/users/") and path.endswith("/avatar"):
+                self._avatar(path)
+                return
             if path == "/api/history":
                 if self._user() is None:
                     return
@@ -789,7 +795,7 @@ def bind_server(
             state = (query.get("state") or [""])[0]
             saved = _cookie_named(self.headers.get("Cookie"), STATE_COOKIE)
             if not code or not state or state != saved:
-                self._page(400, "Sign-in could not be confirmed. Start again.")
+                self._page(400, "Sign-in could not be confirmed. Start again.", clear_state_cookie())
                 return
             try:
                 identity = exchange(
@@ -799,12 +805,12 @@ def bind_server(
                 )
                 token, _user = store.sign_in(identity)
             except (AuthError, AccountError) as exc:
-                self._page(getattr(exc, "status", 401), str(exc))
+                self._page(getattr(exc, "status", 401), str(exc), clear_state_cookie())
                 return
             self.send_response(302)
             self.send_header("Location", "/")
             self.send_header("Set-Cookie", _session_cookie(token, SESSION_DAYS * 24 * 3600))
-            self.send_header("Set-Cookie", f"{STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+            self.send_header("Set-Cookie", clear_state_cookie())
             self.send_header("Content-Length", "0")
             self._common_headers()
             self.end_headers()
@@ -1038,7 +1044,9 @@ def bind_server(
             self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
             if self.close_connection:
                 self.send_header("Connection", "close")
-            if not self.path.startswith("/static/"):
+            if not self.path.startswith("/static/") and not _AVATAR_PATH.fullmatch(
+                self.path.split("?", 1)[0]
+            ):
                 self.send_header("Cache-Control", "no-store")
             if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
                 self.send_header("Strict-Transport-Security", "max-age=31536000")
@@ -1061,13 +1069,13 @@ def bind_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def _page(self, status: int, message: str) -> None:
+        def _page(self, status: int, message: str, cookie: str | None = None) -> None:
             body = (
                 "<!DOCTYPE html><html lang=\"en\"><meta charset=\"utf-8\">"
                 f"<title>Checkstead</title><p>{escape(message)}</p>"
                 "<p><a href=\"/\">Back to sign in</a></p></html>"
             ).encode("utf-8")
-            self._send(status, "text/html; charset=utf-8", body)
+            self._send(status, "text/html; charset=utf-8", body, cookie)
 
         def _user_id(self) -> int | None:
             path = unquote(self.path.split("?", 1)[0])
@@ -1134,6 +1142,27 @@ def bind_server(
             self.end_headers()
             self.wfile.write(body)
 
+        def _avatar(self, path: str) -> None:
+            match = _AVATAR_PATH.fullmatch(path)
+            if match is None:
+                self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                return
+            if self._user() is None:
+                return
+            found = store.avatar(int(match.group(1)))
+            if found is None:
+                self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", found.mime)
+            self.send_header("Content-Length", str(len(found.data)))
+            # The URL carries the picture's hash, so a new picture is a new URL.
+            self.send_header("Cache-Control", "private, max-age=604800, immutable")
+            self.send_header("Content-Disposition", "inline")
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(found.data)
+
         def _history(self, body: HistoryBody) -> None:
             compressed = "gzip" in self.headers.get("Accept-Encoding", "")
             data = body.gzipped if compressed else body.raw
@@ -1158,11 +1187,15 @@ def bind_server(
             self.end_headers()
             self.wfile.write(body)
 
-        def _send(self, status: int, content_type: str, body: bytes) -> None:
+        def _send(
+            self, status: int, content_type: str, body: bytes, cookie: str | None = None
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self._common_headers()
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
             self.end_headers()
             self.wfile.write(body)
 

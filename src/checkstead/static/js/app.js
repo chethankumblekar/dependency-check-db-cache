@@ -3,7 +3,7 @@
 // the state below; every load has an explicit loading, error, and ready state.
 
 import { ApiError } from "./api.js";
-import { banner, errorState, skeleton } from "./components.js";
+import { avatar, banner, errorState, skeleton } from "./components.js";
 import { h, icon } from "./dom.js";
 import { providerName } from "./format.js";
 import { href, parseRoute } from "./router.js";
@@ -268,8 +268,13 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
           ? h(
               "div",
               { class: "who" },
-              h("strong", null, user.provider === "local" ? "Signed in on this computer" : user.displayName || user.login),
-              h("span", null, user.provider === "local" ? (user.role === "admin" ? "Administrator" : "Member") : `${user.role === "admin" ? "Administrator" : "Member"}, ${providerName(user.provider)}`),
+              avatar(user),
+              h(
+                "span",
+                null,
+                h("strong", null, user.provider === "local" ? "Signed in on this computer" : user.displayName || user.login),
+                h("span", null, user.provider === "local" ? (user.role === "admin" ? "Administrator" : "Member") : `${user.role === "admin" ? "Administrator" : "Member"}, ${providerName(user.provider)}`),
+              ),
             )
           : null,
         themeSwitch(),

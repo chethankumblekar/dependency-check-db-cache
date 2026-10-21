@@ -1,7 +1,7 @@
 // @ts-check
 // Access: who can sign in, and who administers this server.
 
-import { dataTable, stateBlock } from "../components.js";
+import { avatar, dataTable, stateBlock } from "../components.js";
 import { h } from "../dom.js";
 import { providerName } from "../format.js";
 import { pageHead, withLoad } from "./common.js";
@@ -75,7 +75,7 @@ function users(ctx, list) {
   return dataTable({
     caption: "People who can sign in",
     columns: [
-      { key: "name", label: "Name", cell: (user) => h("span", null, h("strong", null, user.displayName || user.login), ctx.state.user && ctx.state.user.id === user.id ? h("span", { class: "tag" }, "You") : null, h("br"), h("span", { class: "muted small id" }, user.login)) },
+      { key: "name", label: "Name", cell: (user) => h("span", { class: "person" }, avatar(user, "sm"), h("span", null, h("strong", null, user.displayName || user.login), ctx.state.user && ctx.state.user.id === user.id ? h("span", { class: "tag" }, "You") : null, h("br"), h("span", { class: "muted small id" }, user.login))) },
       { key: "provider", label: "Account type", cell: (user) => providerName(user.provider) },
       { key: "role", label: "Role", cell: (user) => roleControl(ctx, user) },
       { key: "remove", label: "Remove", cell: (user) => removeControl(ctx, user) },

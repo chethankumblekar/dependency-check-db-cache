@@ -44,11 +44,28 @@ class NoRedirect(urllib.request.HTTPErrorProcessor):
     https_response = http_response
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
 class Provider(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
         if path == "/user":
-            self._json({"login": "octocat", "id": 7, "name": "The Octocat"})
+            user = {"login": "octocat", "id": 7, "name": "The Octocat"}
+            avatar = getattr(self.server, "avatar_url", None)  # type: ignore[attr-defined]
+            if avatar:
+                user["avatar_url"] = avatar
+            self._json(user)
+            return
+        if path in {"/avatar.png", "/photo"}:
+            self.server.photo_query = urlsplit(self.path).query  # type: ignore[attr-defined]
+            self.server.photo_auth = self.headers.get("Authorization")  # type: ignore[attr-defined]
+            body = getattr(self.server, "photo", PNG)  # type: ignore[attr-defined]
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path == "/userinfo":
             self._json(
@@ -164,6 +181,7 @@ class SsoTests(TestCase):
                 "CHECKSTEAD_ENTRA_AUTHORIZE",
                 "CHECKSTEAD_ENTRA_TOKEN",
                 "CHECKSTEAD_ENTRA_USERINFO",
+                "CHECKSTEAD_ENTRA_PHOTO",
                 "CHECKSTEAD_ENTRA_TENANT",
                 "CHECKSTEAD_ENTRA_ALLOWED_TENANTS",
                 "CHECKSTEAD_PUBLIC_BASE",
@@ -383,6 +401,85 @@ class SsoTests(TestCase):
         self.assertNotIn(b"client-secret", data.read_bytes())
         self.assertNotIn(b"from-provider", data.read_bytes())
 
+    def _github_session(self) -> str:
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_ID"] = "client-id"
+        os.environ["CHECKSTEAD_GITHUB_CLIENT_SECRET"] = "client-secret"
+        os.environ["CHECKSTEAD_GITHUB_OAUTH"] = self.provider
+        os.environ["CHECKSTEAD_GITHUB_API"] = self.provider
+        _status, _body, headers = self.open("/api/sso/github/start")
+        state = parse_qs(urlsplit(headers.get("Location")).query)["state"][0]
+        status, body, headers = self.open(
+            f"/api/sso/github/callback?code=demo-code&state={state}",
+            cookie=f"checkstead_sso={state}",
+        )
+        self.assertEqual(status, 302, body)
+        return headers.get("Set-Cookie").split("checkstead_session=", 1)[1].split(";", 1)[0]
+
+    def _session_user(self, token: str) -> dict:
+        status, body, _headers = self.open("/api/session", cookie=f"checkstead_session={token}")
+        self.assertEqual(status, 200)
+        return json.loads(body)["user"]
+
+    def test_github_picture_is_stored_and_served_only_to_signed_in_people(self) -> None:
+        self.provider_server.avatar_url = self.provider + "/avatar.png?v=4"
+        token = self._github_session()
+        # The picture is asked for at the size shown, and without the token.
+        self.assertIn("s=96", self.provider_server.photo_query)
+        self.assertIsNone(self.provider_server.photo_auth)
+        user = self._session_user(token)
+        self.assertRegex(user["avatar"], r"^/api/users/1/avatar\?v=[0-9a-f]{16}$")
+        status, body, headers = self.open(user["avatar"], cookie=f"checkstead_session={token}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, PNG)
+        self.assertEqual(headers.get("Content-Type"), "image/png")
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertIn("private", headers.get("Cache-Control"))
+        self.assertNotIn("no-store", headers.get("Cache-Control"))
+        self.assertEqual(self.open(user["avatar"])[0], 401)
+        self.assertEqual(
+            self.open("/api/users/99/avatar", cookie=f"checkstead_session={token}")[0], 404
+        )
+
+    def test_a_file_that_is_not_a_raster_image_is_not_kept(self) -> None:
+        self.provider_server.avatar_url = self.provider + "/avatar.png"
+        self.provider_server.photo = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        token = self._github_session()
+        self.assertIsNone(self._session_user(token)["avatar"])
+
+    def test_no_picture_means_initials_and_no_failed_sign_in(self) -> None:
+        token = self._github_session()
+        self.assertIsNone(self._session_user(token)["avatar"])
+
+    def test_entra_asks_for_user_read_and_keeps_the_photo(self) -> None:
+        os.environ["CHECKSTEAD_ENTRA_PHOTO"] = self.provider + "/photo"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        os.environ["CHECKSTEAD_ENTRA_AUTHORIZE"] = self.provider + "/authorize"
+        os.environ["CHECKSTEAD_ENTRA_TOKEN"] = self.provider + "/token"
+        os.environ["CHECKSTEAD_ENTRA_USERINFO"] = self.provider + "/userinfo"
+        _status, _body, headers = self.open("/api/sso/entra/start")
+        query = parse_qs(urlsplit(headers.get("Location")).query)
+        self.assertEqual(query["scope"], ["openid profile email User.Read"])
+        state = query["state"][0]
+        status, body, headers = self.open(
+            f"/api/sso/entra/callback?code=demo-code&state={state}",
+            cookie=f"checkstead_sso={state}",
+        )
+        self.assertEqual(status, 302, body)
+        self.assertEqual(self.provider_server.photo_auth, "Bearer from-provider")
+        token = headers.get("Set-Cookie").split("checkstead_session=", 1)[1].split(";", 1)[0]
+        self.assertIsNotNone(self._session_user(token)["avatar"])
+        data = ROOT / "build" / "tests" / "sso" / self.id().split(".")[-1] / "accounts.sqlite"
+        self.assertNotIn(b"from-provider", data.read_bytes())
+
+    def test_entra_with_another_userinfo_host_does_not_send_the_token_to_graph(self) -> None:
+        os.environ["CHECKSTEAD_ENTRA_USERINFO"] = self.provider + "/userinfo"
+        from checkstead.sso import entra_photo_url
+
+        self.assertIsNone(entra_photo_url())
+        os.environ.pop("CHECKSTEAD_ENTRA_USERINFO")
+        self.assertTrue(entra_photo_url().startswith("https://graph.microsoft.com/v1.0/me/photos/96x96/"))
+
     def test_entra_sign_in_uses_the_work_account(self) -> None:
         os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
         os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
@@ -430,6 +527,30 @@ class SsoTests(TestCase):
         status, body = self._entra_callback()
         self.assertEqual(status, 401)
         self.assertIn(b"directory is not allowed", body)
+
+    def test_a_failed_callback_clears_the_state_and_a_replay_is_refused(self) -> None:
+        os.environ["CHECKSTEAD_COOKIE_SECURE"] = "1"
+        os.environ["CHECKSTEAD_ENTRA_ALLOWED_TENANTS"] = "99999999-9999-9999-9999-999999999999"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_ID"] = "entra-id"
+        os.environ["CHECKSTEAD_ENTRA_CLIENT_SECRET"] = "entra-secret"
+        os.environ["CHECKSTEAD_ENTRA_AUTHORIZE"] = self.provider + "/authorize"
+        os.environ["CHECKSTEAD_ENTRA_TOKEN"] = self.provider + "/token"
+        os.environ["CHECKSTEAD_ENTRA_USERINFO"] = self.provider + "/userinfo"
+        _status, _body, headers = self.open("/api/sso/entra/start")
+        state = parse_qs(urlsplit(headers.get("Location")).query)["state"][0]
+        callback = f"/api/sso/entra/callback?code=demo-code&state={state}"
+        status, _body, headers = self.open(callback, cookie=f"checkstead_sso={state}")
+        self.assertEqual(status, 401)
+        cleared = headers.get("Set-Cookie") or ""
+        self.assertTrue(cleared.startswith("checkstead_sso=;"), cleared)
+        for attribute in ("HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0", "Secure"):
+            self.assertIn(attribute, cleared)
+        # The browser has dropped the cookie, so a replay carries none.
+        self.provider_server.posted = None
+        status, body, headers = self.open(callback)
+        self.assertEqual(status, 400, body)
+        self.assertIsNone(self.provider_server.posted)
+        self.assertIn("checkstead_sso=;", headers.get("Set-Cookie") or "")
 
     def test_entra_accepts_the_configured_directory_id(self) -> None:
         os.environ["CHECKSTEAD_ENTRA_TENANT"] = ENTRA_TENANT

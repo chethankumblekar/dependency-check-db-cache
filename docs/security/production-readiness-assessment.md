@@ -68,8 +68,13 @@ the temporary file was removed), its key id set as the environment variable
 `CHECKSTEAD_SNAPSHOT_KEY_ID`, and its public key pinned as `current`.
 `checkstead-2026-10` is `retired` with `notAfter` 2026-10-20, so
 `db-2026-10-20` still verifies (re-checked with `verify-snapshot-pin.py`) and
-that key can no longer sign. The repository-level copy of the old key is
-deleted once pull request 25 merges. The NVD key stays a repository secret:
+that key can no longer sign. After pull request 25 merged, a `validate_only`
+run on `main` ([39474692503](https://github.com/chethankumblekar/dependency-check-db-cache/actions/runs/39474692503))
+signed with `checkstead-2026-10b` from the environment, and
+`verify-snapshot-pin.py` verified that manifest against the pinned key. The
+repository-level `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` was then deleted, and the
+unused repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID` is gone; both now
+exist only in `snapshot-signing`. The NVD key stays a repository secret:
 its value cannot be read back, and a leaked NVD key affects rate limits, not
 snapshot integrity. No offline copy of the new private key exists; losing it
 means another rotation.
@@ -83,8 +88,8 @@ means another rotation.
 | Load, stress, soak | None | Done; two defects fixed |
 | No High/Critical findings in either image | Server had 63 unfixed | Done (0 and 0) |
 | Scanner never runs as root | Open | Done |
-| Signing key out of repository secrets | Open | Done (rotated into `snapshot-signing`; old repository copy deleted after merge) |
-| Real identity-provider tenants | Open | **Partly done**: GitHub and Entra sign-in pass against real providers; Azure DevOps sign-in fails on `main` (fixed in PR 32) and has no sign-in UI; second-account cases not run |
+| Signing key out of repository secrets | Open | Done (rotated into `snapshot-signing`; repository copy deleted 20 October 2026) |
+| Real identity-provider tenants | Open | **Partly done**: GitHub and Entra sign-in pass against real providers; the Azure DevOps `connectionData` fix is merged (PR 32) and the sign-in form is in PR 34, neither re-tested against a real organization yet; second-account cases not run |
 
 ## 20 October 2026 audit
 
