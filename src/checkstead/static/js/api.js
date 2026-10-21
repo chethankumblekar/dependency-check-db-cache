@@ -101,6 +101,7 @@
  * @property {{enabled: boolean, start: string}} github
  * @property {{enabled: boolean, start: string, tenant: string}} entra
  * @property {{enabled: boolean}} local
+ * @property {{enabled: boolean}} ["azure-devops"]
  */
 
 /**
@@ -210,6 +211,8 @@ export function client(fetcher = fetch) {
     session: () => call("/api/session"),
     /** @returns {Promise<{user: User}>} */
     signInLocal: () => call("/api/session/local", { method: "POST", body: "{}" }),
+    /** Access token sign-in (Azure DevOps PAT). The token is checked once and not kept. @param {{provider: string, organization: string, token: string}} body @returns {Promise<{user: User}>} */
+    signInWithToken: (body) => call("/api/session", { method: "POST", body: JSON.stringify(body) }),
     /** @returns {Promise<{signedOut: boolean}>} */
     signOut: () => call("/api/session", { method: "DELETE" }),
     /** @returns {Promise<SsoStatus>} */

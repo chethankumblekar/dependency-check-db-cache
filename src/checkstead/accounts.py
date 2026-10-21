@@ -190,6 +190,12 @@ class AccountStore:
             rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
             return [_public(row) for row in rows]
 
+    def has_provider(self, provider: str) -> bool:
+        """Whether any login on file uses this provider. Says nothing about who."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM users WHERE provider = ? LIMIT 1", (provider,)).fetchone()
+            return row is not None
+
     def add_user(self, provider: str, login: str, role: str) -> dict:
         if provider not in PROVIDERS:
             raise AccountError("That Git host is not connected yet.")
