@@ -315,7 +315,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .btn.danger { color: var(--fail); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
-input[type="search"], input[type="text"], select { padding: 6px 10px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+input[type="search"], input[type="text"], input[type="password"], select { padding: 6px 10px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--surface); min-width: 0; }
 label.field { display: grid; gap: 4px; font-size: var(--t-sm); color: var(--ink-soft); }
 .form-row { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: flex-end; }
 
@@ -346,6 +346,8 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .gate-card .brand { font-size: var(--t-xl); }
 .gate-card .options { display: grid; gap: var(--s-2); }
 .gate-card .btn { justify-content: center; padding: 9px 12px; font-size: var(--t-md); }
+.gate-card .azure-signin { display: grid; gap: var(--s-2); margin-top: var(--s-3); padding-top: var(--s-4); border-top: 1px solid var(--rule); }
+.gate-card .azure-signin h2 { margin: 0; font-size: var(--t-md); }
 .error-text { color: var(--fail); font-size: var(--t-sm); margin: 0; }
 
 .toast { position: fixed; right: var(--s-5); bottom: var(--s-5); z-index: 20; max-width: 360px; padding: var(--s-3) var(--s-4); border-radius: var(--radius); background: var(--ink); color: var(--paper); font-size: var(--t-sm); }

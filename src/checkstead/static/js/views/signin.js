@@ -41,6 +41,7 @@ export function renderSignIn(ctx) {
         });
         buttons.push(local);
       }
+      if (status["azure-devops"] && status["azure-devops"].enabled) buttons.push(azureDevOpsForm(ctx, error));
       if (!buttons.length) {
         options.replaceChildren(h("p", { class: "muted" }, "No sign-in method is turned on for this address. An operator sets CHECKSTEAD_GITHUB_CLIENT_ID or CHECKSTEAD_ENTRA_CLIENT_ID, or opens the server on this computer."));
         return;
@@ -52,4 +53,46 @@ export function renderSignIn(ctx) {
     },
   );
   return h("main", { class: "gate", id: "main" }, card);
+}
+
+/**
+ * Azure DevOps has no sign-in redirect Checkstead can use, so a person proves
+ * who they are with an Azure DevOps access token (PAT). The server shows this only once
+ * an administrator has added an Azure DevOps login.
+ * @param {Context} ctx
+ * @param {HTMLElement} error
+ */
+function azureDevOpsForm(ctx, error) {
+  const organization = h("input", { type: "text", id: "azure-organization", required: true, autocomplete: "off", spellcheck: "false", placeholder: "contoso" });
+  const token = h("input", { type: "password", id: "azure-token", required: true, autocomplete: "off", spellcheck: "false" });
+  const submit = h("button", { type: "submit", class: "btn" }, icon("lock"), "Sign in with Azure DevOps");
+  const form = h(
+    "form",
+    { class: "azure-signin", "aria-labelledby": "azure-head" },
+    h("h2", { id: "azure-head" }, "Azure DevOps"),
+    h("label", { class: "field", for: "azure-organization" }, "Organization name", organization),
+    h("label", { class: "field", for: "azure-token" }, "Access token (PAT)", token),
+    h("p", { class: "muted small" }, "A token with only the User Profile (Read) scope is enough. Checkstead checks it once to learn who you are and does not store it."),
+    submit,
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.setAttribute("disabled", "");
+    error.hidden = true;
+    try {
+      await ctx.api.signInWithToken({
+        provider: "azure-devops",
+        organization: /** @type {HTMLInputElement} */ (organization).value.trim(),
+        token: /** @type {HTMLInputElement} */ (token).value.trim(),
+      });
+      /** @type {HTMLInputElement} */ (token).value = "";
+      await ctx.signedIn();
+    } catch (failure) {
+      /** @type {HTMLInputElement} */ (token).value = "";
+      error.textContent = /** @type {Error} */ (failure).message;
+      error.hidden = false;
+      submit.removeAttribute("disabled");
+    }
+  });
+  return form;
 }

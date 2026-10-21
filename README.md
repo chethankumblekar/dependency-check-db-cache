@@ -147,6 +147,10 @@ On localhost, the first person signs in with **Sign in on this computer**. GitHu
 
 ![Sign-in page with only Sign in on this computer offered.](docs/screenshots/sign-in.png)
 
+Once an administrator adds an Azure DevOps login on Access, the sign-in page also offers Azure DevOps: the organization name and an access token (PAT) with only the User Profile (Read) scope. Checkstead checks the token once to learn who the person is and does not store it.
+
+![Sign-in page with Sign in on this computer and the Azure DevOps form: organization name, access token, and a note on the token scope.](docs/screenshots/sign-in-azure-devops.png)
+
 CI runs lists Checkstead workflow runs once the GitHub App is installed. Until then, the page says GitHub is not connected and links to the setup. Access is for administrators only. They add people and change roles there, and removing someone takes a second press to confirm.
 
 ![CI runs before the GitHub App is installed.](docs/screenshots/ci-runs.png)
@@ -566,6 +570,14 @@ GitHub and Microsoft sign-in work only when the server variables are set. Leave 
 The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Set `CHECKSTEAD_PUBLIC_BASE` to that origin. A remote connection does not use the `Host` header as the origin. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
 
 `CHECKSTEAD_GITHUB_ORG` is optional. When set, only members of that GitHub organization can use the GitHub button.
+
+### Azure DevOps sign-in
+
+Azure DevOps sign-in needs no server variables and no app registration. It stays hidden until an administrator adds an Azure DevOps login on Access, with **Azure DevOps** as the account type and the person's Azure DevOps account (usually their email) as the login. After that, the sign-in page shows the Azure DevOps form. `GET /api/sso` reports `"azure-devops": {"enabled": true}` and does not list the logins.
+
+The person types their organization name, for example `contoso` for `https://dev.azure.com/contoso`, and an access token (PAT). Create the token in Azure DevOps under User settings, Personal access tokens, with only the **User Profile (Read)** scope and a short expiry. The server calls that organization's `connectionData` API once with the token, matches the account it names against the login on file, and drops the token. Revoking the token later does not end the Checkstead session; removing the person on Access does.
+
+`CHECKSTEAD_AZURE_DEVOPS_API` is optional and defaults to `https://dev.azure.com`. Tests point it at a local fake.
 
 ### GitHub App
 

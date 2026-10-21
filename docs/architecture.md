@@ -22,7 +22,10 @@ description is one line under the table.
 
 On localhost, **Sign in on this computer** opens the timeline. That sign-in
 does not use an OAuth app. GitHub and Microsoft sign-in are optional and stay
-inactive until their variables are set.
+inactive until their variables are set. Azure DevOps sign-in takes an
+organization name and an access token (PAT), checks it once against that
+organization's `connectionData` API, and does not store it. The form appears
+only after an administrator has added an Azure DevOps login.
 
 A personal GitHub account or an organization can install the GitHub App from
 `/github`. The app reads repository contents and metadata, and it reads and

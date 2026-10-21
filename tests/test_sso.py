@@ -77,6 +77,18 @@ class Provider(BaseHTTPRequestHandler):
                 }
             )
             return
+        if path == "/example-org/_apis/connectionData":
+            self.server.azure_auth = self.headers.get("Authorization")  # type: ignore[attr-defined]
+            self._json(
+                {
+                    "authenticatedUser": {
+                        "id": "ado-1",
+                        "customDisplayName": "Ada Admin",
+                        "properties": {"Account": {"$value": "ada@contoso.com"}},
+                    }
+                }
+            )
+            return
         if path == "/orgs/example/members/octocat":
             self.send_response(204)
             self.end_headers()
@@ -186,6 +198,7 @@ class SsoTests(TestCase):
                 "CHECKSTEAD_ENTRA_ALLOWED_TENANTS",
                 "CHECKSTEAD_PUBLIC_BASE",
                 "CHECKSTEAD_COOKIE_SECURE",
+                "CHECKSTEAD_AZURE_DEVOPS_API",
             )
         }
         for key in self._saved:
@@ -364,6 +377,58 @@ class SsoTests(TestCase):
             self.assertEqual(response.status, 403)
             self.assertIn(b"localhost", response.read())
         os.environ.pop("CHECKSTEAD_LOCAL", None)
+
+    def post(self, path: str, body: dict, cookie: str | None = None):
+        headers = {"Content-Type": "application/json"}
+        if cookie:
+            headers["Cookie"] = cookie
+        request = urllib.request.Request(
+            self.base + path, data=json.dumps(body).encode(), headers=headers, method="POST"
+        )
+        with self.opener.open(request) as response:
+            return response.status, json.loads(response.read() or b"null"), response.headers
+
+    def test_azure_devops_sign_in_appears_once_an_admin_adds_a_login(self) -> None:
+        os.environ["CHECKSTEAD_AZURE_DEVOPS_API"] = self.provider
+        source = ui_source()
+        self.assertIn("Sign in with Azure DevOps", source)
+        self.assertIn('type: "password", id: "azure-token"', source)
+        self.assertIn("User Profile (Read)", source)
+        self.assertIn("does not store it", source)
+        self.assertIn('status["azure-devops"] && status["azure-devops"].enabled', source)
+        _status, body, _headers = self.open("/api/sso")
+        self.assertFalse(json.loads(body)["azure-devops"]["enabled"])
+
+        status, signed, headers = self.post("/api/session/local", {})
+        self.assertEqual(signed["user"]["role"], "admin")
+        admin = headers.get("Set-Cookie").split(";", 1)[0]
+        status, added, _headers = self.post(
+            "/api/admin/users",
+            {"provider": "azure-devops", "login": "ada@contoso.com", "role": "user"},
+            admin,
+        )
+        self.assertEqual(status, 201)
+        _status, body, _headers = self.open("/api/sso")
+        payload = json.loads(body)
+        self.assertEqual(payload["azure-devops"], {"enabled": True})
+        self.assertNotIn(b"ada@contoso.com", body)
+
+        status, refused, _headers = self.post(
+            "/api/session", {"provider": "azure-devops", "token": "pat-example"}
+        )
+        self.assertEqual(status, 401)
+        self.assertIn("organization", refused["error"])
+        status, signed, headers = self.post(
+            "/api/session",
+            {"provider": "azure-devops", "organization": "example-org", "token": "pat-example"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(signed["user"]["provider"], "azure-devops")
+        self.assertEqual(signed["user"]["login"], "ada@contoso.com")
+        self.assertEqual(signed["user"]["role"], "user")
+        self.assertIn("checkstead_session=", headers.get("Set-Cookie"))
+        self.assertTrue(self.provider_server.azure_auth.startswith("Basic "))
+        self.assertNotIn("pat-example", json.dumps(signed))
 
     def test_sso_stays_off_until_the_app_is_configured(self) -> None:
         status, body, _headers = self.open("/api/sso")

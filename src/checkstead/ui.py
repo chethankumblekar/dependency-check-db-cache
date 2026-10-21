@@ -605,6 +605,7 @@ def bind_server(
             if path == "/api/sso":
                 status = sso_status()
                 status["local"] = {"enabled": _request_is_local(self)}
+                status["azure-devops"] = {"enabled": store.has_provider("azure-devops")}
                 self._json(200, status)
                 return
             if path in {"/api/sso/github/start", "/api/sso/entra/start"}:

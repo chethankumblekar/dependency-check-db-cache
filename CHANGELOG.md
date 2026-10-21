@@ -8,6 +8,10 @@ listed as product versions.
 
 Web UI:
 
+- The sign-in page offers Azure DevOps once an administrator has added an
+  Azure DevOps login: organization name and an access token (PAT) with the
+  User Profile (Read) scope, checked once and not stored. `GET /api/sso`
+  reports `azure-devops.enabled` without listing logins.
 - The timeline is redesigned around evidence. Overview opens with the newest
   scan's evidence chain (data freshness, signature, checksum, engine) and a
   Needs attention list, with exploited and critical findings first. Each scan
