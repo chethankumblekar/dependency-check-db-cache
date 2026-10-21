@@ -254,7 +254,7 @@ function initials(text) {
 /** Same name, same tone, on every page and every visit. @param {string} text */
 function tone(text) {
   let hash = 0;
-  for (const char of text) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+  for (const char of text) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
   return hash % 5;
 }
 
