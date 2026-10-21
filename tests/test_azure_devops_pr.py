@@ -25,6 +25,7 @@ from checkstead.score import COMMENT_MARKER  # noqa: E402
 SCRIPT = ROOT / "scripts" / "ado-pr-comment.py"
 PROJECT = "6ce954b1-ce1f-45d1-b94d-e6bf2464ba2c"
 REPOSITORY = "3411ebc1-d5aa-464f-9615-0b527bc66719"
+MARKED = {"Checkstead.Report": {"$type": "System.String", "$value": "1"}}
 THREADS = f"/org/{PROJECT}/_apis/git/repositories/{REPOSITORY}/pullRequests/42/threads"
 
 
@@ -80,13 +81,33 @@ class AzureDevOpsPullRequestCommentTest(TestCase):
             [
                 {"id": 3, "status": 1, "comments": [{"id": 1, "content": "a reviewer note"}]},
                 {"id": 4, "isDeleted": True, "comments": [{"id": 1, "content": COMMENT_MARKER}]},
-                {"id": 9, "status": 4, "comments": [{"id": 2, "content": f"{COMMENT_MARKER}\nold"}]},
+                {
+                    "id": 9,
+                    "status": 4,
+                    "properties": MARKED,
+                    "comments": [
+                        {"id": 2, "content": f"{COMMENT_MARKER}\nold"},
+                        {"id": 3, "content": f"reply quoting {COMMENT_MARKER}"},
+                    ],
+                },
             ]
         )
         completed = self._run()
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn("POST", self.server.methods)
         self.assertEqual(self.server.patched, (9, 2))
+
+    def test_a_typed_marker_without_the_thread_property_is_left_alone(self) -> None:
+        # The build identity cannot edit a person's comment, so updating one
+        # would fail the step on every push. A new marked thread is created instead.
+        self.server.threads.append(
+            {"id": 5, "status": 1, "comments": [{"id": 1, "content": f"{COMMENT_MARKER}\ntyped by a person"}]}
+        )
+        completed = self._run()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self.server.methods, ["GET", "POST"])
+        self.assertIsNone(self.server.patched)
+        self.assertEqual(self.server.threads[-1]["properties"], MARKED)
 
     def test_outside_a_pull_request_build_it_does_nothing(self) -> None:
         env = dict(self.env)
@@ -159,7 +180,12 @@ class _ThreadServer:
             def do_POST(self):
                 self._record("POST")
                 payload = self._body()
-                thread = {"id": 11, "status": payload.get("status"), "comments": []}
+                thread = {
+                    "id": 11,
+                    "status": payload.get("status"),
+                    "properties": payload.get("properties"),
+                    "comments": [],
+                }
                 for index, comment in enumerate(payload.get("comments", []), start=1):
                     thread["comments"].append({"id": index, "content": comment["content"]})
                 outer.threads.append(thread)

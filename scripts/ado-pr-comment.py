@@ -22,6 +22,10 @@ API_VERSION = "7.1"
 # A thread left active can block completion under a "check for comment
 # resolution" branch policy. The report informs; the score policy gates.
 THREAD_CLOSED = 4
+# Anyone who can comment can type the marker, and the build identity cannot
+# edit someone else's comment. The thread this script creates also carries this
+# property, which the web UI cannot set, and only such a thread is updated.
+PROPERTY = "Checkstead.Report"
 _GUID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 _NUMBER = re.compile(r"^[1-9][0-9]{0,9}$")
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -57,6 +61,7 @@ def main() -> int:
                 {
                     "comments": [{"parentCommentId": 0, "content": body, "commentType": 1}],
                     "status": THREAD_CLOSED,
+                    "properties": {PROPERTY: {"$type": "System.String", "$value": "1"}},
                 },
             )
         else:
@@ -102,18 +107,22 @@ def find_thread(base: str, token: str) -> tuple[int, int] | None:
     for thread in threads:
         if not isinstance(thread, dict) or thread.get("isDeleted"):
             continue
-        comments = thread.get("comments")
-        if not isinstance(comments, list):
+        properties = thread.get("properties")
+        if not isinstance(properties, dict) or PROPERTY not in properties:
             continue
-        for comment in comments:
-            if not isinstance(comment, dict) or comment.get("isDeleted"):
-                continue
-            if MARKER not in str(comment.get("content") or ""):
-                continue
-            thread_id = thread.get("id")
-            comment_id = comment.get("id")
-            if isinstance(thread_id, int) and isinstance(comment_id, int):
-                return thread_id, comment_id
+        comments = thread.get("comments")
+        if not isinstance(comments, list) or not comments:
+            continue
+        # Only the comment that opened the thread is Checkstead's; replies are people's.
+        comment = comments[0]
+        if not isinstance(comment, dict) or comment.get("isDeleted"):
+            continue
+        if MARKER not in str(comment.get("content") or ""):
+            continue
+        thread_id = thread.get("id")
+        comment_id = comment.get("id")
+        if isinstance(thread_id, int) and isinstance(comment_id, int):
+            return thread_id, comment_id
     return None
 
 
