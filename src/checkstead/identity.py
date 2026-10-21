@@ -135,8 +135,10 @@ def identify_azure(token: str, organization: str | None, fetch: Fetch) -> Identi
         raise AuthError("Azure DevOps needs the organization name.")
     org = organization.strip()
     basic = base64.b64encode(f":{_secret(token)}".encode("utf-8")).decode("ascii")
+    # connectionData is a preview resource: Azure DevOps answers a plain "7.1"
+    # with 400 "The -preview flag must be supplied".
     payload = fetch(
-        f"{azure_api_base()}/{org}/_apis/connectionData?api-version=7.1",
+        f"{azure_api_base()}/{org}/_apis/connectionData?api-version=7.1-preview.1",
         {"Authorization": f"Basic {basic}"},
     )
     user = payload.get("authenticatedUser")

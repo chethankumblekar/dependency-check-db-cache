@@ -23,7 +23,7 @@ def github_user(url: str, headers: dict[str, str]) -> dict:
 
 
 def azure_user(url: str, headers: dict[str, str]) -> dict:
-    assert "/example-org/_apis/connectionData" in url
+    assert url.endswith("/example-org/_apis/connectionData?api-version=7.1-preview.1")
     assert headers["Authorization"].startswith("Basic ")
     return {
         "authenticatedUser": {
