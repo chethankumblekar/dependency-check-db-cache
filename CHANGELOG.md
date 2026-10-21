@@ -6,6 +6,15 @@ listed as product versions.
 
 ## Unreleased
 
+Azure DevOps:
+
+- `integrations/azure-devops/pull-request.yml` scans an Azure Repos pull
+  request against its target branch and keeps one Checkstead thread on it.
+  The scanner image ships the comment step as
+  `/usr/local/bin/checkstead-ado-comment`. It uses only `System.AccessToken`
+  mapped into the step, and creates the thread closed so a comment resolution
+  policy does not block completion. See [docs/azure.md](docs/azure.md).
+
 Web UI:
 
 - The sign-in page offers Azure DevOps once an administrator has added an

@@ -135,6 +135,18 @@ After the extension is published, the scan step on this Ubuntu agent can be:
 
 That task requires Docker. It does not pass `--revision`, so the timeline names the commit only when the Docker step above is the one that scans.
 
+## Azure Repos pull requests
+
+[`integrations/azure-devops/pull-request.yml`](../integrations/azure-devops/pull-request.yml) scans the pull request head and the target branch with the same snapshot. Only findings the pull request adds count against the score policy. It then writes one Checkstead thread on the pull request and updates that thread on later pushes.
+
+1. Create a pipeline from that file in the repository.
+2. Add it as a **Build validation** branch policy on the target branch.
+3. Give the project build service **Contribute to pull requests** on the repository.
+
+The comment step maps `System.AccessToken` into the step as `SYSTEM_ACCESSTOKEN`. It reads nothing else for a token. Outside a pull request build, or without that mapping, it does nothing. The thread is created closed, so a "check for comment resolution" policy does not block completion. The score policy is what fails the build.
+
+The comment script ships in the scanner image as `/usr/local/bin/checkstead-ado-comment`. An image built before it was added does not have it.
+
 ## Azure DevOps on Windows
 
 Use a Microsoft-hosted `windows-latest` agent and the PowerShell setup. That agent runs Windows containers, and the Checkstead scanner image is Linux, so this job does not call Docker.

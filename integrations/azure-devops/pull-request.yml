@@ -1,0 +1,71 @@
+# Azure Repos pull request scan. Add this pipeline as a Build validation branch
+# policy on the target branch. The build service needs "Contribute to pull
+# requests" on the repository so the comment step can write its one thread.
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  checksteadImage: ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  # The head and the target branch are scanned with the same snapshot. Only
+  # findings the pull request adds count against the score policy.
+  - script: |
+      set -euo pipefail
+      head="$(System.PullRequest.SourceCommitId)"
+      target="$(System.PullRequest.TargetBranch)"
+      source="$(System.PullRequest.SourceBranch)"
+      base="$(git rev-parse "origin/${target#refs/heads/}")"
+      work="$(Agent.TempDirectory)/checkstead-pr"
+      out="$(Build.SourcesDirectory)/checkstead-report"
+      rm -rf "$work"
+      mkdir -p "$work/head" "$work/base" "$out"
+      git archive "$head" | tar -x -C "$work/head"
+      git archive "$base" | tar -x -C "$work/base"
+      docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -v "$work/head:/head" \
+        -v "$work/base:/base" \
+        -v "$out:/out" \
+        -w /head \
+        -e CHECKSTEAD_UNTRUSTED_SOURCE=1 \
+        "$(checksteadImage)" \
+        scan \
+        --scan /head \
+        --base /base \
+        --out /out \
+        --pull-request "$(System.PullRequest.PullRequestId)" \
+        --project "$(Build.Repository.Name)" \
+        --revision "$head" \
+        --branch "${source#refs/heads/}"
+    displayName: Checkstead scan
+
+  # Posts one closed thread and updates it on later pushes. A closed thread does
+  # not block completion under a comment resolution policy.
+  - script: |
+      docker run --rm \
+        --user 10001:10001 \
+        --entrypoint python3 \
+        -v "$(Build.SourcesDirectory)/checkstead-report:/out:ro" \
+        -e SYSTEM_ACCESSTOKEN \
+        -e SYSTEM_COLLECTIONURI \
+        -e SYSTEM_TEAMPROJECTID \
+        -e BUILD_REPOSITORY_ID \
+        -e SYSTEM_PULLREQUEST_PULLREQUESTID \
+        -e COMMENT_FILE=/out/checkstead-comment.md \
+        "$(checksteadImage)" \
+        /usr/local/bin/checkstead-ado-comment
+    displayName: Comment on the pull request
+    condition: and(always(), eq(variables['Build.Reason'], 'PullRequest'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - publish: checkstead-report
+    artifact: checkstead-report
+    displayName: Keep the report on the build
+    condition: always()

@@ -17,6 +17,12 @@ The task runs the Checkstead scanner image on a Linux agent that has Docker. It 
     project: $(Build.Repository.Name)
 ```
 
+## Pull requests
+
+[`pull-request.yml`](https://github.com/chethankumblekar/dependency-check-db-cache/blob/main/integrations/azure-devops/pull-request.yml) scans an Azure Repos pull request against its target branch and keeps one Checkstead thread on it. Run it as a Build validation branch policy. The build service needs "Contribute to pull requests" on the repository.
+
+## Marketplace
+
 The extension is public. An organization that already uses Azure Pipelines installs it from the Visual Studio Marketplace. The publisher does not need an Azure DevOps organization.
 
 The task does not take an NVD API key. Set `NVD_API_KEY` only on the Checkstead repository that publishes the snapshot.
