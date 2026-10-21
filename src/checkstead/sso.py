@@ -144,17 +144,21 @@ def new_state() -> str:
     return secrets.token_urlsafe(24)
 
 
-def state_cookie(state: str) -> str:
+def state_cookie(state: str, max_age: int = 600) -> str:
     parts = [
         f"{STATE_COOKIE}={state}",
         "HttpOnly",
         "SameSite=Lax",
         "Path=/",
-        "Max-Age=600",
+        f"Max-Age={max_age}",
     ]
     if os.environ.get("CHECKSTEAD_COOKIE_SECURE") == "1":
         parts.append("Secure")
     return "; ".join(parts)
+
+
+def clear_state_cookie() -> str:
+    return state_cookie("", max_age=0)
 
 
 def configured_public_base() -> str | None:
