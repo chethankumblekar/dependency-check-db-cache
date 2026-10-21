@@ -20,16 +20,18 @@ All tokens are CSS custom properties in [app.css](../src/checkstead/static/app.c
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `--paper` | `#f4f6f5` | `#0f1513` | Page background: cool slate-green, not cream |
-| `--surface` | `#ffffff` | `#151d1a` | Tables, panels |
-| `--ink` | `#14201b` | `#e3eae6` | Body text |
-| `--muted` | `#57645e` | `#93a29b` | Secondary text |
+| `--paper` | `#f4f6f5` | `#000000` | Page background: cool slate-green, not cream; true black in dark |
+| `--surface` | `#ffffff` | `#0a0a0a` | Tables, panels |
+| `--ink` | `#14201b` | `#ededed` | Body text |
+| `--muted` | `#57645e` | `#9b9b9b` | Secondary text |
 | `--verified` | `#0e6b5a` | `#45b89c` | Verified evidence only |
 | `--warn` | `#8c5a0b` | `#e0a64a` | Aging data, new findings |
 | `--fail` | `#a1252c` | `#f07a7f` | Stale data, unsigned, exploited |
-| `--sev-critical` / `-high` / `-medium` / `-low` / `-none` | `#a1252c` `#a84a16` `#7d630b` `#4c6a5f` `#5d6964` | `#f07a7f` `#f0975f` `#d8b84d` `#8fb3a5` `#8a9892` | CVSS bands |
+| `--sev-critical` / `-high` / `-medium` / `-low` / `-none` | `#a1252c` `#a84a16` `#7d630b` `#4c6a5f` `#5d6964` | `#f07a7f` `#f0975f` `#d8b84d` `#8fb3a5` `#8f8f8f` | CVSS bands |
 
-Contrast was computed with the WCAG 2.x formula. Every text token is at least 4.5:1 against `--paper`, `--surface`, and `--surface-sunk` in both themes. The lowest is a severity colour on `--surface-sunk` in the light theme, at 4.93:1. axe-core's contrast rule needs layout, which jsdom lacks, so the tests turn it off and these ratios are the check.
+The dark theme is a true dark: black page, neutral near-black surfaces (`--surface-sunk` `#141414`), and neutral greys for rules and secondary text. Only status and severity colours carry hue.
+
+Contrast was computed with the WCAG 2.x formula. Every text token is at least 4.5:1 against `--paper`, `--surface`, and `--surface-sunk` in both themes. The lowest is a severity colour on `--surface-sunk` in the light theme, at 4.93:1. In the dark theme the lowest is `--sev-none` on `--surface-sunk`, at 5.70:1. axe-core's contrast rule needs layout, which jsdom lacks, so the tests turn it off and these ratios are the check.
 
 **Type.** Atkinson Hyperlegible Next for the interface: it was designed for low-vision readers and keeps 0/O and 1/l/I distinct. JetBrains Mono for identifiers only: CVE and GHSA ids, package coordinates, digests, revisions. Both are vendored as Latin `woff2` subsets under the SIL Open Font License, with SHA-256 sums in `static/fonts/SHA256SUMS`. CI fails if they differ from the pinned npm packages. The scale runs 13, 14, 15, 18, 21.6, and 26 px, and line length stays under 80 characters.
 
