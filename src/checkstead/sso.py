@@ -21,9 +21,12 @@ import urllib.request
 from checkstead.errors import ChecksteadError
 from checkstead.github_app import localhost_client
 from checkstead.http import USER_AGENT, build_opener, ensure_allowed
-from checkstead.identity import AuthError, Identity, github_api_base, github_web_base
+from checkstead import avatars
+from checkstead.identity import AuthError, Identity, github_api_base, github_avatar, github_web_base
 
 STATE_COOKIE = "checkstead_sso"
+# User.Read lets the server read the profile photo once, at sign-in.
+ENTRA_SCOPE = "openid profile email User.Read"
 _TENANT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$")
 _GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _MULTI_TENANT = frozenset({"organizations", "common"})
@@ -232,7 +235,7 @@ def authorize_url(kind: str, base: str, state: str) -> str:
                 "response_type": "code",
                 "redirect_uri": redirect_uri,
                 "response_mode": "query",
-                "scope": "openid profile email",
+                "scope": ENTRA_SCOPE,
                 "state": state,
             }
         )
@@ -292,6 +295,29 @@ def _github_org(login: str, access_token: str) -> None:
     raise AuthError(f"This GitHub account is not a member of {org}.")
 
 
+def entra_photo_url() -> str | None:
+    """Graph photo endpoint, or None.
+
+    An operator who points CHECKSTEAD_ENTRA_USERINFO at another Graph (a
+    national cloud) sets CHECKSTEAD_ENTRA_PHOTO too; otherwise no photo is
+    fetched rather than sending that token to the public Graph.
+    """
+    configured = _env("CHECKSTEAD_ENTRA_PHOTO")
+    if configured:
+        return configured
+    if _env("CHECKSTEAD_ENTRA_USERINFO"):
+        return None
+    return f"https://graph.microsoft.com/v1.0/me/photos/{avatars.SIZE}x{avatars.SIZE}/$value"
+
+
+def _entra_photo(access_token: str) -> avatars.Avatar | None:
+    url = entra_photo_url()
+    if url is None:
+        return None
+    # 404 when the account has no photo; that is not an error.
+    return avatars.fetch(url, {"Authorization": f"Bearer {access_token}"})
+
+
 def exchange(kind: str, code: str, base: str) -> Identity:
     if not code or any(char in code for char in "\r\n\x00 "):
         raise AuthError("The identity provider did not return a sign-in code.")
@@ -328,7 +354,7 @@ def exchange(kind: str, code: str, base: str) -> Identity:
         _github_org(login, access_token)
         name = user.get("name")
         display = name.strip() if isinstance(name, str) and name.strip() else login
-        return Identity("github", str(subject), login.strip(), display[:200])
+        return Identity("github", str(subject), login.strip(), display[:200], github_avatar(user))
     if kind == "entra":
         if not entra_enabled():
             raise AuthError("Microsoft Entra sign-in is not configured on this server.")
@@ -346,7 +372,7 @@ def exchange(kind: str, code: str, base: str) -> Identity:
                     "grant_type": "authorization_code",
                     "code": code,
                     "redirect_uri": redirect_uri,
-                    "scope": "openid profile email",
+                    "scope": ENTRA_SCOPE,
                 }
             ),
         )
@@ -372,5 +398,7 @@ def exchange(kind: str, code: str, base: str) -> Identity:
             raise AuthError("Microsoft Entra returned two different people for one sign-in.")
         name = user.get("name")
         display = name.strip() if isinstance(name, str) and name.strip() else login.strip()
-        return Identity("entra", str(subject), login.strip(), display[:200])
+        return Identity(
+            "entra", str(subject), login.strip(), display[:200], _entra_photo(access_token)
+        )
     raise AuthError("That sign-in is not connected yet.")

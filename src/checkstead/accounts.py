@@ -17,10 +17,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
+from checkstead.avatars import Avatar
 from checkstead.errors import ChecksteadError
 from checkstead.identity import PROVIDERS, Identity, normalize_login
 
 SESSION_DAYS = 14
+# Every user read carries the picture's version, never its bytes.
+_USERS = (
+    "SELECT users.*, avatars.etag AS avatar_etag "
+    "FROM users LEFT JOIN avatars ON avatars.user_id = users.id"
+)
 
 
 class AccountError(ChecksteadError):
@@ -34,12 +40,15 @@ def _now() -> str:
 
 
 def _public(row: sqlite3.Row) -> dict:
+    etag = row["avatar_etag"]
     return {
         "id": row["id"],
         "provider": row["provider"],
         "login": row["login"],
         "displayName": row["display_name"],
         "role": row["role"],
+        # Versioned, so a new picture is a new URL and the old one can be cached.
+        "avatar": f"/api/users/{row['id']}/avatar?v={etag}" if etag else None,
     }
 
 
@@ -71,6 +80,13 @@ class AccountStore:
                   role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
                   created_at TEXT NOT NULL,
                   UNIQUE (provider, login_key)
+                );
+                CREATE TABLE IF NOT EXISTS avatars (
+                  user_id INTEGER PRIMARY KEY,
+                  mime TEXT NOT NULL,
+                  data BLOB NOT NULL,
+                  etag TEXT NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id)
                 );
                 CREATE TABLE IF NOT EXISTS sessions (
                   token_hash TEXT PRIMARY KEY,
@@ -140,6 +156,13 @@ class AccountStore:
                     (identity.subject, identity.login, identity.display_name, row["id"]),
                 )
                 user_id = row["id"]
+            if identity.avatar is not None:
+                # No picture this time keeps the last one: a provider outage
+                # should not blank everyone's face.
+                conn.execute(
+                    "INSERT OR REPLACE INTO avatars (user_id, mime, data, etag) VALUES (?, ?, ?, ?)",
+                    (user_id, identity.avatar.mime, identity.avatar.data, identity.avatar.etag),
+                )
             cutoff = (datetime.now(timezone.utc) - timedelta(days=SESSION_DAYS)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
@@ -150,7 +173,7 @@ class AccountStore:
                 (hashlib.sha256(token.encode("utf-8")).hexdigest(), user_id, _now()),
             )
             conn.commit()
-            saved = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            saved = conn.execute(f"{_USERS} WHERE users.id = ?", (user_id,)).fetchone()
             return token, _public(saved)
 
     def user_for_session(self, token: str | None) -> dict | None:
@@ -160,8 +183,10 @@ class AccountStore:
         with self._lock, self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT users.*, sessions.created_at AS session_created
+                SELECT users.*, sessions.created_at AS session_created,
+                       avatars.etag AS avatar_etag
                 FROM sessions JOIN users ON users.id = sessions.user_id
+                LEFT JOIN avatars ON avatars.user_id = users.id
                 WHERE sessions.token_hash = ?
                 """,
                 (digest,),
@@ -185,9 +210,16 @@ class AccountStore:
             conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
             conn.commit()
 
+    def avatar(self, user_id: int) -> Avatar | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT mime, data FROM avatars WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return Avatar(row["mime"], bytes(row["data"])) if row else None
+
     def list_users(self) -> list[dict]:
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+            rows = conn.execute(f"{_USERS} ORDER BY users.id").fetchall()
             return [_public(row) for row in rows]
 
     def add_user(self, provider: str, login: str, role: str) -> dict:
@@ -210,7 +242,7 @@ class AccountStore:
             except sqlite3.IntegrityError as exc:
                 raise AccountError("That login is already on this server.") from exc
             conn.commit()
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            row = conn.execute(f"{_USERS} WHERE users.id = ?", (cursor.lastrowid,)).fetchone()
             return _public(row)
 
     def set_role(self, user_id: int, role: str) -> dict:
@@ -231,7 +263,7 @@ class AccountStore:
                     )
             conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
             conn.commit()
-            updated = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            updated = conn.execute(f"{_USERS} WHERE users.id = ?", (user_id,)).fetchone()
             return _public(updated)
 
     def remove_user(self, user_id: int) -> None:
@@ -249,5 +281,6 @@ class AccountStore:
                         status=409,
                     )
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM avatars WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             conn.commit()
