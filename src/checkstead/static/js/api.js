@@ -97,11 +97,13 @@
  */
 
 /**
- * @typedef {Object} SsoStatus
- * @property {{enabled: boolean, start: string}} github
- * @property {{enabled: boolean, start: string, tenant: string}} entra
- * @property {{enabled: boolean}} local
- * @property {{enabled: boolean}} ["azure-devops"]
+ * Azure DevOps is on once an administrator has added an Azure DevOps login.
+ * @typedef {{
+ *   github: {enabled: boolean, start: string},
+ *   entra: {enabled: boolean, start: string, tenant: string},
+ *   local: {enabled: boolean},
+ *   "azure-devops"?: {enabled: boolean},
+ * }} SsoStatus
  */
 
 /**
