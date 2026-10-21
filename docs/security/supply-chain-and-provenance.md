@@ -38,9 +38,9 @@ for the SHA that CI actually runs:
 | `docker/login-action` | v3 | `c94ce9fb468520275223c153574b00df6fe4bcc9` |
 | `docker/metadata-action` | v5 | `c299e40c65443455700f0fdfc63efafe5b349051` |
 | `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` |
-| `github/codeql-action/upload-sarif` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
-| `github/codeql-action/init` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
-| `github/codeql-action/analyze` | v3 | `ce5e7eeac396d720fe2d802714996c8ce561e311` |
+| `github/codeql-action/upload-sarif` | v4.39.0 | `6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee` |
+| `github/codeql-action/init` | v4.39.0 | `6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee` |
+| `github/codeql-action/analyze` | v4.39.0 | `6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee` |
 | `aquasecurity/setup-trivy` | v0.3.1 | `81e514348e19b6112ce2a7e3ecbafe19c1e1f567` (installs Trivy `v0.70.0`) |
 | `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` |
 
