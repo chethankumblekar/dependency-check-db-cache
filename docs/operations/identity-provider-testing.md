@@ -15,7 +15,7 @@ OAuth app was used.
 | Provider | Create | Callback URL |
 | --- | --- | --- |
 | GitHub | An OAuth App in a test organization (Settings, Developer settings, OAuth Apps) | `https://<test-host>/api/sso/github/callback` |
-| Entra | An app registration in a test directory, single tenant, with a client secret, and API permissions `openid`, `profile`, `email` | `https://<test-host>/api/sso/entra/callback` (platform: Web) |
+| Entra | An app registration in a test directory, single tenant, with a client secret, and API permissions `openid`, `profile`, `email`, and Microsoft Graph `User.Read` (profile photo) | `https://<test-host>/api/sso/entra/callback` (platform: Web) |
 
 Test accounts: in GitHub, one member and one non-member of the organization
 named in `CHECKSTEAD_GITHUB_ORG`. In Entra, one user in the test directory and

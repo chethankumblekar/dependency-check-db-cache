@@ -243,3 +243,36 @@ export function dataTable(options) {
   }
   return h("div", { class: `table-wrap${tall ? " tall" : ""}` }, h("table", null, h("caption", { class: "visually-hidden" }, caption), h("thead", null, head), body));
 }
+
+/** @param {string} text */
+function initials(text) {
+  const words = text.replace(/@.*$/, "").split(/[\s._-]+/).filter(Boolean);
+  const letters = words.length > 1 ? words[0][0] + words[words.length - 1][0] : (words[0] || "?").slice(0, 2);
+  return letters.toUpperCase();
+}
+
+/** Same name, same tone, on every page and every visit. @param {string} text */
+function tone(text) {
+  let hash = 0;
+  for (const char of text) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  return hash % 5;
+}
+
+/**
+ * Profile picture, or initials when there is none or it fails to load. The
+ * name always sits next to it, so the picture is decoration for screen readers.
+ * @param {import("./api.js").User} user
+ * @param {"sm"|"md"} [size]
+ */
+export function avatar(user, size = "md") {
+  const name = user.displayName || user.login || "";
+  const classes = `avatar${size === "sm" ? " sm" : ""} c${tone(user.login || name)}`;
+  if (user.provider === "local") return h("span", { class: classes, "aria-hidden": "true" }, icon("computer"));
+  const node = h("span", { class: classes, "aria-hidden": "true" }, initials(name));
+  if (user.avatar) {
+    const img = h("img", { src: user.avatar, alt: "", width: 32, height: 32, loading: "lazy", decoding: "async" });
+    img.addEventListener("error", () => img.remove());
+    node.append(img);
+  }
+  return node;
+}

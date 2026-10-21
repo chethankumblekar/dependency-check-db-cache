@@ -86,6 +86,7 @@
  * @property {string} login
  * @property {string} displayName
  * @property {"admin"|"user"} role
+ * @property {string|null=} avatar  Same-origin picture URL, or null
  */
 
 /**
