@@ -6,7 +6,8 @@ on a test deployment, with test accounts, before the first production
 deployment and after any change to `src/checkstead/sso.py`. It needs a person:
 the provider's login page takes a password and, often, a second factor.
 
-Status on 21 October 2026: **partly run against real providers.** Cases 1,
+Status on 21 October 2026: **partly run against real providers.** Azure DevOps
+sign-in failed on `main` and passes with pull request 32. Cases 1,
 4 (with Entra), 5, 7, 8, 9 and 10 passed, with one deviation in case 7. Cases 2, 3, 6,
 11 and 12 need a second account or directory and were not run. See
 [Results, 21 October 2026](#results-21-october-2026).
@@ -94,8 +95,21 @@ Findings:
   the old one. Check how `sign_in` matches a known login with a new subject
   before rotating to a new registration.
 
-Azure DevOps sign-in (PAT and organization) was not run: the test Microsoft
-account belongs to no Azure DevOps organization.
+Azure DevOps sign-in (PAT and organization), against a real organization
+with a PAT scoped to User Profile (read) and expiring the next day:
+
+- **Fail on `main`.** `identify_azure` calls
+  `connectionData?api-version=7.1`; Azure DevOps answers 400 ("The requested
+  version \"7.1\" of the resource is under preview. The -preview flag must be
+  supplied"), and the user sees "The identity provider rejected this token."
+  `7.1-preview.1` returns 200. Fixed in pull request 32.
+- **Pass with that fix.** Administrator-added login, then `POST /api/session`
+  with the PAT: 200, `role` user, bound to the Azure DevOps user id. The
+  accounts database holds only 64-character session hashes, no PAT.
+- **Gap: the web sign-in page has no Azure DevOps option.**
+  `static/js/views/signin.js` shows only the GitHub, Microsoft and localhost
+  buttons, while the Access page lets an administrator add Azure DevOps
+  logins. Those people can sign in only by calling the API.
 
 ## When a case fails
 

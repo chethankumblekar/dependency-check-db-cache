@@ -84,7 +84,7 @@ means another rotation.
 | No High/Critical findings in either image | Server had 63 unfixed | Done (0 and 0) |
 | Scanner never runs as root | Open | Done |
 | Signing key out of repository secrets | Open | Done (rotated into `snapshot-signing`; old repository copy deleted after merge) |
-| Real identity-provider tenants | Open | **Partly done**: GitHub and Entra sign-in pass against real providers; second-account cases and Azure DevOps not run |
+| Real identity-provider tenants | Open | **Partly done**: GitHub and Entra sign-in pass against real providers; Azure DevOps sign-in fails on `main` (fixed in PR 32) and has no sign-in UI; second-account cases not run |
 
 ## 20 October 2026 audit
 
