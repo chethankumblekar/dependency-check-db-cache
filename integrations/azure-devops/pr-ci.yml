@@ -55,7 +55,9 @@ steps:
       rm -rf "$work"
       mkdir -p "$work/head" "$out"
       git archive "$head" | tar -x -C "$work/head"
-      args=(scan --scan /head --out /out --project "$BUILD_REPOSITORY_NAME" --revision "$head" --branch "${source#refs/heads/}")
+      args=(scan --scan /head --out /out --project "$BUILD_REPOSITORY_NAME" --revision "$head" --branch "${source#refs/heads/}"
+        --repository-url "$BUILD_REPOSITORY_URI"
+        --build-url "${SYSTEM_COLLECTIONURI%/}/$SYSTEM_TEAMPROJECTID/_build/results?buildId=$BUILD_BUILDID")
       mounts=(-v "$work/head:/head" -v "$out:/out")
       if [[ -n "${CHECKSTEAD_PR_ID:-}" ]]; then
         base="$(git rev-parse --verify "refs/remotes/origin/${CHECKSTEAD_PR_TARGET#refs/heads/}^{commit}")"
@@ -97,3 +99,22 @@ steps:
     artifact: checkstead-report
     displayName: Keep the report on the build
     condition: always()
+
+  # Send the report to the Checkstead server, the way a SonarQube analysis is
+  # sent. CHECKSTEAD_SERVER is a pipeline variable (https://checkstead.example)
+  # and CHECKSTEAD_UPLOAD_TOKEN a secret variable from the server's Access page.
+  - script: |
+      if [[ -z "${CHECKSTEAD_SERVER:-}" || -z "${CHECKSTEAD_UPLOAD_TOKEN:-}" || "$CHECKSTEAD_UPLOAD_TOKEN" == '$('* ]]; then
+        echo "CHECKSTEAD_SERVER or CHECKSTEAD_UPLOAD_TOKEN is not set. The report stays on the build."
+        exit 0
+      fi
+      docker run --rm \
+        --user 10001:10001 \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
+        -e CHECKSTEAD_UPLOAD_TOKEN \
+        "$CHECKSTEADIMAGE" \
+        upload --server "$CHECKSTEAD_SERVER" --report /out
+    displayName: Send the report to Checkstead
+    condition: always()
+    env:
+      CHECKSTEAD_UPLOAD_TOKEN: $(CHECKSTEAD_UPLOAD_TOKEN)

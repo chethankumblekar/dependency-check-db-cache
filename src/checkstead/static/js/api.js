@@ -135,6 +135,17 @@
  * @property {boolean} failed     The scan's own score policy fails on its findings
  * @property {number} findings
  * @property {string|null} revision
+ * @property {string|null=} pullRequest  Set when a pull request build sent it
+ * @property {string|null=} buildUrl     The pipeline run that sent it
+ */
+
+/**
+ * A token a pipeline sends reports with. The token itself is shown once, at creation.
+ * @typedef {Object} UploadToken
+ * @property {number} id
+ * @property {string} name
+ * @property {string} createdAt
+ * @property {string|null} lastUsedAt
  */
 
 /**
@@ -162,6 +173,7 @@
  * @property {string} kind
  * @property {string} label
  * @property {boolean} configured
+ * @property {boolean=} reported  Built from the reports pipelines sent, not from a sync
  * @property {string|null} syncedAt     Last successful sync
  * @property {string|null} attemptedAt  Last sync attempt
  * @property {string|null} error        Why the last attempt failed; the repositories are the last good sync
@@ -311,6 +323,12 @@ export function client(fetcher = fetch) {
     syncRepositories: () => call("/api/repositories/sync", { method: "POST", body: "{}" }),
     /** Pipeline runs from every connected source. @returns {Promise<SourceRuns>} */
     runs: () => call("/api/runs"),
+    /** @returns {Promise<{uploadTokens: UploadToken[]}>} */
+    uploadTokens: () => call("/api/admin/upload-tokens"),
+    /** The token is in the answer once and never again. @param {string} name @returns {Promise<{token: string, uploadToken: UploadToken}>} */
+    createUploadToken: (name) => call("/api/admin/upload-tokens", { method: "POST", body: JSON.stringify({ name }) }),
+    /** @param {number} id @returns {Promise<{revoked: number}>} */
+    revokeUploadToken: (id) => call(`/api/admin/upload-tokens/${encodeURIComponent(String(id))}`, { method: "DELETE" }),
   };
 }
 

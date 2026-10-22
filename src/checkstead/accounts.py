@@ -52,6 +52,22 @@ def _public(row: sqlite3.Row) -> dict:
     }
 
 
+UPLOAD_TOKEN_PREFIX = "cks_"
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _public_token(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "createdAt": row["created_at"],
+        "lastUsedAt": row["last_used_at"],
+    }
+
+
 class AccountStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
@@ -93,6 +109,14 @@ class AccountStore:
                   user_id INTEGER NOT NULL,
                   created_at TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id)
+                );
+                CREATE TABLE IF NOT EXISTS upload_tokens (
+                  id INTEGER PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  token_hash TEXT NOT NULL UNIQUE,
+                  created_by INTEGER,
+                  created_at TEXT NOT NULL,
+                  last_used_at TEXT
                 );
                 """
             )
@@ -188,6 +212,46 @@ class AccountStore:
             conn.commit()
             saved = conn.execute(f"{_USERS} WHERE users.id = ?", (user_id,)).fetchone()
             return token, _public(saved)
+
+    # A pipeline sends its report with an upload token, the way a SonarQube
+    # analysis carries a SonarQube token. Only the hash is kept.
+
+    def create_upload_token(self, name: str, created_by: int | None) -> tuple[str, dict]:
+        cleaned = " ".join(name.split())
+        if not cleaned or len(cleaned) > 80:
+            raise AccountError("Name the token, in at most 80 characters.")
+        token = UPLOAD_TOKEN_PREFIX + secrets.token_urlsafe(32)
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO upload_tokens (name, token_hash, created_by, created_at) VALUES (?, ?, ?, ?)",
+                (cleaned, _token_hash(token), created_by, _now()),
+            )
+            row = conn.execute("SELECT * FROM upload_tokens WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return token, _public_token(row)
+
+    def list_upload_tokens(self) -> list[dict]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute("SELECT * FROM upload_tokens ORDER BY id").fetchall()
+        return [_public_token(row) for row in rows]
+
+    def revoke_upload_token(self, token_id: int) -> None:
+        with self._lock, self._connect() as conn:
+            deleted = conn.execute("DELETE FROM upload_tokens WHERE id = ?", (token_id,)).rowcount
+        if not deleted:
+            raise AccountError("There is no upload token with that id.", status=404)
+
+    def check_upload_token(self, token: str | None) -> dict | None:
+        """The token's record when it is valid, after noting its use. None otherwise."""
+        if not token or not token.startswith(UPLOAD_TOKEN_PREFIX) or len(token) > 200:
+            return None
+        digest = _token_hash(token)
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM upload_tokens WHERE token_hash = ?", (digest,)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE upload_tokens SET last_used_at = ? WHERE id = ?", (_now(), row["id"]))
+            row = conn.execute("SELECT * FROM upload_tokens WHERE id = ?", (row["id"],)).fetchone()
+        return _public_token(row)
 
     def user_for_session(self, token: str | None) -> dict | None:
         if not token:

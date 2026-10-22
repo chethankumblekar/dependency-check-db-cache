@@ -19,7 +19,7 @@ let poll = null;
 
 /** @param {Context} ctx */
 export function renderRepositories(ctx) {
-  const admin = ctx.state.user && ctx.state.user.role === "admin";
+  const admin = ctx.state.user?.role === "admin";
   const actions = h(
     "div",
     { class: "actions" },
@@ -62,9 +62,9 @@ function repositories(ctx, payload) {
   if (!connected.length) {
     return stateBlock({
       iconName: "repos",
-      title: "No organization is connected",
-      body: "Connect an Azure DevOps organization with CHECKSTEAD_AZURE_DEVOPS_ORG and the server's Microsoft Entra application, or install the Checkstead GitHub App. Repositories and branches then sync here on their own.",
-      action: h("a", { class: "btn", href: "/github" }, "Set up the GitHub App"),
+      title: "No pipeline has sent a report yet",
+      body: "Repositories appear here when their pipeline runs Checkstead and sends the report, the way SonarQube learns a repository from its analyses. Create an upload token on Access, store it as the secret variable CHECKSTEAD_UPLOAD_TOKEN, and set CHECKSTEAD_SERVER. Scans of local checkouts stay on Scans.",
+      action: h("a", { class: "btn", href: href("access") }, "Create an upload token"),
     });
   }
   const filter = h("input", {
@@ -88,7 +88,7 @@ function applyFilter(input) {
   const query = input.value.trim().toLowerCase();
   const root = input.closest("main") || document;
   root.querySelectorAll("tr[data-repo]").forEach((row) => {
-    const name = row.getAttribute("data-repo") || "";
+    const name = row instanceof HTMLElement ? row.dataset.repo || "" : "";
     row.toggleAttribute("hidden", Boolean(query) && !name.includes(query));
   });
 }
@@ -122,7 +122,7 @@ function sourceSection(ctx, source) {
   const flat = groups.flatMap((group) => group.rows);
   rows.forEach((row) => {
     if (row.querySelector("th.group") || !flat[index]) return;
-    row.setAttribute("data-repo", `${flat[index].project || ""}/${flat[index].name}`.toLowerCase());
+    if (row instanceof HTMLElement) row.dataset.repo = `${flat[index].project || ""}/${flat[index].name}`.toLowerCase();
     index += 1;
   });
   return h(
@@ -132,12 +132,27 @@ function sourceSection(ctx, source) {
     h(
       "p",
       { class: "muted" },
-      source.syncedAt ? h("span", null, "Synced ", timeEl(source.syncedAt, ctx.now)) : "Not synced yet",
-      ` · ${source.repositories.length} repositories`,
+      sourceMeta(ctx, source),
+      ` · ${source.repositories.length} ${source.repositories.length === 1 ? "repository" : "repositories"}`,
     ),
-    source.error ? banner("warn", "The last sync failed.", ` ${source.error}${source.syncedAt ? " Showing the last good sync." : ""}`) : null,
+    source.error ? syncError(source) : null,
     table,
   );
+}
+
+/** @param {RepositorySource} source */
+function syncError(source) {
+  const kept = source.syncedAt ? " Showing the last good sync." : "";
+  return banner("warn", "The last sync failed.", ` ${source.error}${kept}`);
+}
+
+/**
+ * @param {Context} ctx
+ * @param {RepositorySource} source
+ */
+function sourceMeta(ctx, source) {
+  if (source.reported) return "Reported by pipelines";
+  return source.syncedAt ? h("span", null, "Synced ", timeEl(source.syncedAt, ctx.now)) : "Not synced yet";
 }
 
 /** @param {SourceRepository} repo */
@@ -154,10 +169,15 @@ function repoCell(repo) {
 function scanTag(scan, branch) {
   if (!branch) return h("span", { class: "muted" }, "no branch");
   if (!scan) return h("span", { class: "muted" }, "not scanned");
-  const tag = scan.failed
-    ? h("span", { class: "tag fail" }, "Fails policy")
-    : h("span", { class: "tag verified" }, scan.findings ? `Passes, ${scan.findings} findings` : "Passes, no findings");
-  return h("a", { href: href("scan", { id: scan.id }) }, tag);
+  if (scan.failed) return h("a", { href: href("scan", { id: scan.id }) }, h("span", { class: "tag fail" }, "Fails policy"));
+  const passes = scan.findings ? `Passes, ${scan.findings} findings` : "Passes, no findings";
+  return h("a", { href: href("scan", { id: scan.id }) }, h("span", { class: "tag verified" }, passes));
+}
+
+/** @param {BranchScan | null} scan */
+function runLink(scan) {
+  const url = scan ? safeHttpUrl(scan.buildUrl) : null;
+  return url ? h("a", { href: url, rel: "noopener noreferrer" }, "pipeline run") : null;
 }
 
 /** @param {SourceRepository} repo */
@@ -177,6 +197,8 @@ function branchList(repo) {
           h("code", { class: "id" }, branch.name),
           branch.commit ? h("span", { class: "muted" }, ` ${branch.commit.slice(0, 8)} `) : " ",
           scanTag(branch.scan, branch.name),
+          branch.scan && branch.scan.pullRequest ? h("span", { class: "tag" }, `PR #${branch.scan.pullRequest}`) : null,
+          runLink(branch.scan),
         ),
       ),
     ),

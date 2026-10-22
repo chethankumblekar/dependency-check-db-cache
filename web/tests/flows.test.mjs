@@ -197,11 +197,59 @@ test("repositories: a failed sync keeps the last list and says why", async () =>
   assert.match(text(root), /web-app/);
 });
 
-test("repositories: nothing connected explains how to connect", async () => {
+test("repositories: nothing reported yet explains the pipeline route", async () => {
   const { dom, root } = await boot("#/repositories");
-  assert.match(text(root), /No organization is connected/);
-  assert.match(text(root), /CHECKSTEAD_AZURE_DEVOPS_ORG/);
+  assert.match(text(root), /No pipeline has sent a report yet/);
+  assert.match(text(root), /CHECKSTEAD_UPLOAD_TOKEN/);
+  assert.equal(root.querySelector('a[href="#/access"].btn').textContent, "Create an upload token");
   assert.deepEqual(await axe(dom), []);
+});
+
+test("repositories: pipeline-reported scans show the pull request and the run", async () => {
+  const fail = { id: "s-feature", failed: true, findings: 32, revision: "b".repeat(40), pullRequest: "21269", buildUrl: "https://dev.azure.com/Ascertra/p/_build/results?buildId=130075" };
+  const payload = {
+    syncing: false,
+    sources: [{
+      kind: "pipeline-azure-devops", label: "Azure DevOps: Ascertra", configured: true, reported: true,
+      syncedAt: null, attemptedAt: null, error: null,
+      repositories: [{
+        source: "pipeline-azure-devops", id: "u", name: "proarc.cloudoperations", project: "Proarc-Products",
+        url: "https://dev.azure.com/Ascertra/Proarc-Products/_git/proarc.cloudoperations", defaultBranch: "checkstead-test/add-axios",
+        disabled: false, branches: [{ name: "checkstead-test/add-axios", commit: "b".repeat(40), scan: fail }], defaultScan: fail,
+      }],
+    }],
+  };
+  const { dom, root } = await boot("#/repositories", { repositories: payload });
+  const page = text(root);
+  assert.match(page, /Reported by pipelines · 1 repository/);
+  assert.match(page, /PR #21269/);
+  const run = [...root.querySelectorAll("a")].find((a) => a.textContent === "pipeline run");
+  assert.equal(run.getAttribute("href"), "https://dev.azure.com/Ascertra/p/_build/results?buildId=130075");
+  assert.deepEqual(await axe(dom), []);
+});
+
+test("access: an administrator creates an upload token, sees it once, and revokes one", async () => {
+  const { dom, root, calls } = await boot("#/access");
+  assert.match(text(root), /Upload tokens/);
+  assert.match(text(root), /pipelines/);
+  root.querySelector("#token-name").value = "  Proarc pipelines ";
+  root.querySelector("#token-name").closest("form").dispatchEvent(new dom.window.Event("submit", { cancelable: true, bubbles: true }));
+  await settle();
+  assert.deepEqual(calls.find(([name]) => name === "createUploadToken").slice(1), ["Proarc pipelines"]);
+  assert.equal(root.querySelector("#new-token").value, "cks_example-token-value");
+  assert.match(text(root), /Copy this token now\. It is shown once\./);
+  assert.deepEqual(await axe(dom), []);
+  // Leaving the page forgets it.
+  await go(dom, "#/scans");
+  await go(dom, "#/access");
+  assert.equal(root.querySelector("#new-token"), null);
+  const revoke = root.querySelector('button[aria-label="Revoke pipelines"]');
+  revoke.click();
+  await settle();
+  assert.ok(!calls.some(([name]) => name === "revokeUploadToken"));
+  root.querySelector('button[aria-label="Confirm revoking pipelines"]').click();
+  await settle();
+  assert.deepEqual(calls.find(([name]) => name === "revokeUploadToken").slice(1), [1]);
 });
 
 test("CI runs: Azure DevOps pipeline runs sit beside GitHub", async () => {

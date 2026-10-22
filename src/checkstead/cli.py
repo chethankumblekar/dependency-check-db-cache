@@ -100,6 +100,15 @@ def _doctor_sources() -> None:
         print(f"{name.lower().replace('_', '-')}: {len(groups)} group(s)")
 
 
+def _cmd_upload(args: argparse.Namespace) -> int:
+    from checkstead.upload import send_report
+
+    result = send_report(args.server, Path(args.report), os.environ.get("CHECKSTEAD_UPLOAD_TOKEN", "").strip())
+    print(f"uploaded: {result.get('id')}")
+    print(f"scan: {result.get('url')}")
+    return 0
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     from checkstead.ui import default_data_dir, default_scans_dir, prepare_scans_dir, serve
 
@@ -229,6 +238,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         author=args.author or None,
         author_email=args.author_email or None,
         untrusted=True if args.untrusted_source else None,
+        repository_url=args.repository_url or None,
+        build_url=args.build_url or None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -273,6 +284,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--author", help="Commit author recorded on the report.")
     scan.add_argument("--author-email", help="Commit author email recorded on the report.")
     scan.add_argument(
+        "--repository-url",
+        help=(
+            "https URL of the repository, such as $(Build.Repository.Uri). The server lists the scan "
+            "under that repository. Credentials in the URL are dropped."
+        ),
+    )
+    scan.add_argument("--build-url", help="https link to the pipeline run that produced the scan.")
+    scan.add_argument(
         "--untrusted-source",
         action="store_true",
         help=(
@@ -287,6 +306,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve and verify the snapshot, write the report header, and do not start the engine.",
     )
     scan.set_defaults(func=_cmd_scan)
+
+    upload = sub.add_parser(
+        "upload",
+        help="Send a report folder to a Checkstead server. The token is read from CHECKSTEAD_UPLOAD_TOKEN.",
+    )
+    upload.add_argument("--server", required=True, help="Server origin, for example https://checkstead.example.")
+    upload.add_argument("--report", default="checkstead-report", help="Report folder that `checkstead scan --out` wrote.")
+    upload.set_defaults(func=_cmd_upload)
 
     ui = sub.add_parser("ui", help="Open the scan timeline in a browser.")
     ui.add_argument("--scans", help="Directory of scan reports. Defaults to ./ui/scans.")

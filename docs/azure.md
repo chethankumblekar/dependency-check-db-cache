@@ -212,7 +212,29 @@ Refresh `https://<your-app>.azurewebsites.net/`. Each folder is a row. Open a ro
 
 ## Organization repositories and branches
 
-The **Repositories** page lists the repositories and branches of an Azure DevOps organization, read by the server itself. Each branch shows its newest Checkstead result. Nobody pastes a token. The server signs in to Azure DevOps as the Microsoft Entra application it already uses for sign-in.
+The **Repositories** page lists repositories and branches by organization and project. Each branch shows its newest Checkstead result, with a link to the scan and to the pipeline run.
+
+It works the way SonarQube works with Azure DevOps. The server never reads the organization. Each pipeline sends its report, and the report names the repository and the build:
+
+1. An administrator opens **Access > Upload tokens** and creates a token. The token is shown once. The server keeps its hash, shows when it was last used, and can revoke it.
+2. In the pipeline, store the token as the secret variable `CHECKSTEAD_UPLOAD_TOKEN`. Set the variable `CHECKSTEAD_SERVER` to the server origin, for example `https://checkstead.example`. A variable group shares both across pipelines.
+3. Use [`pr-ci.yml`](../integrations/azure-devops/pr-ci.yml) or [`pull-request.yml`](../integrations/azure-devops/pull-request.yml). The scan step passes:
+   - `--repository-url "$BUILD_REPOSITORY_URI"`. Any credentials in the URL, such as `https://Ascertra@dev.azure.com/...`, are dropped.
+   - `--build-url`, built from the agent's variables.
+
+   The **Send the report to Checkstead** step runs `checkstead upload`. That step does nothing when either variable is unset.
+
+The organization, project, and repository come from the repository URL. Both `dev.azure.com/<org>/<project>/_git/<repo>` and `<org>.visualstudio.com/...` URLs are understood. A repository appears after its first upload, and a branch after its first scan. A scan without a repository URL, such as one from a laptop checkout, is listed under **Scans** only.
+
+`POST /api/scans/upload` accepts a zip of the report folder, at most `CHECKSTEAD_MAX_UPLOAD_MB` (default 64). The server checks the upload token before it reads the body. It keeps only the files a scan writes, at the top level of the zip, and refuses anything else.
+
+```bash
+CHECKSTEAD_UPLOAD_TOKEN=cks_... checkstead upload --server https://checkstead.example --report checkstead-report
+```
+
+### Optional: list every branch with a service principal
+
+Pipeline reports list the branches that were scanned. To list every repository and branch, including unscanned ones, the server can also read the organization as its own Microsoft Entra application:
 
 1. An organization administrator opens **Organization settings > Users > Add users**. They search for the application by name, give it **Basic** access, and add it to each project to show as a **Reader**. Stakeholder access cannot read repositories.
 2. Set these on the server:
@@ -229,7 +251,14 @@ A sync reads three things:
 
 **CI runs** shows those runs. A failed sync keeps the last good list and says why on the page. A service principal the organization does not know gets "is not a user in the … organization".
 
-A branch's result is the newest scan whose project is the repository name, or `<project>/<repository>`, and whose branch is that branch. The pipeline examples set both from `Build.Repository.Name` and the branch. The result applies that scan's own score policy to all of its findings. Scans of local checkouts that match no synced repository stay on **Scans** only.
+For a synced organization, a branch's result is the newest scan for it:
+
+- the scan's project is the repository name, or `<project>/<repository>`;
+- the scan's branch is that branch.
+
+The pipeline examples set both from `Build.Repository.Name` and the branch. An organization that is both synced and reported is shown once, from the sync.
+
+The result applies that scan's own score policy to all of its findings.
 
 `checkstead doctor` prints the organization, the projects, and the sync interval, without secrets.
 

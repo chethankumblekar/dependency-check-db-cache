@@ -178,6 +178,9 @@ export function fakeApi(overrides = {}) {
     repositories: record("repositories", { syncing: false, sources: [] }),
     syncRepositories: record("syncRepositories", { started: true, syncing: true }),
     runs: record("runs", { syncing: false, sources: [] }),
+    uploadTokens: record("uploadTokens", { uploadTokens: [{ id: 1, name: "pipelines", createdAt: "2026-10-20T00:00:00Z", lastUsedAt: null }] }),
+    createUploadToken: record("createUploadToken", (name) => Promise.resolve({ token: "cks_example-token-value", uploadToken: { id: 2, name, createdAt: "2026-10-22T00:00:00Z", lastUsedAt: null } })),
+    revokeUploadToken: record("revokeUploadToken", (id) => Promise.resolve({ revoked: id })),
   };
   for (const [name, value] of Object.entries(overrides)) base[name] = record(name, value);
   return { api: base, calls };

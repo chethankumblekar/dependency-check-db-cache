@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from checkstead.engine import NVD_NOTICE
+from checkstead.origin import build_link, clean_url
 from checkstead.match import confirmed_vulnerability
 
 
@@ -60,6 +61,10 @@ class Scan:
     authenticity: str | None = None
     signature_key: str | None = None
     policy: dict[str, str] = field(default_factory=dict)
+    # Set by pipeline scans (--repository-url, --build-url). A scan of a
+    # checkout has neither.
+    repository_url: str | None = None
+    build_url: str | None = None
 
 
 @dataclass
@@ -286,6 +291,8 @@ def load_scan(directory: Path) -> Scan:
         # unset, and the UI says "not recorded" rather than guessing.
         authenticity=header.get("snapshot-authenticity") or None,
         signature_key=header.get("snapshot-key") or None,
+        repository_url=clean_url(header.get("repository-url")),
+        build_url=build_link(header.get("build-url")),
         policy={
             key: header[name]
             for key, name in (
@@ -302,7 +309,8 @@ def load_scan(directory: Path) -> Scan:
 def load_history(root: Path) -> list[Scan]:
     scans = [
         load_scan(path)
-        for path in sorted(path for path in root.iterdir() if path.is_dir())
+        # A dot folder is an upload still being written; it is renamed when complete.
+        for path in sorted(path for path in root.iterdir() if path.is_dir() and not path.name.startswith("."))
         if (path / "checkstead.txt").is_file()
     ]
     return scans
@@ -426,6 +434,8 @@ def history_payload(scans: list[Scan]) -> dict:
                 "authenticity": scan.authenticity,
                 "signatureKey": scan.signature_key,
                 "policy": dict(scan.policy),
+                "repositoryUrl": scan.repository_url,
+                "buildUrl": scan.build_url,
                 "dependencies": [_dependency_json(item) for item in scan.dependencies],
                 "findings": [_finding_json(item) for item in scan.findings],
             }

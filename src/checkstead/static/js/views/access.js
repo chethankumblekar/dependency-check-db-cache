@@ -1,7 +1,7 @@
 // @ts-check
 // Access: who can sign in, and who administers this server.
 
-import { avatar, dataTable, stateBlock } from "../components.js";
+import { avatar, dataTable, stateBlock, timeEl } from "../components.js";
 import { h } from "../dom.js";
 import { providerName } from "../format.js";
 import { pageHead, withLoad } from "./common.js";
@@ -22,7 +22,131 @@ export function renderAccess(ctx) {
     pageHead("Access", "People who can sign in. Each signs in with their own GitHub, Azure DevOps, or Microsoft Entra account; nobody can sign in until they are added here."),
     addForm(ctx),
     withLoad(ctx, "users", (/** @type {{users: User[]}} */ data) => users(ctx, data.users)),
+    uploadTokens(ctx),
   );
+}
+
+/**
+ * The token from the last create, shown until the person leaves the page.
+ * @type {{id: number, token: string} | null}
+ */
+let revealed = null;
+
+/** Drop the shown token; app.js calls this when another page renders. */
+export function forgetUploadToken() {
+  revealed = null;
+}
+
+/** @param {Context} ctx */
+function uploadTokens(ctx) {
+  const name = h("input", { type: "text", name: "token-name", id: "token-name", required: true, autocomplete: "off", placeholder: "Proarc-Products pipelines" });
+  const error = h("p", { class: "error-text", role: "alert", hidden: true });
+  const submit = h("button", { type: "submit", class: "btn primary" }, "Create upload token");
+  const form = h(
+    "form",
+    { class: "form-row" },
+    h("label", { class: "field", for: "token-name" }, "Token name", name),
+    submit,
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    submit.setAttribute("disabled", "");
+    try {
+      const created = await ctx.api.createUploadToken(/** @type {HTMLInputElement} */ (name).value.trim());
+      revealed = { id: created.uploadToken.id, token: created.token };
+      ctx.notify(`Created ${created.uploadToken.name}. Copy it now; it is not shown again.`);
+      ctx.load("uploadTokens", true);
+    } catch (failure) {
+      error.textContent = /** @type {Error} */ (failure).message;
+      error.hidden = false;
+      submit.removeAttribute("disabled");
+    }
+  });
+  return h(
+    "section",
+    { class: "section panel", "aria-labelledby": "tokens-head" },
+    h("h2", { id: "tokens-head" }, "Upload tokens"),
+    h(
+      "p",
+      { class: "muted" },
+      "A pipeline sends its report with one of these, the way a SonarQube analysis is sent with a SonarQube token. Store it as the secret pipeline variable CHECKSTEAD_UPLOAD_TOKEN and set CHECKSTEAD_SERVER to this server's address.",
+    ),
+    form,
+    error,
+    revealed ? revealBox(ctx, revealed.token) : null,
+    withLoad(ctx, "uploadTokens", (/** @type {{uploadTokens: import("../api.js").UploadToken[]}} */ data) => tokenTable(ctx, data.uploadTokens)),
+  );
+}
+
+/**
+ * @param {Context} ctx
+ * @param {string} token
+ */
+function revealBox(ctx, token) {
+  const field = h("input", { type: "text", id: "new-token", readonly: true, value: token, class: "id", "aria-label": "New upload token", spellcheck: "false" });
+  const copy = h("button", { type: "button", class: "btn" }, "Copy");
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      ctx.notify("Copied the upload token.");
+    } catch {
+      /** @type {HTMLInputElement} */ (field).select();
+      ctx.notify("Select the token and copy it.");
+    }
+  });
+  return h(
+    "div",
+    { class: "banner info", role: "status" },
+    h("p", null, h("strong", null, "Copy this token now."), " It is shown once. The server keeps only its hash.", h("span", { class: "form-row" }, field, copy)),
+  );
+}
+
+/**
+ * @param {Context} ctx
+ * @param {import("../api.js").UploadToken[]} list
+ */
+function tokenTable(ctx, list) {
+  return dataTable({
+    caption: "Upload tokens",
+    columns: [
+      { key: "name", label: "Name", cell: (token) => token.name },
+      { key: "created", label: "Created", cell: (token) => timeEl(token.createdAt, ctx.now) },
+      { key: "used", label: "Last used", cell: (token) => (token.lastUsedAt ? timeEl(token.lastUsedAt, ctx.now) : h("span", { class: "muted" }, "never")) },
+      { key: "revoke", label: "Revoke", cell: (token) => revokeControl(ctx, token) },
+    ],
+    groups: [{ label: null, rows: list }],
+    empty: "No upload tokens yet. Pipelines cannot send reports until one exists.",
+  });
+}
+
+/**
+ * Two-step revoke: the first press asks, the second revokes.
+ * @param {Context} ctx
+ * @param {import("../api.js").UploadToken} token
+ */
+function revokeControl(ctx, token) {
+  const button = h("button", { type: "button", class: "btn danger", "aria-label": `Revoke ${token.name}` }, "Revoke");
+  let armed = false;
+  button.addEventListener("click", async () => {
+    if (!armed) {
+      armed = true;
+      button.textContent = "Confirm revoke";
+      button.setAttribute("aria-label", `Confirm revoking ${token.name}`);
+      return;
+    }
+    button.setAttribute("disabled", "");
+    try {
+      await ctx.api.revokeUploadToken(token.id);
+      if (revealed && revealed.id === token.id) revealed = null;
+      ctx.notify(`Revoked ${token.name}. Pipelines using it can no longer send reports.`);
+      ctx.load("uploadTokens", true);
+    } catch (error) {
+      ctx.notify(/** @type {Error} */ (error).message);
+      button.removeAttribute("disabled");
+    }
+  });
+  return button;
 }
 
 /** @param {Context} ctx */

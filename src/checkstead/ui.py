@@ -41,7 +41,9 @@ from checkstead.github_app import (
     scan_installed_repositories,
 )
 from checkstead.history import history_payload, load_history
+from checkstead.origin import parse_repository_url
 from checkstead.sources import Inventory
+from checkstead.upload import UploadError, max_upload_bytes, store_upload
 from checkstead.sources.azure_devops import AzureDevOpsSource
 from checkstead.sources.github import GitHubAppSource
 from checkstead.identity import AuthError, Identity, identify, list_providers
@@ -60,6 +62,8 @@ from checkstead.sso import (
 )
 
 PAGE = Path(__file__).resolve().with_name("ui_page.html")
+UPLOAD_PATH = "/api/scans/upload"
+_PROVIDER_LABELS = {"azure-devops": "Azure DevOps", "github": "GitHub"}
 _AVATAR_PATH = re.compile(r"/api/users/([0-9]{1,12})/avatar")
 COOKIE = "checkstead_session"
 MAX_BODY = 8192
@@ -293,7 +297,7 @@ class HistoryCache:
         except FileNotFoundError:
             return ()
         for entry in children:
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name.startswith("."):
                 continue
             for name in ("checkstead.txt", "dependency-check-report.json"):
                 try:
@@ -352,6 +356,85 @@ class HistoryCache:
                     "revision": scan.get("revision"),
                 }
             return latest
+
+    def reported(self) -> list[dict]:
+        """Repositories as pipelines reported them, grouped by organization.
+
+        Only scans with a repository URL count; a scan of a checkout has none.
+        Each branch keeps its newest scan (scans are in timeline order).
+        """
+        with self._lock:
+            self._refresh()
+            assert self._payload is not None
+            scans = list(self._payload["scans"])
+        organizations: dict[tuple[str, str], dict] = {}
+        for scan in scans:
+            origin = parse_repository_url(scan.get("repositoryUrl"))
+            branch = scan.get("branch")
+            if origin is None or not branch:
+                continue
+            key = (origin.provider, origin.organization.casefold())
+            org = organizations.setdefault(
+                key,
+                {
+                    "kind": f"pipeline-{origin.provider}",
+                    "provider": origin.provider,
+                    "organization": origin.organization,
+                    "label": f"{_PROVIDER_LABELS.get(origin.provider, 'Git')}: {origin.organization}",
+                    "configured": True,
+                    "reported": True,
+                    "syncedAt": None,
+                    "attemptedAt": None,
+                    "error": None,
+                    "repos": {},
+                },
+            )
+            repo = org["repos"].setdefault(
+                origin.url.casefold(),
+                {
+                    "source": org["kind"],
+                    "id": origin.url,
+                    "name": origin.repository,
+                    "project": origin.project,
+                    "url": origin.url,
+                    "disabled": False,
+                    "branches": {},
+                    "order": [],
+                },
+            )
+            repo["branches"][branch] = {
+                "name": branch,
+                "commit": scan.get("revision"),
+                "scan": {
+                    "id": scan["id"],
+                    "failed": _policy_fails(scan),
+                    "findings": len(scan.get("findings") or []),
+                    "revision": scan.get("revision"),
+                    "pullRequest": scan.get("pullRequest"),
+                    "buildUrl": scan.get("buildUrl"),
+                },
+            }
+            repo["order"] = [name for name in repo["order"] if name != branch] + [branch]
+        result = []
+        for org in organizations.values():
+            repositories = []
+            for repo in org.pop("repos").values():
+                order = repo.pop("order")
+                default = next((name for name in ("main", "master", "develop") if name in repo["branches"]), order[-1])
+                branches = sorted(repo["branches"].values(), key=lambda item: item["name"].casefold())
+                repositories.append(
+                    {
+                        **repo,
+                        "defaultBranch": default,
+                        "branches": branches,
+                        "defaultScan": repo["branches"][default]["scan"],
+                    }
+                )
+            org["repositories"] = sorted(
+                repositories, key=lambda item: ((item["project"] or "").casefold(), item["name"].casefold())
+            )
+            result.append(org)
+        return sorted(result, key=lambda item: item["label"].casefold())
 
     def scan(self, scan_id: str) -> HistoryBody | None:
         """One scan in full, with the drift that ends at it. None when unknown."""
@@ -625,6 +708,10 @@ def bind_server(
                 self.close_connection = True
                 self._json(403, {"error": "Cross-site request refused."})
                 return False
+            if unsafe and path == UPLOAD_PATH:
+                # A report is megabytes. The handler checks the upload token
+                # before it reads a byte, then reads up to the upload limit.
+                return True
             if unsafe:
                 return self._read_request_body()
             return True
@@ -734,6 +821,11 @@ def bind_server(
                     return
                 self._json(200, {"users": store.list_users()})
                 return
+            if path == "/api/admin/upload-tokens":
+                if self._admin() is None:
+                    return
+                self._json(200, {"uploadTokens": store.list_upload_tokens()})
+                return
             if path == "/github":
                 if not self._github_ok():
                     return
@@ -804,6 +896,24 @@ def bind_server(
                     return
                 self._json(201, {"user": user})
                 return
+            if path == UPLOAD_PATH:
+                self._upload()
+                return
+            if path == "/api/admin/upload-tokens":
+                admin = self._admin()
+                if admin is None:
+                    return
+                body = self._body()
+                if body is None:
+                    return
+                try:
+                    token, record = store.create_upload_token(str(body.get("name") or ""), admin["id"])
+                except AccountError as exc:
+                    self._json(exc.status, {"error": str(exc)})
+                    return
+                # The only time the token is shown. The server keeps its hash.
+                self._json(201, {"token": token, "uploadToken": record})
+                return
             if path == "/api/repositories/sync":
                 if self._admin() is None:
                     return
@@ -858,6 +968,21 @@ def bind_server(
             if path == "/api/session":
                 store.sign_out(_cookie(self.headers.get("Cookie")))
                 self._json(200, {"signedOut": True}, _session_cookie("gone", 0))
+                return
+            prefix = "/api/admin/upload-tokens/"
+            if path.startswith(prefix):
+                if self._admin() is None:
+                    return
+                raw_id = path[len(prefix) :]
+                if not raw_id.isdigit() or len(raw_id) > 12:
+                    self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                    return
+                try:
+                    store.revoke_upload_token(int(raw_id))
+                except AccountError as exc:
+                    self._json(exc.status, {"error": str(exc)})
+                    return
+                self._json(200, {"revoked": int(raw_id)})
                 return
             user_id = self._user_id()
             if user_id is None:
@@ -923,15 +1048,60 @@ def bind_server(
             self._common_headers()
             self.end_headers()
 
-        def _repositories(self) -> dict:
-            """The synced inventory, each branch with its newest scan, if any.
+        def _upload(self) -> None:
+            """Accept a report zip from a pipeline holding an upload token."""
+            # The body has not been read. Any refusal before reading it ends
+            # the connection, so its bytes are never parsed as a request.
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+            record = store.check_upload_token(token)
+            if record is None:
+                self.close_connection = True
+                self._json(401, {"error": "An upload token is required. An administrator creates one on Access."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                length = -1
+            if length <= 0:
+                self.close_connection = True
+                self._json(411, {"error": "Send the report zip with a Content-Length."})
+                return
+            if length > max_upload_bytes():
+                self.close_connection = True
+                self._json(413, {"error": "The report is larger than this server accepts (CHECKSTEAD_MAX_UPLOAD_MB)."})
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self.close_connection = True
+                self._json(400, {"error": "The upload ended early."})
+                return
+            try:
+                scan_id = store_upload(body, scans_dir, record["id"])
+            except UploadError as exc:
+                self._json(exc.status, {"error": str(exc)})
+                return
+            self._json(201, {"id": scan_id, "url": f"/#/scans/{scan_id}"})
 
-            Only repositories the sources list appear here. A scan from a laptop
-            checkout that matches no synced repository stays on the Scans page.
+        def _repositories(self) -> dict:
+            """Repositories as pipelines reported them, plus any synced organization.
+
+            Pipeline scans carry their repository URL, so they need no access to
+            the organization. A scan of a checkout carries none and stays on Scans.
+            An organization the server also syncs is shown once, from the sync.
             """
             latest = history.latest_by_branch()
-            sources = []
-            for source in inventory.view():
+            synced = inventory.view()
+            synced_orgs = set()
+            azure = AzureDevOpsSource()
+            if any(source["kind"] == "azure-devops" and source["configured"] and source["syncedAt"] for source in synced):
+                synced_orgs.add(("azure-devops", azure.organization.casefold()))
+            sources = [
+                org
+                for org in history.reported()
+                if (org["provider"], org["organization"].casefold()) not in synced_orgs
+            ]
+            for source in synced:
                 repositories = []
                 for repo in source["repositories"]:
                     names = [repo["name"].casefold()]
