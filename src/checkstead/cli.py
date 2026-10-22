@@ -73,15 +73,31 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"snapshot-signature: {'required' if signature_required(trust) else 'optional'}")
     print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
+    _doctor_sources()
     for name in (
         "CHECKSTEAD_GITHUB_CLIENT_SECRET",
         "CHECKSTEAD_ENTRA_CLIENT_SECRET",
+        "CHECKSTEAD_AZURE_DEVOPS_CLIENT_SECRET",
         "GITHUB_TOKEN",
         "GH_TOKEN",
     ):
         if os.environ.get(name):
             print(f"{name}: set")
     return 0
+
+
+def _doctor_sources() -> None:
+    """Repository sources and group access. Group ids are counted, not printed."""
+    from checkstead.sources.azure_devops import AzureDevOpsSource
+
+    azure = AzureDevOpsSource()
+    state = "configured" if azure.configured() else "not configured"
+    print(f"azure-devops-org: {azure.organization or 'unset'} ({state})")
+    print(f"azure-devops-projects: {os.environ.get('CHECKSTEAD_AZURE_DEVOPS_PROJECTS', '').strip() or 'all'}")
+    print(f"sync-minutes: {os.environ.get('CHECKSTEAD_SYNC_MINUTES', '').strip() or '15'}")
+    for name in ("CHECKSTEAD_ENTRA_ALLOWED_GROUPS", "CHECKSTEAD_ENTRA_ADMIN_GROUPS"):
+        groups = [item for item in os.environ.get(name, "").split(",") if item.strip()]
+        print(f"{name.lower().replace('_', '-')}: {len(groups)} group(s)")
 
 
 def _cmd_ui(args: argparse.Namespace) -> int:

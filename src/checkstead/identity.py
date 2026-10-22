@@ -44,6 +44,11 @@ class Identity:
     # Fetched at sign-in and stored by the server; None when the provider has
     # none or it could not be read.
     avatar: Avatar | None = field(default=None, compare=False, repr=False)
+    # Microsoft Entra security group object ids from the ID token. Empty for
+    # every other provider.
+    groups: frozenset[str] = field(default_factory=frozenset, compare=False, repr=False)
+    # True when Entra sent a link instead of the groups (more than 200 for a JWT).
+    groups_overage: bool = field(default=False, compare=False, repr=False)
 
 
 Fetch = Callable[[str, dict[str, str]], dict]

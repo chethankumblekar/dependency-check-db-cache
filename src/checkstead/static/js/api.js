@@ -128,6 +128,73 @@
  * @property {string=} approvalUrl
  */
 
+/**
+ * The newest scan of one branch, matched by repository name and branch.
+ * @typedef {Object} BranchScan
+ * @property {string} id
+ * @property {boolean} failed     The scan's own score policy fails on its findings
+ * @property {number} findings
+ * @property {string|null} revision
+ */
+
+/**
+ * @typedef {Object} RepoBranch
+ * @property {string} name
+ * @property {string|null} commit
+ * @property {BranchScan|null} scan
+ */
+
+/**
+ * @typedef {Object} SourceRepository
+ * @property {string} source        "github" | "azure-devops"
+ * @property {string} id
+ * @property {string} name
+ * @property {string|null} project  Azure DevOps project, or the GitHub owner
+ * @property {string|null} url
+ * @property {string|null} defaultBranch
+ * @property {boolean} disabled
+ * @property {RepoBranch[]} branches
+ * @property {BranchScan|null} defaultScan
+ */
+
+/**
+ * @typedef {Object} RepositorySource
+ * @property {string} kind
+ * @property {string} label
+ * @property {boolean} configured
+ * @property {string|null} syncedAt     Last successful sync
+ * @property {string|null} attemptedAt  Last sync attempt
+ * @property {string|null} error        Why the last attempt failed; the repositories are the last good sync
+ * @property {SourceRepository[]} repositories
+ */
+
+/**
+ * @typedef {Object} Repositories
+ * @property {boolean} syncing
+ * @property {RepositorySource[]} sources
+ */
+
+/**
+ * @typedef {Object} SourceRun
+ * @property {string} source
+ * @property {string} id
+ * @property {string|null} repository
+ * @property {string|null} project
+ * @property {string|null} pipeline
+ * @property {string} status
+ * @property {string|null} result
+ * @property {string|null} branch
+ * @property {string|null} url
+ * @property {string|null} queuedAt
+ * @property {string|null} finishedAt
+ */
+
+/**
+ * @typedef {Object} SourceRuns
+ * @property {boolean} syncing
+ * @property {{kind: string, label: string, configured: boolean, syncedAt: string|null, error: string|null, runs: SourceRun[]}[]} sources
+ */
+
 /** @typedef {"auth" | "forbidden" | "offline" | "timeout" | "server" | "invalid" | "not-found" | "conflict"} ErrorKind */
 
 export class ApiError extends Error {
@@ -238,6 +305,12 @@ export function client(fetcher = fetch) {
     builds: () => call("/api/github/runs"),
     /** @param {string} repository @param {string|number} run @returns {Promise<unknown>} */
     rerun: (repository, run) => call("/api/github/rerun", { method: "POST", body: JSON.stringify({ repository, run }) }),
+    /** Synced repositories and branches from every connected source. @returns {Promise<Repositories>} */
+    repositories: () => call("/api/repositories"),
+    /** Start a sync. Administrators only. @returns {Promise<{started: boolean, syncing: boolean}>} */
+    syncRepositories: () => call("/api/repositories/sync", { method: "POST", body: "{}" }),
+    /** Pipeline runs from every connected source. @returns {Promise<SourceRuns>} */
+    runs: () => call("/api/runs"),
   };
 }
 

@@ -18,6 +18,15 @@ Azure DevOps:
   policy. A push runs it, `checkstead-ado-comment --find` looks up the
   branch's active pull request, and `--status` posts a
   `checkstead/score-policy` pull request status.
+- **Repositories** page. The server syncs an Azure DevOps organization's
+  repositories, branches, and Checkstead pipeline runs as its own Entra
+  application (`CHECKSTEAD_AZURE_DEVOPS_ORG`), with no personal token. Each
+  branch shows its newest scan. A `checkstead.sources` layer puts the GitHub
+  App and Azure DevOps behind one interface. **CI runs** lists Azure DevOps
+  pipeline runs beside GitHub workflow runs.
+- Entra security groups can grant access: `CHECKSTEAD_ENTRA_ALLOWED_GROUPS`
+  and `CHECKSTEAD_ENTRA_ADMIN_GROUPS` admit members and administrators
+  without an administrator adding each login.
 
 Web UI:
 

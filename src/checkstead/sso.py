@@ -91,6 +91,58 @@ def entra_tenant_warning() -> str | None:
     return None
 
 
+def _group_ids(name: str) -> frozenset[str]:
+    found = set()
+    for item in _env(name).split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if not _GUID.fullmatch(item):
+            raise AuthError(f"{name} must list Microsoft Entra group object ids.")
+        found.add(item)
+    return frozenset(found)
+
+
+def entra_groups_configured() -> bool:
+    return bool(_group_ids("CHECKSTEAD_ENTRA_ALLOWED_GROUPS") or _group_ids("CHECKSTEAD_ENTRA_ADMIN_GROUPS"))
+
+
+def entra_group_role(identity: Identity) -> str | None:
+    """The role an Entra security group gives this sign-in, or None.
+
+    CHECKSTEAD_ENTRA_ADMIN_GROUPS makes administrators and
+    CHECKSTEAD_ENTRA_ALLOWED_GROUPS makes members, so nobody has to be added
+    by hand. With neither set, or for any other provider, this returns None
+    and an administrator adds each login as before.
+    """
+    if identity.provider != "entra":
+        return None
+    admins = _group_ids("CHECKSTEAD_ENTRA_ADMIN_GROUPS")
+    members = _group_ids("CHECKSTEAD_ENTRA_ALLOWED_GROUPS")
+    groups = {group.lower() for group in identity.groups}
+    if groups & admins:
+        return "admin"
+    if groups & members:
+        return "user"
+    return None
+
+
+def _entra_groups(claims: dict) -> tuple[frozenset[str], bool]:
+    """Group object ids from the ID token, and whether Entra sent a link instead.
+
+    The app registration has to emit them: groupMembershipClaims SecurityGroup.
+    Over the token limit, Entra drops the list and names a Graph source in
+    _claim_names; the server does not follow it.
+    """
+    names = claims.get("_claim_names")
+    if isinstance(names, dict) and "groups" in names:
+        return frozenset(), True
+    raw = claims.get("groups")
+    if not isinstance(raw, list):
+        return frozenset(), False
+    return frozenset(item.lower() for item in raw if isinstance(item, str) and _GUID.fullmatch(item)), False
+
+
 def _id_token_claims(token: object) -> dict:
     """Claims of the ID token from the token endpoint.
 
@@ -402,7 +454,14 @@ def exchange(kind: str, code: str, base: str) -> Identity:
             raise AuthError("Microsoft Entra returned two different people for one sign-in.")
         name = user.get("name")
         display = name.strip() if isinstance(name, str) and name.strip() else login.strip()
+        groups, overage = _entra_groups(claims)
         return Identity(
-            "entra", str(subject), login.strip(), display[:200], _entra_photo(access_token)
+            "entra",
+            str(subject),
+            login.strip(),
+            display[:200],
+            _entra_photo(access_token),
+            groups=groups,
+            groups_overage=overage,
         )
     raise AuthError("That sign-in is not connected yet.")

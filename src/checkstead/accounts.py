@@ -115,7 +115,16 @@ class AccountStore:
         finally:
             conn.close()
 
-    def sign_in(self, identity: Identity) -> tuple[str, dict]:
+    def sign_in(self, identity: Identity, group_role: str | None = None) -> tuple[str, dict]:
+        """Start a session for a known login.
+
+        ``group_role`` is what an Entra security group grants ("admin" or
+        "user"). It admits a login nobody added and promotes a member to
+        administrator. It never demotes: a group change must not lock out
+        the last administrator.
+        """
+        if group_role not in {None, "admin", "user"}:
+            raise AccountError("Role must be admin or user.")
         key = identity.login.casefold()
         with self._lock, self._connect() as conn:
             count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -124,16 +133,17 @@ class AccountStore:
                 (identity.provider, key),
             ).fetchone()
             if row is None:
-                if count:
+                if count and group_role is None:
                     raise AccountError(
                         "An administrator has to add this login before it can sign in.",
                         status=403,
                     )
+                role = "admin" if not count else group_role
                 cursor = conn.execute(
                     """
                     INSERT INTO users
                       (provider, subject, login, login_key, display_name, role, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'admin', ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         identity.provider,
@@ -141,6 +151,7 @@ class AccountStore:
                         identity.login,
                         key,
                         identity.display_name,
+                        role,
                         _now(),
                     ),
                 )
@@ -155,6 +166,8 @@ class AccountStore:
                     "UPDATE users SET subject = ?, login = ?, display_name = ? WHERE id = ?",
                     (identity.subject, identity.login, identity.display_name, row["id"]),
                 )
+                if group_role == "admin" and row["role"] != "admin":
+                    conn.execute("UPDATE users SET role = 'admin' WHERE id = ?", (row["id"],))
                 user_id = row["id"]
             if identity.avatar is not None:
                 # No picture this time keeps the last one: a provider outage

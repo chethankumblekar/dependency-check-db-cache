@@ -209,3 +209,41 @@ A score-policy failure exits 3 after the report is written. The build fails, and
 Each build becomes one folder on the share: `/scans/<build id>/checkstead.txt` and `dependency-check-report.json`. The timeline lists only folders directly under `/scans`.
 
 Refresh `https://<your-app>.azurewebsites.net/`. Each folder is a row. Open a row for the project, Dependency-Check 13.0.0, the snapshot time, and each finding’s version, score, and source. Two builds show the drift between them: dependencies and findings that arrived, left, or changed.
+
+## Organization repositories and branches
+
+The **Repositories** page lists the repositories and branches of an Azure DevOps organization, read by the server itself. Each branch shows its newest Checkstead result. Nobody pastes a token. The server signs in to Azure DevOps as the Microsoft Entra application it already uses for sign-in.
+
+1. An organization administrator opens **Organization settings > Users > Add users**. They search for the application by name, give it **Basic** access, and add it to each project to show as a **Reader**. Stakeholder access cannot read repositories.
+2. Set these on the server:
+   - `CHECKSTEAD_AZURE_DEVOPS_ORG`: the organization name, as in `dev.azure.com/<org>`.
+   - `CHECKSTEAD_ENTRA_TENANT`: a tenant id. `organizations` cannot issue the application's own token.
+   - `CHECKSTEAD_AZURE_DEVOPS_PROJECTS` (optional): a comma-separated list of project names. Empty means every project the application can read.
+3. Restart the server. It prints `source Azure DevOps: <org>` and syncs once, then every `CHECKSTEAD_SYNC_MINUTES` (default 15). An administrator can press **Sync now**.
+
+A sync reads three things:
+
+- every repository, with its default branch;
+- every branch, with its commit;
+- recent runs of pipelines whose name matches `CHECKSTEAD_AZURE_DEVOPS_PIPELINES` (default `*checkstead*`).
+
+**CI runs** shows those runs. A failed sync keeps the last good list and says why on the page. A service principal the organization does not know gets "is not a user in the … organization".
+
+A branch's result is the newest scan whose project is the repository name, or `<project>/<repository>`, and whose branch is that branch. The pipeline examples set both from `Build.Repository.Name` and the branch. The result applies that scan's own score policy to all of its findings. Scans of local checkouts that match no synced repository stay on **Scans** only.
+
+`checkstead doctor` prints the organization, the projects, and the sync interval, without secrets.
+
+## Who can sign in
+
+An administrator can add each person on **Access**. To skip that, let an Entra security group decide:
+
+- `CHECKSTEAD_ENTRA_ALLOWED_GROUPS`: group object ids whose members sign in as members.
+- `CHECKSTEAD_ENTRA_ADMIN_GROUPS`: group object ids whose members sign in as administrators. Joining an admin group promotes an existing member. Leaving it does not demote, so a group change cannot lock out the last administrator.
+
+The app registration has to send the groups in the ID token:
+
+```bash
+az ad app update --id <application-id> --set groupMembershipClaims=SecurityGroup
+```
+
+Someone in more than 200 groups gets a link in place of the list. Checkstead does not follow it. That person sees "Microsoft Entra did not send your groups", and an administrator adds them on **Access**.

@@ -14,7 +14,7 @@ import { h } from "../dom.js";
  * The common wrapper for a view that needs one load: loading, error, or ready.
  * @template T
  * @param {Context} ctx
- * @param {"history" | "builds" | "users"} key
+ * @param {import("../app.js").LoadKey} key
  * @param {(data: T) => Node} ready
  */
 export function withLoad(ctx, key, ready) {

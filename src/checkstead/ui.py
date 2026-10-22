@@ -41,11 +41,16 @@ from checkstead.github_app import (
     scan_installed_repositories,
 )
 from checkstead.history import history_payload, load_history
+from checkstead.sources import Inventory
+from checkstead.sources.azure_devops import AzureDevOpsSource
+from checkstead.sources.github import GitHubAppSource
 from checkstead.identity import AuthError, Identity, identify, list_providers
 from checkstead.sso import (
     STATE_COOKIE,
     authorize_url,
     clear_state_cookie,
+    entra_group_role,
+    entra_groups_configured,
     exchange,
     new_state,
     public_base,
@@ -327,6 +332,27 @@ class HistoryCache:
             assert self._summary is not None
             return self._summary
 
+    def latest_by_branch(self) -> dict[tuple[str, str], dict]:
+        """The newest scan for each (project, branch), project folded for matching.
+
+        Scans are in timeline order, so a later scan replaces an earlier one.
+        """
+        with self._lock:
+            self._refresh()
+            assert self._payload is not None
+            latest: dict[tuple[str, str], dict] = {}
+            for scan in self._payload["scans"]:
+                project, branch = scan.get("project"), scan.get("branch")
+                if not project or not branch:
+                    continue
+                latest[(project.casefold(), branch)] = {
+                    "id": scan["id"],
+                    "failed": _policy_fails(scan),
+                    "findings": len(scan.get("findings") or []),
+                    "revision": scan.get("revision"),
+                }
+            return latest
+
     def scan(self, scan_id: str) -> HistoryBody | None:
         """One scan in full, with the drift that ends at it. None when unknown."""
         with self._lock:
@@ -502,6 +528,40 @@ def content_security_policy(legacy: bool = False) -> str:
     )
 
 
+def _policy_fails(scan: dict) -> bool:
+    """Whether this scan's own score policy fails on every finding it holds.
+
+    The same rule as score.policy_failures, read from the history JSON. It
+    judges all findings, so for a pull request scan it says whether the head
+    fails on its own, not only what the pull request introduced.
+    """
+    policy = scan.get("policy") or {}
+    try:
+        threshold = float(policy["threshold"]) if policy.get("threshold") else None
+    except ValueError:
+        threshold = None
+    fail_on_kev = policy.get("failOnKev") == "true"
+    fail_unscored = policy.get("failUnscored") == "true"
+    for finding in scan.get("findings") or []:
+        try:
+            score = float(finding.get("score") or "")
+        except ValueError:
+            score = None
+        if score is not None and threshold is not None and score >= threshold:
+            return True
+        if fail_on_kev and finding.get("kev"):
+            return True
+        if fail_unscored and score is None:
+            return True
+    return False
+
+
+def _latest_scan(latest: dict[tuple[str, str], dict], names: list[str], branch: str | None) -> dict | None:
+    if not branch:
+        return None
+    return next((latest[(name, branch)] for name in names if (name, branch) in latest), None)
+
+
 def bind_server(
     scans_dir: Path,
     host: str = "127.0.0.1",
@@ -512,6 +572,7 @@ def bind_server(
     github_scan=None,
     github_fetch_zip=None,
     config_cwd: Path | None = None,
+    sources: list | None = None,
 ) -> ThreadingHTTPServer:
     scans_dir = scans_dir.resolve()
     store = AccountStore(data_dir or default_data_dir())
@@ -521,6 +582,12 @@ def bind_server(
     scan_lock = threading.Lock()
     history = HistoryCache(scans_dir)
     assets = static_files()
+    inventory = Inventory(
+        store.data_dir,
+        sources
+        if sources is not None
+        else [GitHubAppSource(store.data_dir, github_transport), AzureDevOpsSource()],
+    )
 
     class Handler(BaseHTTPRequestHandler):
         timeout = SOCKET_TIMEOUT_SECONDS
@@ -643,6 +710,25 @@ def bind_server(
                     return
                 self._history(scan_body)
                 return
+            if path == "/api/repositories":
+                if self._user() is None:
+                    return
+                self._json(200, self._repositories())
+                return
+            if path == "/api/runs":
+                if self._user() is None:
+                    return
+                self._json(
+                    200,
+                    {
+                        "syncing": inventory.syncing,
+                        "sources": [
+                            {key: source[key] for key in ("kind", "label", "configured", "syncedAt", "error", "runs")}
+                            for source in inventory.view()
+                        ],
+                    },
+                )
+                return
             if path == "/api/admin/users":
                 if self._admin() is None:
                     return
@@ -717,6 +803,15 @@ def bind_server(
                     self._json(getattr(exc, "status", 400), {"error": str(exc)})
                     return
                 self._json(201, {"user": user})
+                return
+            if path == "/api/repositories/sync":
+                if self._admin() is None:
+                    return
+                if not any(source["configured"] for source in inventory.view()):
+                    self._json(409, {"error": "No repository source is configured on this server."})
+                    return
+                started = inventory.sync_in_background()
+                self._json(202, {"started": started, "syncing": True})
                 return
             if path == "/api/github/hook":
                 self._github_hook()
@@ -798,15 +893,27 @@ def bind_server(
             if not code or not state or state != saved:
                 self._page(400, "Sign-in could not be confirmed. Start again.", clear_state_cookie())
                 return
+            identity = None
             try:
                 identity = exchange(
                     kind,
                     code,
                     public_base(self.headers.get("Host", ""), self.client_address[0]),
                 )
-                token, _user = store.sign_in(identity)
+                token, _user = store.sign_in(identity, entra_group_role(identity))
             except (AuthError, AccountError) as exc:
-                self._page(getattr(exc, "status", 401), str(exc), clear_state_cookie())
+                message = str(exc)
+                if (
+                    getattr(exc, "status", 401) == 403
+                    and identity is not None
+                    and identity.groups_overage
+                    and entra_groups_configured()
+                ):
+                    message = (
+                        "Microsoft Entra did not send your groups because you are in too many. "
+                        "Ask an administrator to add you on the Access page."
+                    )
+                self._page(getattr(exc, "status", 401), message, clear_state_cookie())
                 return
             self.send_response(302)
             self.send_header("Location", "/")
@@ -815,6 +922,34 @@ def bind_server(
             self.send_header("Content-Length", "0")
             self._common_headers()
             self.end_headers()
+
+        def _repositories(self) -> dict:
+            """The synced inventory, each branch with its newest scan, if any.
+
+            Only repositories the sources list appear here. A scan from a laptop
+            checkout that matches no synced repository stays on the Scans page.
+            """
+            latest = history.latest_by_branch()
+            sources = []
+            for source in inventory.view():
+                repositories = []
+                for repo in source["repositories"]:
+                    names = [repo["name"].casefold()]
+                    if repo.get("project"):
+                        names.append(f"{repo['project']}/{repo['name']}".casefold())
+                    branches = [
+                        {**branch, "scan": _latest_scan(latest, names, branch["name"])}
+                        for branch in repo["branches"]
+                    ]
+                    repositories.append(
+                        {
+                            **repo,
+                            "branches": branches,
+                            "defaultScan": _latest_scan(latest, names, repo.get("defaultBranch")),
+                        }
+                    )
+                sources.append({**{k: v for k, v in source.items() if k != "runs"}, "repositories": repositories})
+            return {"syncing": inventory.syncing, "sources": sources}
 
         def _local_session(self) -> None:
             if not _request_is_local(self):
@@ -1203,7 +1338,9 @@ def bind_server(
         def log_message(self, fmt: str, *args) -> None:
             return
 
-    return BoundedHTTPServer((host, port), Handler, max_connections())
+    server = BoundedHTTPServer((host, port), Handler, max_connections())
+    server.inventory = inventory  # type: ignore[attr-defined]
+    return server
 
 
 def warn_exposed_local_sign_in(host: str) -> None:
@@ -1235,9 +1372,15 @@ def serve(
     print(f"github         http://{shown_host}:{shown_port}/github")
     print(f"scans          {scans_dir.resolve()}")
     print(f"accounts       {(data_dir or default_data_dir()).resolve()}")
+    inventory = server.inventory  # type: ignore[attr-defined]
+    for source in inventory.view():
+        if source["configured"]:
+            print(f"source         {source['label']}")
+    inventory.start_background()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        inventory.stop()
         server.server_close()

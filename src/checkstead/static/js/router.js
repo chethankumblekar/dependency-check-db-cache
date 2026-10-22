@@ -4,7 +4,7 @@
 
 /**
  * @typedef {Object} Route
- * @property {"overview" | "scans" | "scan" | "evidence" | "builds" | "access" | "not-found"} name
+ * @property {"overview" | "repositories" | "scans" | "scan" | "evidence" | "builds" | "access" | "not-found"} name
  * @property {Record<string, string>} params
  */
 
@@ -12,6 +12,7 @@
 const TABLE = [
   [/^\/?$/, "overview", []],
   [/^\/overview$/, "overview", []],
+  [/^\/repositories$/, "repositories", []],
   [/^\/scans$/, "scans", []],
   [/^\/scans\/([^/]+)$/, "scan", ["id"]],
   [/^\/scans\/([^/]+)\/(findings|changes|dependencies|evidence)$/, "scan", ["id", "tab"]],

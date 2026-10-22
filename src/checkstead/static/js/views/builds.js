@@ -8,16 +8,85 @@ import { pageHead, withLoad } from "./common.js";
 /** @typedef {import("../app.js").Context} Context */
 /** @typedef {import("../api.js").BuildRuns} BuildRuns */
 /** @typedef {import("../api.js").BuildRun} BuildRun */
+/** @typedef {import("../api.js").SourceRuns} SourceRuns */
+/** @typedef {import("../api.js").SourceRun} SourceRun */
 
 /** @param {Context} ctx */
 export function renderBuilds(ctx) {
-  const refresh = h("button", { type: "button", class: "btn", onclick: () => ctx.load("builds", true) }, "Refresh");
+  const refresh = h(
+    "button",
+    {
+      type: "button",
+      class: "btn",
+      onclick: () => {
+        ctx.load("builds", true);
+        ctx.load("runs", true);
+      },
+    },
+    "Refresh",
+  );
   return h(
     "div",
     null,
-    pageHead("CI runs", "Recent Checkstead workflow runs in the repositories the GitHub App can read.", refresh),
+    pageHead("CI runs", "Recent Checkstead pipeline and workflow runs in the connected organizations.", refresh),
+    withLoad(ctx, "runs", (/** @type {SourceRuns} */ payload) => sourceRuns(ctx, payload)),
     withLoad(ctx, "builds", (/** @type {BuildRuns} */ runs) => builds(ctx, runs)),
   );
+}
+
+/**
+ * Runs from the synced sources other than GitHub, which keeps its own live table.
+ * @param {Context} ctx
+ * @param {SourceRuns} payload
+ */
+function sourceRuns(ctx, payload) {
+  const sources = payload.sources.filter((source) => source.configured && source.kind !== "github");
+  return h(
+    "div",
+    null,
+    sources.map((source) =>
+      h(
+        "section",
+        { class: "panel", "aria-label": `${source.label} runs` },
+        h("h2", null, source.label),
+        source.error ? banner("warn", "The last sync failed.", ` ${source.error}`) : null,
+        dataTable({
+          caption: `${source.label} Checkstead pipeline runs`,
+          columns: [
+            { key: "result", label: "Result", cell: (run) => resultTag(run) },
+            { key: "repo", label: "Repository", cell: (run) => sourceRunLink(run) },
+            { key: "pipeline", label: "Pipeline", cell: (run) => run.pipeline || "not recorded" },
+            { key: "branch", label: "Branch", cell: (run) => (run.branch ? h("code", { class: "id" }, run.branch) : "not recorded") },
+            { key: "time", label: "Queued", cell: (run) => (run.queuedAt ? timeEl(run.queuedAt, ctx.now) : "not recorded") },
+          ],
+          groups: [{ label: null, rows: source.runs }],
+          empty: source.syncedAt ? "No Checkstead pipeline runs. Pipelines are found by a name containing checkstead." : "Not synced yet.",
+        }),
+      ),
+    ),
+  );
+}
+
+/** @param {string} result */
+function resultTone(result) {
+  if (/^succeeded$/i.test(result)) return "verified";
+  if (/failed|canceled/i.test(result)) return "fail";
+  if (/partially/i.test(result)) return "warn";
+  return "";
+}
+
+/** @param {SourceRun} run */
+function resultTag(run) {
+  const result = run.result || run.status;
+  return h("span", { class: `tag ${resultTone(result)}`.trim() }, result);
+}
+
+/** @param {SourceRun} run */
+function sourceRunLink(run) {
+  const url = safeHttpUrl(run.url);
+  const project = run.project ? `${run.project}/` : "";
+  const name = run.repository ? `${project}${run.repository}` : run.pipeline || `Run ${run.id}`;
+  return url ? h("a", { href: url, rel: "noopener noreferrer" }, name) : name;
 }
 
 /**
@@ -25,6 +94,10 @@ export function renderBuilds(ctx) {
  * @param {BuildRuns} payload
  */
 function builds(ctx, payload) {
+  const others = (ctx.state.runs.data?.sources || []).some((source) => source.configured && source.kind !== "github");
+  if (!payload.connected && others) {
+    return h("p", { class: "muted" }, "GitHub is not connected. ", h("a", { href: "/github" }, "Set up the GitHub App"), " to list workflow runs too.");
+  }
   if (!payload.connected) {
     return stateBlock({
       iconName: "builds",
