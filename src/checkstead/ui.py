@@ -41,11 +41,18 @@ from checkstead.github_app import (
     scan_installed_repositories,
 )
 from checkstead.history import history_payload, load_history
+from checkstead.origin import parse_repository_url
+from checkstead.sources import Inventory
+from checkstead.upload import UploadError, max_upload_bytes, store_upload
+from checkstead.sources.azure_devops import AzureDevOpsSource
+from checkstead.sources.github import GitHubAppSource
 from checkstead.identity import AuthError, Identity, identify, list_providers
 from checkstead.sso import (
     STATE_COOKIE,
     authorize_url,
     clear_state_cookie,
+    entra_group_role,
+    entra_groups_configured,
     exchange,
     new_state,
     public_base,
@@ -55,6 +62,8 @@ from checkstead.sso import (
 )
 
 PAGE = Path(__file__).resolve().with_name("ui_page.html")
+UPLOAD_PATH = "/api/scans/upload"
+_PROVIDER_LABELS = {"azure-devops": "Azure DevOps", "github": "GitHub"}
 _AVATAR_PATH = re.compile(r"/api/users/([0-9]{1,12})/avatar")
 COOKIE = "checkstead_session"
 MAX_BODY = 8192
@@ -288,7 +297,7 @@ class HistoryCache:
         except FileNotFoundError:
             return ()
         for entry in children:
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name.startswith("."):
                 continue
             for name in ("checkstead.txt", "dependency-check-report.json"):
                 try:
@@ -326,6 +335,106 @@ class HistoryCache:
             self._refresh()
             assert self._summary is not None
             return self._summary
+
+    def latest_by_branch(self) -> dict[tuple[str, str], dict]:
+        """The newest scan for each (project, branch), project folded for matching.
+
+        Scans are in timeline order, so a later scan replaces an earlier one.
+        """
+        with self._lock:
+            self._refresh()
+            assert self._payload is not None
+            latest: dict[tuple[str, str], dict] = {}
+            for scan in self._payload["scans"]:
+                project, branch = scan.get("project"), scan.get("branch")
+                if not project or not branch:
+                    continue
+                latest[(project.casefold(), branch)] = {
+                    "id": scan["id"],
+                    "failed": _policy_fails(scan),
+                    "findings": len(scan.get("findings") or []),
+                    "revision": scan.get("revision"),
+                }
+            return latest
+
+    def reported(self) -> list[dict]:
+        """Repositories as pipelines reported them, grouped by organization.
+
+        Only scans with a repository URL count; a scan of a checkout has none.
+        Each branch keeps its newest scan (scans are in timeline order).
+        """
+        with self._lock:
+            self._refresh()
+            assert self._payload is not None
+            scans = list(self._payload["scans"])
+        organizations: dict[tuple[str, str], dict] = {}
+        for scan in scans:
+            origin = parse_repository_url(scan.get("repositoryUrl"))
+            branch = scan.get("branch")
+            if origin is None or not branch:
+                continue
+            key = (origin.provider, origin.organization.casefold())
+            org = organizations.setdefault(
+                key,
+                {
+                    "kind": f"pipeline-{origin.provider}",
+                    "provider": origin.provider,
+                    "organization": origin.organization,
+                    "label": f"{_PROVIDER_LABELS.get(origin.provider, 'Git')}: {origin.organization}",
+                    "configured": True,
+                    "reported": True,
+                    "syncedAt": None,
+                    "attemptedAt": None,
+                    "error": None,
+                    "repos": {},
+                },
+            )
+            repo = org["repos"].setdefault(
+                origin.url.casefold(),
+                {
+                    "source": org["kind"],
+                    "id": origin.url,
+                    "name": origin.repository,
+                    "project": origin.project,
+                    "url": origin.url,
+                    "disabled": False,
+                    "branches": {},
+                    "order": [],
+                },
+            )
+            repo["branches"][branch] = {
+                "name": branch,
+                "commit": scan.get("revision"),
+                "scan": {
+                    "id": scan["id"],
+                    "failed": _policy_fails(scan),
+                    "findings": len(scan.get("findings") or []),
+                    "revision": scan.get("revision"),
+                    "pullRequest": scan.get("pullRequest"),
+                    "buildUrl": scan.get("buildUrl"),
+                },
+            }
+            repo["order"] = [name for name in repo["order"] if name != branch] + [branch]
+        result = []
+        for org in organizations.values():
+            repositories = []
+            for repo in org.pop("repos").values():
+                order = repo.pop("order")
+                default = next((name for name in ("main", "master", "develop") if name in repo["branches"]), order[-1])
+                branches = sorted(repo["branches"].values(), key=lambda item: item["name"].casefold())
+                repositories.append(
+                    {
+                        **repo,
+                        "defaultBranch": default,
+                        "branches": branches,
+                        "defaultScan": repo["branches"][default]["scan"],
+                    }
+                )
+            org["repositories"] = sorted(
+                repositories, key=lambda item: ((item["project"] or "").casefold(), item["name"].casefold())
+            )
+            result.append(org)
+        return sorted(result, key=lambda item: item["label"].casefold())
 
     def scan(self, scan_id: str) -> HistoryBody | None:
         """One scan in full, with the drift that ends at it. None when unknown."""
@@ -502,6 +611,40 @@ def content_security_policy(legacy: bool = False) -> str:
     )
 
 
+def _policy_fails(scan: dict) -> bool:
+    """Whether this scan's own score policy fails on every finding it holds.
+
+    The same rule as score.policy_failures, read from the history JSON. It
+    judges all findings, so for a pull request scan it says whether the head
+    fails on its own, not only what the pull request introduced.
+    """
+    policy = scan.get("policy") or {}
+    try:
+        threshold = float(policy["threshold"]) if policy.get("threshold") else None
+    except ValueError:
+        threshold = None
+    fail_on_kev = policy.get("failOnKev") == "true"
+    fail_unscored = policy.get("failUnscored") == "true"
+    for finding in scan.get("findings") or []:
+        try:
+            score = float(finding.get("score") or "")
+        except ValueError:
+            score = None
+        if score is not None and threshold is not None and score >= threshold:
+            return True
+        if fail_on_kev and finding.get("kev"):
+            return True
+        if fail_unscored and score is None:
+            return True
+    return False
+
+
+def _latest_scan(latest: dict[tuple[str, str], dict], names: list[str], branch: str | None) -> dict | None:
+    if not branch:
+        return None
+    return next((latest[(name, branch)] for name in names if (name, branch) in latest), None)
+
+
 def bind_server(
     scans_dir: Path,
     host: str = "127.0.0.1",
@@ -512,6 +655,7 @@ def bind_server(
     github_scan=None,
     github_fetch_zip=None,
     config_cwd: Path | None = None,
+    sources: list | None = None,
 ) -> ThreadingHTTPServer:
     scans_dir = scans_dir.resolve()
     store = AccountStore(data_dir or default_data_dir())
@@ -521,6 +665,12 @@ def bind_server(
     scan_lock = threading.Lock()
     history = HistoryCache(scans_dir)
     assets = static_files()
+    inventory = Inventory(
+        store.data_dir,
+        sources
+        if sources is not None
+        else [GitHubAppSource(store.data_dir, github_transport), AzureDevOpsSource()],
+    )
 
     class Handler(BaseHTTPRequestHandler):
         timeout = SOCKET_TIMEOUT_SECONDS
@@ -558,6 +708,10 @@ def bind_server(
                 self.close_connection = True
                 self._json(403, {"error": "Cross-site request refused."})
                 return False
+            if unsafe and path == UPLOAD_PATH:
+                # A report is megabytes. The handler checks the upload token
+                # before it reads a byte, then reads up to the upload limit.
+                return True
             if unsafe:
                 return self._read_request_body()
             return True
@@ -643,10 +797,34 @@ def bind_server(
                     return
                 self._history(scan_body)
                 return
+            if path == "/api/repositories":
+                if self._user() is None:
+                    return
+                self._json(200, self._repositories())
+                return
+            if path == "/api/runs":
+                if self._user() is None:
+                    return
+                self._json(
+                    200,
+                    {
+                        "syncing": inventory.syncing,
+                        "sources": [
+                            {key: source[key] for key in ("kind", "label", "configured", "syncedAt", "error", "runs")}
+                            for source in inventory.view()
+                        ],
+                    },
+                )
+                return
             if path == "/api/admin/users":
                 if self._admin() is None:
                     return
                 self._json(200, {"users": store.list_users()})
+                return
+            if path == "/api/admin/upload-tokens":
+                if self._admin() is None:
+                    return
+                self._json(200, {"uploadTokens": store.list_upload_tokens()})
                 return
             if path == "/github":
                 if not self._github_ok():
@@ -718,6 +896,33 @@ def bind_server(
                     return
                 self._json(201, {"user": user})
                 return
+            if path == UPLOAD_PATH:
+                self._upload()
+                return
+            if path == "/api/admin/upload-tokens":
+                admin = self._admin()
+                if admin is None:
+                    return
+                body = self._body()
+                if body is None:
+                    return
+                try:
+                    token, record = store.create_upload_token(str(body.get("name") or ""), admin["id"])
+                except AccountError as exc:
+                    self._json(exc.status, {"error": str(exc)})
+                    return
+                # The only time the token is shown. The server keeps its hash.
+                self._json(201, {"token": token, "uploadToken": record})
+                return
+            if path == "/api/repositories/sync":
+                if self._admin() is None:
+                    return
+                if not any(source["configured"] for source in inventory.view()):
+                    self._json(409, {"error": "No repository source is configured on this server."})
+                    return
+                started = inventory.sync_in_background()
+                self._json(202, {"started": started, "syncing": True})
+                return
             if path == "/api/github/hook":
                 self._github_hook()
                 return
@@ -764,6 +969,21 @@ def bind_server(
                 store.sign_out(_cookie(self.headers.get("Cookie")))
                 self._json(200, {"signedOut": True}, _session_cookie("gone", 0))
                 return
+            prefix = "/api/admin/upload-tokens/"
+            if path.startswith(prefix):
+                if self._admin() is None:
+                    return
+                raw_id = path[len(prefix) :]
+                if not raw_id.isdigit() or len(raw_id) > 12:
+                    self._send(404, "text/plain; charset=utf-8", b"Not found\n")
+                    return
+                try:
+                    store.revoke_upload_token(int(raw_id))
+                except AccountError as exc:
+                    self._json(exc.status, {"error": str(exc)})
+                    return
+                self._json(200, {"revoked": int(raw_id)})
+                return
             user_id = self._user_id()
             if user_id is None:
                 return
@@ -798,15 +1018,27 @@ def bind_server(
             if not code or not state or state != saved:
                 self._page(400, "Sign-in could not be confirmed. Start again.", clear_state_cookie())
                 return
+            identity = None
             try:
                 identity = exchange(
                     kind,
                     code,
                     public_base(self.headers.get("Host", ""), self.client_address[0]),
                 )
-                token, _user = store.sign_in(identity)
+                token, _user = store.sign_in(identity, entra_group_role(identity))
             except (AuthError, AccountError) as exc:
-                self._page(getattr(exc, "status", 401), str(exc), clear_state_cookie())
+                message = str(exc)
+                if (
+                    getattr(exc, "status", 401) == 403
+                    and identity is not None
+                    and identity.groups_overage
+                    and entra_groups_configured()
+                ):
+                    message = (
+                        "Microsoft Entra did not send your groups because you are in too many. "
+                        "Ask an administrator to add you on the Access page."
+                    )
+                self._page(getattr(exc, "status", 401), message, clear_state_cookie())
                 return
             self.send_response(302)
             self.send_header("Location", "/")
@@ -815,6 +1047,79 @@ def bind_server(
             self.send_header("Content-Length", "0")
             self._common_headers()
             self.end_headers()
+
+        def _upload(self) -> None:
+            """Accept a report zip from a pipeline holding an upload token."""
+            # The body has not been read. Any refusal before reading it ends
+            # the connection, so its bytes are never parsed as a request.
+            auth = self.headers.get("Authorization", "")
+            token = auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+            record = store.check_upload_token(token)
+            if record is None:
+                self.close_connection = True
+                self._json(401, {"error": "An upload token is required. An administrator creates one on Access."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                length = -1
+            if length <= 0:
+                self.close_connection = True
+                self._json(411, {"error": "Send the report zip with a Content-Length."})
+                return
+            if length > max_upload_bytes():
+                self.close_connection = True
+                self._json(413, {"error": "The report is larger than this server accepts (CHECKSTEAD_MAX_UPLOAD_MB)."})
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self.close_connection = True
+                self._json(400, {"error": "The upload ended early."})
+                return
+            try:
+                scan_id = store_upload(body, scans_dir, record["id"])
+            except UploadError as exc:
+                self._json(exc.status, {"error": str(exc)})
+                return
+            self._json(201, {"id": scan_id, "url": f"/#/scans/{scan_id}"})
+
+        def _repositories(self) -> dict:
+            """Repositories as pipelines reported them, plus any synced organization.
+
+            Pipeline scans carry their repository URL, so they need no access to
+            the organization. A scan of a checkout carries none and stays on Scans.
+            An organization the server also syncs is shown once, from the sync.
+            """
+            latest = history.latest_by_branch()
+            synced = inventory.view()
+            synced_orgs = set()
+            azure = AzureDevOpsSource()
+            if any(source["kind"] == "azure-devops" and source["configured"] and source["syncedAt"] for source in synced):
+                synced_orgs.add(("azure-devops", azure.organization.casefold()))
+            sources = [
+                org
+                for org in history.reported()
+                if (org["provider"], org["organization"].casefold()) not in synced_orgs
+            ]
+            for source in synced:
+                repositories = []
+                for repo in source["repositories"]:
+                    names = [repo["name"].casefold()]
+                    if repo.get("project"):
+                        names.append(f"{repo['project']}/{repo['name']}".casefold())
+                    branches = [
+                        {**branch, "scan": _latest_scan(latest, names, branch["name"])}
+                        for branch in repo["branches"]
+                    ]
+                    repositories.append(
+                        {
+                            **repo,
+                            "branches": branches,
+                            "defaultScan": _latest_scan(latest, names, repo.get("defaultBranch")),
+                        }
+                    )
+                sources.append({**{k: v for k, v in source.items() if k != "runs"}, "repositories": repositories})
+            return {"syncing": inventory.syncing, "sources": sources}
 
         def _local_session(self) -> None:
             if not _request_is_local(self):
@@ -1203,7 +1508,9 @@ def bind_server(
         def log_message(self, fmt: str, *args) -> None:
             return
 
-    return BoundedHTTPServer((host, port), Handler, max_connections())
+    server = BoundedHTTPServer((host, port), Handler, max_connections())
+    server.inventory = inventory  # type: ignore[attr-defined]
+    return server
 
 
 def warn_exposed_local_sign_in(host: str) -> None:
@@ -1235,9 +1542,15 @@ def serve(
     print(f"github         http://{shown_host}:{shown_port}/github")
     print(f"scans          {scans_dir.resolve()}")
     print(f"accounts       {(data_dir or default_data_dir()).resolve()}")
+    inventory = server.inventory  # type: ignore[attr-defined]
+    for source in inventory.view():
+        if source["configured"]:
+            print(f"source         {source['label']}")
+    inventory.start_background()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        inventory.stop()
         server.server_close()

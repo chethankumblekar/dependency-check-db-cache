@@ -1,0 +1,358 @@
+"""The one Checkstead thread on an Azure Repos pull request.
+
+No vulnerability feed is contacted. The comment step talks to a local stand-in
+for the Azure DevOps pull request threads API.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import TestCase
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from checkstead.score import COMMENT_MARKER  # noqa: E402
+
+SCRIPT = ROOT / "scripts" / "ado-pr-comment.py"
+PROJECT = "6ce954b1-ce1f-45d1-b94d-e6bf2464ba2c"
+REPOSITORY = "3411ebc1-d5aa-464f-9615-0b527bc66719"
+MARKED = {"Checkstead.Report": {"$type": "System.String", "$value": "1"}}
+THREADS = f"/org/{PROJECT}/_apis/git/repositories/{REPOSITORY}/pullRequests/42/threads"
+
+
+class AzureDevOpsPullRequestCommentTest(TestCase):
+    def setUp(self) -> None:
+        self.server = _ThreadServer()
+        self.addCleanup(self.server.close)
+        self.comment = ROOT / "build" / "tests" / "ado-comment.md"
+        self.comment.parent.mkdir(parents=True, exist_ok=True)
+        self.comment.write_text(f"{COMMENT_MARKER}\nCheckstead pull request #42\n", encoding="utf-8")
+        self.env = os.environ.copy()
+        self.env.update(
+            {
+                "SYSTEM_ACCESSTOKEN": "pipeline-token",
+                "SYSTEM_COLLECTIONURI": f"{self.server.url}/org/",
+                "SYSTEM_TEAMPROJECTID": PROJECT,
+                "BUILD_REPOSITORY_ID": REPOSITORY,
+                "SYSTEM_PULLREQUEST_PULLREQUESTID": "42",
+                "COMMENT_FILE": str(self.comment),
+            }
+        )
+
+    def _run(self, env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            env=env or self.env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_creates_one_closed_thread_then_updates_it(self) -> None:
+        first = self._run()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.comment.write_text(
+            f"{COMMENT_MARKER}\nCheckstead pull request #42\nupdated\n", encoding="utf-8"
+        )
+        second = self._run()
+        self.assertEqual(second.returncode, 0, second.stderr)
+
+        self.assertEqual(len(self.server.threads), 1)
+        thread = self.server.threads[0]
+        self.assertEqual(thread["status"], 4)
+        self.assertIn("updated", thread["comments"][0]["content"])
+        self.assertEqual(self.server.methods, ["GET", "POST", "GET", "PATCH"])
+        self.assertTrue(all(path == THREADS or path.startswith(THREADS + "/") for path in self.server.paths))
+        self.assertTrue(all(query == "api-version=7.1" for query in self.server.queries))
+        self.assertTrue(all(item == "Bearer pipeline-token" for item in self.server.authorizations))
+        self.assertNotIn("pipeline-token", first.stdout + first.stderr + second.stdout + second.stderr)
+
+    def test_updates_the_marked_comment_and_skips_deleted_ones(self) -> None:
+        self.server.threads.extend(
+            [
+                {"id": 3, "status": 1, "comments": [{"id": 1, "content": "a reviewer note"}]},
+                {"id": 4, "isDeleted": True, "comments": [{"id": 1, "content": COMMENT_MARKER}]},
+                {
+                    "id": 9,
+                    "status": 4,
+                    "properties": MARKED,
+                    "comments": [
+                        {"id": 2, "content": f"{COMMENT_MARKER}\nold"},
+                        {"id": 3, "content": f"reply quoting {COMMENT_MARKER}"},
+                    ],
+                },
+            ]
+        )
+        completed = self._run()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn("POST", self.server.methods)
+        self.assertEqual(self.server.patched, (9, 2))
+
+    def test_a_typed_marker_without_the_thread_property_is_left_alone(self) -> None:
+        # The build identity cannot edit a person's comment, so updating one
+        # would fail the step on every push. A new marked thread is created instead.
+        self.server.threads.append(
+            {"id": 5, "status": 1, "comments": [{"id": 1, "content": f"{COMMENT_MARKER}\ntyped by a person"}]}
+        )
+        completed = self._run()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self.server.methods, ["GET", "POST"])
+        self.assertIsNone(self.server.patched)
+        self.assertEqual(self.server.threads[-1]["properties"], MARKED)
+
+    def test_outside_a_pull_request_build_it_does_nothing(self) -> None:
+        env = dict(self.env)
+        del env["SYSTEM_PULLREQUEST_PULLREQUESTID"]
+        completed = self._run(env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self.server.methods, [])
+
+    def test_without_the_mapped_token_it_does_nothing(self) -> None:
+        env = dict(self.env)
+        env["SYSTEM_ACCESSTOKEN"] = ""
+        completed = self._run(env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self.server.methods, [])
+
+    def test_refuses_values_that_would_change_the_request_path(self) -> None:
+        cases = {
+            "SYSTEM_TEAMPROJECTID": "../other",
+            "BUILD_REPOSITORY_ID": "repo/../../x",
+            "SYSTEM_PULLREQUEST_PULLREQUESTID": "42/../7",
+            "SYSTEM_COLLECTIONURI": "http://dev.azure.com/org/",
+        }
+        for name, value in cases.items():
+            with self.subTest(name=name):
+                env = dict(self.env)
+                env[name] = value
+                completed = self._run(env)
+                self.assertEqual(completed.returncode, 1)
+                self.assertIn(name, completed.stderr)
+        self.assertEqual(self.server.methods, [])
+
+    def _find(self, env: dict | None = None) -> subprocess.CompletedProcess:
+        env = dict(env or self.env)
+        env.pop("SYSTEM_PULLREQUEST_PULLREQUESTID", None)
+        env.setdefault("BUILD_SOURCEBRANCH", "refs/heads/feature/add-axios")
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--find"],
+            env=env, text=True, capture_output=True, check=False,
+        )
+
+    @staticmethod
+    def _variables(stdout: str) -> dict[str, str]:
+        found = re.findall(r"^##vso\[task\.setvariable variable=(\w+)\](.*)$", stdout, re.MULTILINE)
+        return dict(found)
+
+    def test_find_without_a_pull_request_sets_empty_variables(self) -> None:
+        completed = self._find()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self._variables(completed.stdout), {"CHECKSTEAD_PR_ID": "", "CHECKSTEAD_PR_TARGET": ""})
+        self.assertIn("scanned alone", completed.stdout)
+        self.assertEqual(self.server.methods, ["GET"])
+        query = parse_qs(self.server.queries[0])
+        self.assertEqual(query["searchCriteria.sourceRefName"], ["refs/heads/feature/add-axios"])
+        self.assertEqual(query["searchCriteria.status"], ["active"])
+        self.assertEqual(query["api-version"], ["7.1"])
+        self.assertEqual(self.server.authorizations, ["Bearer pipeline-token"])
+
+    def test_find_picks_the_newest_active_pull_request_from_the_pushed_branch(self) -> None:
+        self.server.pull_requests.extend(
+            [
+                {"pullRequestId": 40, "status": "active", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/release"},
+                {"pullRequestId": 42, "status": "active", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/main"},
+                {"pullRequestId": 50, "status": "completed", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/main"},
+                {"pullRequestId": 51, "status": "active", "sourceRefName": "refs/heads/other", "targetRefName": "refs/heads/main"},
+            ]
+        )
+        completed = self._find()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            self._variables(completed.stdout),
+            {"CHECKSTEAD_PR_ID": "42", "CHECKSTEAD_PR_TARGET": "refs/heads/main"},
+        )
+        self.assertIn("not #40", completed.stdout)
+
+    def test_find_under_a_build_validation_policy_uses_the_build_variables(self) -> None:
+        env = dict(self.env)
+        env["SYSTEM_PULLREQUEST_TARGETBRANCH"] = "refs/heads/main"
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT), "--find"], env=env, text=True, capture_output=True, check=False
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            self._variables(completed.stdout),
+            {"CHECKSTEAD_PR_ID": "42", "CHECKSTEAD_PR_TARGET": "refs/heads/main"},
+        )
+        self.assertEqual(self.server.methods, [])
+
+    def test_find_without_the_token_or_a_branch_looks_nothing_up(self) -> None:
+        for name, value in (("SYSTEM_ACCESSTOKEN", ""), ("BUILD_SOURCEBRANCH", "refs/tags/v1.0.0")):
+            with self.subTest(name=name):
+                env = dict(self.env)
+                env[name] = value
+                completed = self._find(env)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(self._variables(completed.stdout)["CHECKSTEAD_PR_ID"], "")
+        self.assertEqual(self.server.methods, [])
+
+    def test_a_failed_lookup_fails_the_step_without_the_token(self) -> None:
+        self.server.lookup_status = 403
+        completed = self._find()
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("HTTP 403", completed.stderr)
+        self.assertNotIn("##vso[task.setvariable", completed.stdout)
+        self.assertNotIn("pipeline-token", completed.stdout + completed.stderr)
+
+    def test_status_follows_the_job_status_and_links_the_build(self) -> None:
+        env = dict(self.env)
+        env["BUILD_BUILDID"] = "130055"
+        for job, state in (("Failed", "failed"), ("Succeeded", "succeeded"), ("SucceededWithIssues", "succeeded"), ("Canceled", "failed")):
+            with self.subTest(job=job):
+                completed = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--status", job], env=env, text=True, capture_output=True, check=False
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                status = self.server.statuses[-1]
+                self.assertEqual(status["state"], state)
+                self.assertEqual(status["context"], {"genre": "checkstead", "name": "score-policy"})
+                self.assertTrue(status["targetUrl"].endswith(f"/{PROJECT}/_build/results?buildId=130055"))
+        self.assertEqual(len(self.server.threads), 1)
+        self.assertTrue(all(path == f"{THREADS[: -len('/threads')]}/statuses" for path, method in zip(self.server.paths, self.server.methods) if method == "POST" and path.endswith("/statuses")))
+
+    def test_the_ci_example_finds_the_pull_request_without_macros(self) -> None:
+        example = (ROOT / "integrations" / "azure-devops" / "pr-ci.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            re.findall(r"\$\((?:System|Build|Agent)\.[A-Za-z.]+\)", example),
+            ["$(System.AccessToken)", "$(System.AccessToken)"],
+        )
+        self.assertIn("checkstead-ado-comment --find", example)
+        self.assertIn('checkstead-ado-comment --status "$AGENT_JOBSTATUS"', example)
+        self.assertIn("pr: none", example)
+        self.assertIn("ne(variables['CHECKSTEAD_PR_ID'], '')", example)
+        self.assertNotIn("NVD_API_KEY", example)
+
+    def test_the_script_takes_the_token_only_from_the_pipeline(self) -> None:
+        script = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("SYSTEM_ACCESSTOKEN", script)
+        self.assertNotIn("input(", script)
+        self.assertNotIn("paste", script.lower())
+        self.assertNotIn("services.nvd.nist.gov", script)
+        example = (ROOT / "integrations" / "azure-devops" / "pull-request.yml").read_text(encoding="utf-8")
+        self.assertIn("SYSTEM_ACCESSTOKEN: $(System.AccessToken)", example)
+        self.assertIn("--pull-request", example)
+        self.assertNotIn("NVD_API_KEY", example)
+        # A $(...) macro is pasted into the script text before bash runs it, and the
+        # pull request author picks the source branch name. Only the token mapping
+        # under env: may use a macro.
+        self.assertEqual(
+            re.findall(r"\$\((?:System|Build|Agent)\.[A-Za-z.]+\)", example),
+            ["$(System.AccessToken)"],
+        )
+        self.assertIn('if [[ "${BUILD_REASON:-}" != "PullRequest" ]]', example)
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY scripts/ado-pr-comment.py /usr/local/bin/checkstead-ado-comment", dockerfile)
+        self.assertIn("/usr/local/bin/checkstead-ado-comment", example)
+
+
+class _ThreadServer:
+    def __init__(self) -> None:
+        outer = self
+        self.threads: list[dict] = []
+        self.methods: list[str] = []
+        self.paths: list[str] = []
+        self.queries: list[str] = []
+        self.authorizations: list[str] = []
+        self.patched: tuple[int, int] | None = None
+        self.pull_requests: list[dict] = []
+        self.statuses: list[dict] = []
+        self.lookup_status = 200
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self._record("GET")
+                parsed = urlparse(self.path)
+                if parsed.path.endswith("/pullrequests"):
+                    if outer.lookup_status != 200:
+                        return self._json({"message": "TF401019"}, outer.lookup_status)
+                    query = parse_qs(parsed.query)
+                    source = query.get("searchCriteria.sourceRefName", [""])[0]
+                    state = query.get("searchCriteria.status", [""])[0]
+                    found = [
+                        item
+                        for item in outer.pull_requests
+                        if item["sourceRefName"] == source and item["status"] == state
+                    ]
+                    return self._json({"value": found, "count": len(found)})
+                self._json({"value": outer.threads, "count": len(outer.threads)})
+
+            def do_POST(self):
+                self._record("POST")
+                payload = self._body()
+                if urlparse(self.path).path.endswith("/statuses"):
+                    outer.statuses.append(payload)
+                    return self._json({"id": len(outer.statuses), **payload})
+                thread = {
+                    "id": 11,
+                    "status": payload.get("status"),
+                    "properties": payload.get("properties"),
+                    "comments": [],
+                }
+                for index, comment in enumerate(payload.get("comments", []), start=1):
+                    thread["comments"].append({"id": index, "content": comment["content"]})
+                outer.threads.append(thread)
+                self._json(thread)
+
+            def do_PATCH(self):
+                self._record("PATCH")
+                payload = self._body()
+                parts = urlparse(self.path).path.rstrip("/").split("/")
+                thread_id, comment_id = int(parts[-3]), int(parts[-1])
+                outer.patched = (thread_id, comment_id)
+                for thread in outer.threads:
+                    if thread["id"] == thread_id:
+                        for comment in thread["comments"]:
+                            if comment["id"] == comment_id:
+                                comment["content"] = payload["content"]
+                self._json({"id": comment_id, "content": payload["content"]})
+
+            def _record(self, method: str) -> None:
+                parsed = urlparse(self.path)
+                outer.methods.append(method)
+                outer.paths.append(parsed.path)
+                outer.queries.append(parsed.query)
+                outer.authorizations.append(self.headers.get("Authorization", ""))
+
+            def _body(self) -> dict:
+                length = int(self.headers.get("Content-Length", "0"))
+                return json.loads(self.rfile.read(length).decode("utf-8"))
+
+            def _json(self, payload, status: int = 200) -> None:
+                raw = json.dumps(payload).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, fmt, *args):
+                return
+
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        host, port = self._httpd.server_address[:2]
+        self.url = f"http://{host}:{port}"
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()

@@ -116,6 +116,44 @@ export function detail(id) {
  * A fake API. Each method is replaceable; calls are recorded.
  * @param {Record<string, any>} overrides
  */
+/** One synced Azure DevOps organization, as /api/repositories returns it. */
+export function repositories(extra = {}) {
+  const pass = { id: "20261022T000000Z-web-main", failed: false, findings: 2, revision: "a".repeat(40) };
+  const fail = { id: "20261022T000000Z-web-feature", failed: true, findings: 32, revision: "b".repeat(40) };
+  return {
+    syncing: false,
+    sources: [
+      { kind: "github", label: "GitHub", configured: false, syncedAt: null, attemptedAt: null, error: null, repositories: [] },
+      {
+        kind: "azure-devops",
+        label: "Azure DevOps: acme",
+        configured: true,
+        syncedAt: "2026-10-22T06:00:00Z",
+        attemptedAt: "2026-10-22T06:00:00Z",
+        error: null,
+        repositories: [
+          {
+            source: "azure-devops", id: "r1", name: "web-app", project: "Proarc-Products",
+            url: "https://dev.azure.com/acme/Proarc-Products/_git/web-app", defaultBranch: "main", disabled: false,
+            branches: [
+              { name: "feature/add-axios", commit: "b".repeat(40), scan: fail },
+              { name: "main", commit: "a".repeat(40), scan: pass },
+            ],
+            defaultScan: pass,
+          },
+          {
+            source: "azure-devops", id: "r2", name: "api", project: "Tools",
+            url: "javascript:alert(1)", defaultBranch: "develop", disabled: false,
+            branches: [{ name: "develop", commit: null, scan: null }],
+            defaultScan: null,
+          },
+        ],
+      },
+    ],
+    ...extra,
+  };
+}
+
 export function fakeApi(overrides = {}) {
   const calls = [];
   const record = (name, value) => (...args) => {
@@ -137,6 +175,12 @@ export function fakeApi(overrides = {}) {
     removeUser: record("removeUser", (id) => Promise.resolve({ removed: id })),
     builds: record("builds", { connected: false, runs: [] }),
     rerun: record("rerun", {}),
+    repositories: record("repositories", { syncing: false, sources: [] }),
+    syncRepositories: record("syncRepositories", { started: true, syncing: true }),
+    runs: record("runs", { syncing: false, sources: [] }),
+    uploadTokens: record("uploadTokens", { uploadTokens: [{ id: 1, name: "pipelines", createdAt: "2026-10-20T00:00:00Z", lastUsedAt: null }] }),
+    createUploadToken: record("createUploadToken", (name) => Promise.resolve({ token: "cks_example-token-value", uploadToken: { id: 2, name, createdAt: "2026-10-22T00:00:00Z", lastUsedAt: null } })),
+    revokeUploadToken: record("revokeUploadToken", (id) => Promise.resolve({ revoked: id })),
   };
   for (const [name, value] of Object.entries(overrides)) base[name] = record(name, value);
   return { api: base, calls };

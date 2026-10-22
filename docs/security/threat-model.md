@@ -194,6 +194,13 @@ and `su` to `checkstead`. A process that is already non-root skips `chown`.
 | A user in another Entra directory signs in with a login an administrator added | `tid` checked against `CHECKSTEAD_ENTRA_TENANT` or `CHECKSTEAD_ENTRA_ALLOWED_TENANTS`; `aud` checked | `tests/test_sso.py` |
 | A tampered Python or JDK download during `setup.sh`/`setup.ps1` | Fixed releases pinned by SHA-256 | `tests/test_setup.py` |
 | A published tag names an image that was never scanned | Gates run on the pushed digest; tags move only after the gates and attestation pass | `tests/test_ci.py` |
+| A pull request author names a branch `a$(cmd)` so a pipeline that pastes it as a `$(...)` macro runs the command on the agent | The Azure DevOps examples read every value from environment variables; only `env:` mappings use a macro; a test fails if a `System.`, `Build.`, or `Agent.` macro returns to a script body | `tests/test_azure_devops_pr.py` |
+| Someone types the report marker into a comment so the build tries, and fails with 403, to edit a person's comment on every push | Only a thread carrying the `Checkstead.Report` property, which the web UI cannot set, is updated, and only its first comment | same |
+| A client without a token posts a large body to fill memory or disk | `POST /api/scans/upload` checks the upload token before reading; a body over `CHECKSTEAD_MAX_UPLOAD_MB` is refused unread and the connection closed | `tests/test_upload.py` |
+| An upload carries `../`, nested paths, links, or extra files to write outside the scans directory or plant content | Only Checkstead report files at the zip's top level are kept; a `checkstead.txt` that parses is required; the report is written to a dot folder and renamed when complete | same |
+| A leaked upload token is used for months | Tokens are stored as SHA-256 hashes, show their last use, and are revoked on Access | same |
+| `Build.Repository.Uri` carries the organization or a credential as userinfo | Repository and build URLs are stored only as https without userinfo, query (build link keeps `buildId`), or fragment | same |
+| A group change locks out the last administrator, or Entra sends a link instead of groups | Group roles only admit and promote, never demote; an overage token gets a clear refusal, not an admission | `tests/test_sources.py` |
 
 ## What this project does not guarantee
 

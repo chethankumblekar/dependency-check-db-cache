@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ApiError } from "../../src/checkstead/static/js/api.js";
 import { createApp } from "../../src/checkstead/static/js/app.js";
-import { NOW, axe, fakeApi, freshDom, history, rejecting, settle } from "./helpers.mjs";
+import { NOW, axe, fakeApi, freshDom, history, rejecting, repositories, settle } from "./helpers.mjs";
 
 async function boot(hash, overrides = {}) {
   const dom = freshDom(hash);
@@ -144,6 +144,134 @@ test("access: removal needs a second press", async () => {
   root.querySelector('button[aria-label="Confirm removing bo@example.com"]').click();
   await settle();
   assert.deepEqual(calls.find(([name]) => name === "removeUser").slice(1), [2]);
+});
+
+test("repositories: synced organization, grouped by project, with each branch's newest result", async () => {
+  const { dom, root } = await boot("#/repositories", { repositories: repositories() });
+  const page = text(root);
+  assert.match(page, /Azure DevOps: acme/);
+  assert.match(page, /Proarc-Products \(1\)/);
+  assert.match(page, /Tools \(1\)/);
+  assert.match(page, /Passes, 2 findings/);
+  assert.match(page, /2 branches/);
+  assert.match(page, /Fails policy/);
+  assert.match(page, /not scanned/);
+  // GitHub is not connected, so it gets no section.
+  assert.doesNotMatch(page, /GitHub repositories/);
+  const web = [...root.querySelectorAll("a")].find((a) => a.textContent === "web-app");
+  assert.equal(web.getAttribute("href"), "https://dev.azure.com/acme/Proarc-Products/_git/web-app");
+  // A javascript: URL from the source is shown as text, never a link.
+  assert.ok(![...root.querySelectorAll("a")].some((a) => (a.getAttribute("href") || "").startsWith("javascript:")));
+  assert.match(root.querySelector('a[href="#/scans/20261022T000000Z-web-feature"]').textContent, /Fails policy/);
+  assert.deepEqual(await axe(dom), []);
+});
+
+test("repositories: the filter hides other repositories without a reload", async () => {
+  const { dom, root, calls } = await boot("#/repositories", { repositories: repositories() });
+  const before = calls.filter(([name]) => name === "repositories").length;
+  const filter = root.querySelector('input[type="search"]');
+  filter.value = "tools/";
+  filter.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  const rows = [...root.querySelectorAll("tr[data-repo]")];
+  assert.deepEqual(rows.filter((row) => !row.hidden).map((row) => row.getAttribute("data-repo")), ["tools/api"]);
+  assert.equal(calls.filter(([name]) => name === "repositories").length, before);
+});
+
+test("repositories: an administrator starts a sync; a member cannot", async () => {
+  const { root, calls } = await boot("#/repositories", { repositories: repositories() });
+  const sync = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("Sync now"));
+  sync.click();
+  await settle();
+  assert.ok(calls.some(([name]) => name === "syncRepositories"));
+  assert.match(text(root), /Sync started/);
+  const member = { id: 2, provider: "entra", login: "bo@example.com", displayName: "Bo", role: "user" };
+  const second = await boot("#/repositories", { session: { user: member }, repositories: repositories() });
+  assert.ok(![...second.root.querySelectorAll("button")].some((b) => b.textContent.includes("Sync now")));
+});
+
+test("repositories: a failed sync keeps the last list and says why", async () => {
+  const payload = repositories();
+  payload.sources[1].error = "Azure DevOps did not list projects. HTTP 503.";
+  const { root } = await boot("#/repositories", { repositories: payload });
+  assert.match(text(root), /The last sync failed\..*HTTP 503\..*Showing the last good sync\./);
+  assert.match(text(root), /web-app/);
+});
+
+test("repositories: nothing reported yet explains the pipeline route", async () => {
+  const { dom, root } = await boot("#/repositories");
+  assert.match(text(root), /No pipeline has sent a report yet/);
+  assert.match(text(root), /CHECKSTEAD_UPLOAD_TOKEN/);
+  assert.equal(root.querySelector('a[href="#/access"].btn').textContent, "Create an upload token");
+  assert.deepEqual(await axe(dom), []);
+});
+
+test("repositories: pipeline-reported scans show the pull request and the run", async () => {
+  const fail = { id: "s-feature", failed: true, findings: 32, revision: "b".repeat(40), pullRequest: "21269", buildUrl: "https://dev.azure.com/Ascertra/p/_build/results?buildId=130075" };
+  const payload = {
+    syncing: false,
+    sources: [{
+      kind: "pipeline-azure-devops", label: "Azure DevOps: Ascertra", configured: true, reported: true,
+      syncedAt: null, attemptedAt: null, error: null,
+      repositories: [{
+        source: "pipeline-azure-devops", id: "u", name: "proarc.cloudoperations", project: "Proarc-Products",
+        url: "https://dev.azure.com/Ascertra/Proarc-Products/_git/proarc.cloudoperations", defaultBranch: "checkstead-test/add-axios",
+        disabled: false, branches: [{ name: "checkstead-test/add-axios", commit: "b".repeat(40), scan: fail }], defaultScan: fail,
+      }],
+    }],
+  };
+  const { dom, root } = await boot("#/repositories", { repositories: payload });
+  const page = text(root);
+  assert.match(page, /Reported by pipelines · 1 repository/);
+  assert.match(page, /PR #21269/);
+  const run = [...root.querySelectorAll("a")].find((a) => a.textContent === "pipeline run");
+  assert.equal(run.getAttribute("href"), "https://dev.azure.com/Ascertra/p/_build/results?buildId=130075");
+  assert.deepEqual(await axe(dom), []);
+});
+
+test("access: an administrator creates an upload token, sees it once, and revokes one", async () => {
+  const { dom, root, calls } = await boot("#/access");
+  assert.match(text(root), /Upload tokens/);
+  assert.match(text(root), /pipelines/);
+  root.querySelector("#token-name").value = "  Proarc pipelines ";
+  root.querySelector("#token-name").closest("form").dispatchEvent(new dom.window.Event("submit", { cancelable: true, bubbles: true }));
+  await settle();
+  assert.deepEqual(calls.find(([name]) => name === "createUploadToken").slice(1), ["Proarc pipelines"]);
+  assert.equal(root.querySelector("#new-token").value, "cks_example-token-value");
+  assert.match(text(root), /Copy this token now\. It is shown once\./);
+  assert.deepEqual(await axe(dom), []);
+  // Leaving the page forgets it.
+  await go(dom, "#/scans");
+  await go(dom, "#/access");
+  assert.equal(root.querySelector("#new-token"), null);
+  const revoke = root.querySelector('button[aria-label="Revoke pipelines"]');
+  revoke.click();
+  await settle();
+  assert.ok(!calls.some(([name]) => name === "revokeUploadToken"));
+  root.querySelector('button[aria-label="Confirm revoking pipelines"]').click();
+  await settle();
+  assert.deepEqual(calls.find(([name]) => name === "revokeUploadToken").slice(1), [1]);
+});
+
+test("CI runs: Azure DevOps pipeline runs sit beside GitHub", async () => {
+  const runs = {
+    syncing: false,
+    sources: [
+      {
+        kind: "azure-devops", label: "Azure DevOps: acme", configured: true, syncedAt: "2026-10-22T06:00:00Z", error: null,
+        runs: [{ source: "azure-devops", id: "130078", repository: "web-app", project: "Proarc-Products", pipeline: "checkstead-pr",
+          status: "completed", result: "failed", branch: "feature/add-axios", url: "https://dev.azure.com/acme/x/_build/results?buildId=130078",
+          queuedAt: "2026-10-22T06:00:00Z", finishedAt: "2026-10-22T06:09:00Z" }],
+      },
+    ],
+  };
+  const { dom, root } = await boot("#/builds", { runs });
+  const page = text(root);
+  assert.match(page, /Proarc-Products\/web-app/);
+  assert.match(page, /checkstead-pr/);
+  assert.match(page, /failed/);
+  // GitHub is not connected but another source is: a note, not the full set-up panel.
+  assert.match(page, /GitHub is not connected\. Set up the GitHub App to list workflow runs too\./);
+  assert.deepEqual(await axe(dom), []);
 });
 
 test("members see neither the Access link nor the page", async () => {

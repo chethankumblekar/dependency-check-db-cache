@@ -33,7 +33,7 @@ if [[ "$(id -u)" != "0" ]]; then
   fi
 fi
 
-if [[ "${1:-}" == "scan" || "${1:-}" == "version" || "${1:-}" == "write-manifest" || "${1:-}" == "ui" || "${1:-}" == "doctor" ]]; then
+if [[ "${1:-}" == "scan" || "${1:-}" == "upload" || "${1:-}" == "version" || "${1:-}" == "write-manifest" || "${1:-}" == "ui" || "${1:-}" == "doctor" ]]; then
   exec checkstead "$@"
 fi
 

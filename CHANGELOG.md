@@ -6,6 +6,38 @@ listed as product versions.
 
 ## Unreleased
 
+Azure DevOps:
+
+- `integrations/azure-devops/pull-request.yml` scans an Azure Repos pull
+  request against its target branch and keeps one Checkstead thread on it.
+  The scanner image ships the comment step as
+  `/usr/local/bin/checkstead-ado-comment`. It uses only `System.AccessToken`
+  mapped into the step, and creates the thread closed so a comment resolution
+  policy does not block completion. See [docs/azure.md](docs/azure.md).
+- `integrations/azure-devops/pr-ci.yml` does the same without a branch
+  policy. A push runs it, `checkstead-ado-comment --find` looks up the
+  branch's active pull request, and `--status` posts a
+  `checkstead/score-policy` pull request status.
+- **Repositories** page, grouped by organization, project, repository, and
+  branch, from the reports pipelines send. This is the SonarQube model: the
+  server never reads the organization.
+  - `checkstead scan --repository-url --build-url` records where a scan came
+    from. Credentials in the URL are dropped.
+  - `checkstead upload` sends the report folder with an upload token from
+    **Access > Upload tokens** (shown once, stored hashed, revocable) to
+    `POST /api/scans/upload`.
+  - Both Azure DevOps examples send the report when `CHECKSTEAD_SERVER` and
+    `CHECKSTEAD_UPLOAD_TOKEN` are set. Scans of checkouts stay on Scans.
+- Optionally, the server also syncs an Azure DevOps organization's
+  repositories, branches, and Checkstead pipeline runs as its own Entra
+  application (`CHECKSTEAD_AZURE_DEVOPS_ORG`), to list unscanned branches too.
+  Each branch shows its newest scan. A `checkstead.sources` layer puts the GitHub
+  App and Azure DevOps behind one interface. **CI runs** lists Azure DevOps
+  pipeline runs beside GitHub workflow runs.
+- Entra security groups can grant access: `CHECKSTEAD_ENTRA_ALLOWED_GROUPS`
+  and `CHECKSTEAD_ENTRA_ADMIN_GROUPS` admit members and administrators
+  without an administrator adding each login.
+
 Web UI:
 
 - The sign-in page offers Azure DevOps once an administrator has added an

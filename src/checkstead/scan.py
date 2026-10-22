@@ -17,6 +17,7 @@ from checkstead.commit import lookup_branch, lookup_commit
 from checkstead.engine import NVD_NOTICE, pinned_engine
 from checkstead.errors import ChecksteadError
 from checkstead.locking import exclusive_lock
+from checkstead.origin import build_link, clean_url
 from checkstead.report import write_report
 from checkstead.roles import roles_from_paths
 from checkstead.sarif import write_sarif
@@ -477,6 +478,8 @@ def run_scan(
     author: str | None = None,
     author_email: str | None = None,
     untrusted: bool | None = None,
+    repository_url: str | None = None,
+    build_url: str | None = None,
 ) -> ScanResult:
     """Scan ``scans`` with the pinned engine and the day's snapshot.
 
@@ -547,6 +550,12 @@ def run_scan(
         f"snapshot-authenticity: {snapshot.authenticity}",
         f"snapshot-key: {snapshot.signature_key_id or 'none'}",
     ]
+    repository_link = clean_url(repository_url)
+    if repository_link:
+        provenance.append(f"repository-url: {repository_link}")
+    pipeline_link = build_link(build_url)
+    if pipeline_link:
+        provenance.append(f"build-url: {pipeline_link}")
     header = policy_lines(score_policy, threshold, fail_on_kev, fail_unscored, private) + provenance
     report_path = write_report(
         out_dir,

@@ -1,0 +1,120 @@
+# Azure Repos pull request scan without a branch policy. A push to a branch runs
+# this pipeline. When that branch has an active pull request, the scan compares
+# it with the pull request's target branch, keeps one Checkstead thread on the
+# pull request, and posts a "checkstead/score-policy" status. With no active pull
+# request the branch is scanned alone. The status does not block completion
+# unless someone adds a status policy for it.
+#
+# The build service needs "Contribute to pull requests" on the repository.
+trigger:
+  branches:
+    include:
+      - "*"
+    exclude:
+      - main
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  checksteadImage: ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  # Sets CHECKSTEAD_PR_ID and CHECKSTEAD_PR_TARGET, both empty when there is none.
+  - script: |
+      docker run --rm \
+        --user 10001:10001 \
+        --entrypoint python3 \
+        -e SYSTEM_ACCESSTOKEN \
+        -e SYSTEM_COLLECTIONURI \
+        -e SYSTEM_TEAMPROJECTID \
+        -e BUILD_REPOSITORY_ID \
+        -e BUILD_SOURCEBRANCH \
+        -e SYSTEM_PULLREQUEST_PULLREQUESTID \
+        -e SYSTEM_PULLREQUEST_TARGETBRANCH \
+        "$CHECKSTEADIMAGE" \
+        /usr/local/bin/checkstead-ado-comment --find
+    displayName: Find the pull request
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  # Values come from environment variables, never $(...) macros: a macro is
+  # pasted into the script text, and a branch name such as a$(curl ...) is a
+  # valid git ref that the branch author chooses.
+  - script: |
+      set -euo pipefail
+      head="$BUILD_SOURCEVERSION"
+      source="$BUILD_SOURCEBRANCH"
+      out="$BUILD_SOURCESDIRECTORY/checkstead-report"
+      work="$AGENT_TEMPDIRECTORY/checkstead-pr"
+      rm -rf "$work"
+      mkdir -p "$work/head" "$out"
+      git archive "$head" | tar -x -C "$work/head"
+      args=(scan --scan /head --out /out --project "$BUILD_REPOSITORY_NAME" --revision "$head" --branch "${source#refs/heads/}"
+        --repository-url "$BUILD_REPOSITORY_URI"
+        --build-url "${SYSTEM_COLLECTIONURI%/}/$SYSTEM_TEAMPROJECTID/_build/results?buildId=$BUILD_BUILDID")
+      mounts=(-v "$work/head:/head" -v "$out:/out")
+      if [[ -n "${CHECKSTEAD_PR_ID:-}" ]]; then
+        base="$(git rev-parse --verify "refs/remotes/origin/${CHECKSTEAD_PR_TARGET#refs/heads/}^{commit}")"
+        mkdir -p "$work/base"
+        git archive "$base" | tar -x -C "$work/base"
+        args+=(--base /base --pull-request "$CHECKSTEAD_PR_ID")
+        mounts+=(-v "$work/base:/base")
+      fi
+      docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        "${mounts[@]}" \
+        -w /head \
+        -e CHECKSTEAD_UNTRUSTED_SOURCE=1 \
+        "$CHECKSTEADIMAGE" \
+        "${args[@]}"
+    displayName: Checkstead scan
+
+  # One closed thread, updated on later pushes, and a status for this run.
+  - script: |
+      docker run --rm \
+        --user 10001:10001 \
+        --entrypoint python3 \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
+        -e SYSTEM_ACCESSTOKEN \
+        -e SYSTEM_COLLECTIONURI \
+        -e SYSTEM_TEAMPROJECTID \
+        -e BUILD_REPOSITORY_ID \
+        -e BUILD_BUILDID \
+        -e SYSTEM_PULLREQUEST_PULLREQUESTID="$CHECKSTEAD_PR_ID" \
+        -e COMMENT_FILE=/out/checkstead-comment.md \
+        "$CHECKSTEADIMAGE" \
+        /usr/local/bin/checkstead-ado-comment --status "$AGENT_JOBSTATUS"
+    displayName: Comment on the pull request
+    condition: and(always(), ne(variables['CHECKSTEAD_PR_ID'], ''))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - publish: checkstead-report
+    artifact: checkstead-report
+    displayName: Keep the report on the build
+    condition: always()
+
+  # Send the report to the Checkstead server, the way a SonarQube analysis is
+  # sent. CHECKSTEAD_SERVER is a pipeline variable (https://checkstead.example)
+  # and CHECKSTEAD_UPLOAD_TOKEN a secret variable from the server's Access page.
+  - script: |
+      if [[ -z "${CHECKSTEAD_SERVER:-}" || -z "${CHECKSTEAD_UPLOAD_TOKEN:-}" || "$CHECKSTEAD_UPLOAD_TOKEN" == '$('* ]]; then
+        echo "CHECKSTEAD_SERVER or CHECKSTEAD_UPLOAD_TOKEN is not set. The report stays on the build."
+        exit 0
+      fi
+      docker run --rm \
+        --user 10001:10001 \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
+        -e CHECKSTEAD_UPLOAD_TOKEN \
+        "$CHECKSTEADIMAGE" \
+        upload --server "$CHECKSTEAD_SERVER" --report /out
+    displayName: Send the report to Checkstead
+    condition: always()
+    env:
+      CHECKSTEAD_UPLOAD_TOKEN: $(CHECKSTEAD_UPLOAD_TOKEN)

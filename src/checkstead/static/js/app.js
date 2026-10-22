@@ -7,11 +7,12 @@ import { avatar, banner, errorState, skeleton } from "./components.js";
 import { h, icon } from "./dom.js";
 import { providerName } from "./format.js";
 import { href, parseRoute } from "./router.js";
-import { renderAccess } from "./views/access.js";
+import { forgetUploadToken, renderAccess } from "./views/access.js";
 import { renderBuilds } from "./views/builds.js";
 import { renderEvidence } from "./views/evidence.js";
 import { renderNotFound } from "./views/not-found.js";
 import { renderOverview } from "./views/overview.js";
+import { renderRepositories } from "./views/repositories.js";
 import { renderScan, renderScans } from "./views/scans.js";
 import { renderSignIn } from "./views/signin.js";
 
@@ -24,6 +25,8 @@ import { renderSignIn } from "./views/signin.js";
  * @typedef {{status: "idle" | "loading" | "ready" | "error", data: T | null, error: ApiError | Error | null}} Load
  */
 
+/** @typedef {"history" | "builds" | "users" | "repositories" | "runs" | "uploadTokens"} LoadKey */
+
 /**
  * @typedef {Object} State
  * @property {"loading" | "signed-out" | "signed-in" | "error"} session
@@ -32,6 +35,9 @@ import { renderSignIn } from "./views/signin.js";
  * @property {Load<import("./api.js").History>} history
  * @property {Load<import("./api.js").BuildRuns>} builds
  * @property {Load<{users: User[]}>} users
+ * @property {Load<import("./api.js").Repositories>} repositories
+ * @property {Load<import("./api.js").SourceRuns>} runs
+ * @property {Load<{uploadTokens: import("./api.js").UploadToken[]}>} uploadTokens
  * @property {Map<string, Load<import("./api.js").ScanDetail>>} scans  Full scans by id, loaded when opened
  * @property {boolean} online
  * @property {{relationship: string, scope: string, query: string, kevOnly: boolean, sort: string, descending: boolean, selected: string | null}} findings
@@ -46,7 +52,7 @@ import { renderSignIn } from "./views/signin.js";
  * @property {Date} now
  * @property {Client} api
  * @property {() => void} render
- * @property {(key: "history" | "builds" | "users", force?: boolean) => void} load
+ * @property {(key: LoadKey, force?: boolean) => void} load
  * @property {(id: string) => Load<import("./api.js").ScanDetail>} scanDetail
  * @property {(message: string) => void} notify
  * @property {() => Promise<void>} signedIn
@@ -54,6 +60,7 @@ import { renderSignIn } from "./views/signin.js";
 
 const NAV = /** @type {const} */ ([
   ["overview", "Overview", "overview"],
+  ["repositories", "Repositories", "repos"],
   ["scans", "Scans", "scans"],
   ["evidence", "Evidence", "evidence"],
   ["builds", "CI runs", "builds"],
@@ -77,6 +84,9 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
     history: idle(),
     builds: idle(),
     users: idle(),
+    repositories: idle(),
+    runs: idle(),
+    uploadTokens: idle(),
     scans: new Map(),
     online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
     findings: { relationship: "", scope: "", query: "", kevOnly: false, sort: "score", descending: true, selected: null },
@@ -87,15 +97,18 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
   /** @type {ReturnType<typeof setTimeout> | null} */
   let toastTimer = null;
 
-  /** @type {Record<"history" | "builds" | "users", () => Promise<any>>} */
+  /** @type {Record<LoadKey, () => Promise<any>>} */
   const loaders = {
     history: () => api.history(),
     builds: () => api.builds(),
     users: () => api.users(),
+    repositories: () => api.repositories(),
+    runs: () => api.runs(),
+    uploadTokens: () => api.uploadTokens(),
   };
 
   /**
-   * @param {"history" | "builds" | "users"} key
+   * @param {LoadKey} key
    * @param {boolean} [force]
    */
   function load(key, force = false) {
@@ -177,6 +190,9 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
     state.history = idle();
     state.builds = idle();
     state.users = idle();
+    state.repositories = idle();
+    state.runs = idle();
+    state.uploadTokens = idle();
     state.scans.clear();
     await checkSession();
   }
@@ -190,6 +206,9 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
       state.history = idle();
       state.builds = idle();
       state.users = idle();
+      state.repositories = idle();
+      state.runs = idle();
+      state.uploadTokens = idle();
       window.location.hash = "#/";
       render();
     }
@@ -233,8 +252,10 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
 
   /** @param {Context} ctx */
   function view(ctx) {
+    if (ctx.route.name !== "access") forgetUploadToken();
     switch (ctx.route.name) {
       case "overview": return renderOverview(ctx);
+      case "repositories": return renderRepositories(ctx);
       case "scans": return renderScans(ctx);
       case "scan": return renderScan(ctx);
       case "evidence": return renderEvidence(ctx);

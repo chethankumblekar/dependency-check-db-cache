@@ -73,14 +73,39 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"snapshot-signature: {'required' if signature_required(trust) else 'optional'}")
     print(f"snapshot-max-age-days: {max_snapshot_age_days()}")
     print(f"nvd-api-key: {'set' if os.environ.get('NVD_API_KEY') else 'unset'}")
+    _doctor_sources()
     for name in (
         "CHECKSTEAD_GITHUB_CLIENT_SECRET",
         "CHECKSTEAD_ENTRA_CLIENT_SECRET",
+        "CHECKSTEAD_AZURE_DEVOPS_CLIENT_SECRET",
         "GITHUB_TOKEN",
         "GH_TOKEN",
     ):
         if os.environ.get(name):
             print(f"{name}: set")
+    return 0
+
+
+def _doctor_sources() -> None:
+    """Repository sources and group access. Group ids are counted, not printed."""
+    from checkstead.sources.azure_devops import AzureDevOpsSource
+
+    azure = AzureDevOpsSource()
+    state = "configured" if azure.configured() else "not configured"
+    print(f"azure-devops-org: {azure.organization or 'unset'} ({state})")
+    print(f"azure-devops-projects: {os.environ.get('CHECKSTEAD_AZURE_DEVOPS_PROJECTS', '').strip() or 'all'}")
+    print(f"sync-minutes: {os.environ.get('CHECKSTEAD_SYNC_MINUTES', '').strip() or '15'}")
+    for name in ("CHECKSTEAD_ENTRA_ALLOWED_GROUPS", "CHECKSTEAD_ENTRA_ADMIN_GROUPS"):
+        groups = [item for item in os.environ.get(name, "").split(",") if item.strip()]
+        print(f"{name.lower().replace('_', '-')}: {len(groups)} group(s)")
+
+
+def _cmd_upload(args: argparse.Namespace) -> int:
+    from checkstead.upload import send_report
+
+    result = send_report(args.server, Path(args.report), os.environ.get("CHECKSTEAD_UPLOAD_TOKEN", "").strip())
+    print(f"uploaded: {result.get('id')}")
+    print(f"scan: {result.get('url')}")
     return 0
 
 
@@ -213,6 +238,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         author=args.author or None,
         author_email=args.author_email or None,
         untrusted=True if args.untrusted_source else None,
+        repository_url=args.repository_url or None,
+        build_url=args.build_url or None,
     )
     for line in result.report_path.read_text(encoding="utf-8").splitlines():
         if line.startswith("finding:"):
@@ -257,6 +284,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--author", help="Commit author recorded on the report.")
     scan.add_argument("--author-email", help="Commit author email recorded on the report.")
     scan.add_argument(
+        "--repository-url",
+        help=(
+            "https URL of the repository, such as $(Build.Repository.Uri). The server lists the scan "
+            "under that repository. Credentials in the URL are dropped."
+        ),
+    )
+    scan.add_argument("--build-url", help="https link to the pipeline run that produced the scan.")
+    scan.add_argument(
         "--untrusted-source",
         action="store_true",
         help=(
@@ -271,6 +306,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve and verify the snapshot, write the report header, and do not start the engine.",
     )
     scan.set_defaults(func=_cmd_scan)
+
+    upload = sub.add_parser(
+        "upload",
+        help="Send a report folder to a Checkstead server. The token is read from CHECKSTEAD_UPLOAD_TOKEN.",
+    )
+    upload.add_argument("--server", required=True, help="Server origin, for example https://checkstead.example.")
+    upload.add_argument("--report", default="checkstead-report", help="Report folder that `checkstead scan --out` wrote.")
+    upload.set_defaults(func=_cmd_upload)
 
     ui = sub.add_parser("ui", help="Open the scan timeline in a browser.")
     ui.add_argument("--scans", help="Directory of scan reports. Defaults to ./ui/scans.")

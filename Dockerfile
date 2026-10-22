@@ -53,8 +53,10 @@ RUN python3 -m venv /opt/checkstead-venv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/checkstead-entry
+# Azure Pipelines has no action checkout to run a script from, so the image carries it.
+COPY scripts/ado-pr-comment.py /usr/local/bin/checkstead-ado-comment
 COPY checkstead.yml /etc/checkstead/checkstead.yml
-RUN chmod 0755 /usr/local/bin/checkstead-entry \
+RUN chmod 0755 /usr/local/bin/checkstead-entry /usr/local/bin/checkstead-ado-comment \
     && chmod -R a+rX /opt/dependency-check /opt/checkstead-venv \
     && groupadd --system --gid 10001 checkstead \
     && useradd --system --uid 10001 --gid 10001 --home-dir /var/lib/checkstead --create-home checkstead \

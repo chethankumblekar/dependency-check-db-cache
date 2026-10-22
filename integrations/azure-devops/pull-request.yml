@@ -1,0 +1,99 @@
+# Azure Repos pull request scan. Add this pipeline as a Build validation branch
+# policy on the target branch. The build service needs "Contribute to pull
+# requests" on the repository so the comment step can write its one thread.
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  checksteadImage: ghcr.io/chethankumblekar/dependency-check-db-cache/checkstead:latest
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  # The head and the target branch are scanned with the same snapshot. Only
+  # findings the pull request adds count against the score policy.
+  # Values come from environment variables, never $(...) macros: a macro is
+  # pasted into the script text, and a branch name such as a$(curl ...) is a
+  # valid git ref that the pull request author chooses.
+  - script: |
+      set -euo pipefail
+      if [[ "${BUILD_REASON:-}" != "PullRequest" ]]; then
+        echo "##vso[task.logissue type=error]This pipeline scans pull requests. Run it as a Build validation branch policy."
+        exit 1
+      fi
+      head="$SYSTEM_PULLREQUEST_SOURCECOMMITID"
+      target="$SYSTEM_PULLREQUEST_TARGETBRANCH"
+      source="$SYSTEM_PULLREQUEST_SOURCEBRANCH"
+      base="$(git rev-parse --verify "refs/remotes/origin/${target#refs/heads/}^{commit}")"
+      work="$AGENT_TEMPDIRECTORY/checkstead-pr"
+      out="$BUILD_SOURCESDIRECTORY/checkstead-report"
+      rm -rf "$work"
+      mkdir -p "$work/head" "$work/base" "$out"
+      git archive "$head" | tar -x -C "$work/head"
+      git archive "$base" | tar -x -C "$work/base"
+      docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -v "$work/head:/head" \
+        -v "$work/base:/base" \
+        -v "$out:/out" \
+        -w /head \
+        -e CHECKSTEAD_UNTRUSTED_SOURCE=1 \
+        "$CHECKSTEADIMAGE" \
+        scan \
+        --scan /head \
+        --base /base \
+        --out /out \
+        --pull-request "$SYSTEM_PULLREQUEST_PULLREQUESTID" \
+        --project "$BUILD_REPOSITORY_NAME" \
+        --revision "$head" \
+        --branch "${source#refs/heads/}" \
+        --repository-url "$BUILD_REPOSITORY_URI" \
+        --build-url "${SYSTEM_COLLECTIONURI%/}/$SYSTEM_TEAMPROJECTID/_build/results?buildId=$BUILD_BUILDID"
+    displayName: Checkstead scan
+
+  # Posts one closed thread and updates it on later pushes. A closed thread does
+  # not block completion under a comment resolution policy.
+  - script: |
+      docker run --rm \
+        --user 10001:10001 \
+        --entrypoint python3 \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
+        -e SYSTEM_ACCESSTOKEN \
+        -e SYSTEM_COLLECTIONURI \
+        -e SYSTEM_TEAMPROJECTID \
+        -e BUILD_REPOSITORY_ID \
+        -e SYSTEM_PULLREQUEST_PULLREQUESTID \
+        -e COMMENT_FILE=/out/checkstead-comment.md \
+        "$CHECKSTEADIMAGE" \
+        /usr/local/bin/checkstead-ado-comment
+    displayName: Comment on the pull request
+    condition: and(always(), eq(variables['Build.Reason'], 'PullRequest'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - publish: checkstead-report
+    artifact: checkstead-report
+    displayName: Keep the report on the build
+    condition: always()
+
+  # Send the report to the Checkstead server, the way a SonarQube analysis is
+  # sent. CHECKSTEAD_SERVER is a pipeline variable (https://checkstead.example)
+  # and CHECKSTEAD_UPLOAD_TOKEN a secret variable from the server's Access page.
+  - script: |
+      if [[ -z "${CHECKSTEAD_SERVER:-}" || -z "${CHECKSTEAD_UPLOAD_TOKEN:-}" || "$CHECKSTEAD_UPLOAD_TOKEN" == '$('* ]]; then
+        echo "CHECKSTEAD_SERVER or CHECKSTEAD_UPLOAD_TOKEN is not set. The report stays on the build."
+        exit 0
+      fi
+      docker run --rm \
+        --user 10001:10001 \
+        -v "$BUILD_SOURCESDIRECTORY/checkstead-report:/out:ro" \
+        -e CHECKSTEAD_UPLOAD_TOKEN \
+        "$CHECKSTEADIMAGE" \
+        upload --server "$CHECKSTEAD_SERVER" --report /out
+    displayName: Send the report to Checkstead
+    condition: always()
+    env:
+      CHECKSTEAD_UPLOAD_TOKEN: $(CHECKSTEAD_UPLOAD_TOKEN)
