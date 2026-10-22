@@ -1,6 +1,8 @@
 # Checkstead on Azure
 
-Ubuntu and Windows both scan with Checkstead. The timeline server is a Linux container on Azure App Service. A build copies each report folder onto the directory that server reads.
+Ubuntu and Windows both scan with Checkstead. The timeline server is a Linux container on Azure App Service. A build copies each report folder onto the directory that server reads, or sends it with `checkstead upload`.
+
+For Azure Repos pull requests, upload tokens, the **Repositories** page, and sign-in, start with [Checkstead with Azure DevOps](azure-devops.md). This page has the platform steps.
 
 This product uses data from the NVD API but is not endorsed or certified by the NVD.
 

@@ -23,6 +23,8 @@ The task runs the Checkstead scanner image on a Linux agent that has Docker. It 
 
 No branch policy? [`pr-ci.yml`](https://github.com/chethankumblekar/dependency-check-db-cache/blob/main/integrations/azure-devops/pr-ci.yml) runs on a push, finds the branch's active pull request, comments, and posts a `checkstead/score-policy` status.
 
+Both examples can send the report to a Checkstead server, the way a SonarQube analysis is sent. Set `CHECKSTEAD_SERVER`, and the secret `CHECKSTEAD_UPLOAD_TOKEN` from the server's **Access** page. The server's **Repositories** page then lists each repository by organization, project, and branch. The full guide is [Checkstead with Azure DevOps](https://github.com/chethankumblekar/dependency-check-db-cache/blob/main/docs/azure-devops.md).
+
 ## Marketplace
 
 The extension is public. An organization that already uses Azure Pipelines installs it from the Visual Studio Marketplace. The publisher does not need an Azure DevOps organization.

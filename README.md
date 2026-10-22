@@ -117,6 +117,7 @@ With no `checkstead.yml` in that directory, the policy is `prefer-newest`, with 
 - [Gradle](#gradle)
 - [GitHub Action](#github-action)
 - [Azure DevOps](#azure-devops)
+- [Checkstead with Azure DevOps](docs/azure-devops.md)
 - [Azure on Ubuntu and Windows](docs/azure.md)
 - [Release](#release)
 - [Timeline](#timeline)
@@ -484,6 +485,16 @@ The extension in [`integrations/azure-devops`](integrations/azure-devops) adds t
 
 A full example is [`integrations/azure-devops/example.yml`](integrations/azure-devops/example.yml). GitHub builds use the Action above. The [Release](#release) workflow publishes this extension, and an Azure Pipelines organization installs that public listing before it uses the task.
 
+### Azure Repos pull requests and the server
+
+Azure DevOps works with Checkstead the way it works with SonarQube. A pipeline step scans, comments on the pull request, and sends the report to the Checkstead server with an upload token. The server needs no access to the organization.
+
+- [`integrations/azure-devops/pr-ci.yml`](integrations/azure-devops/pr-ci.yml) runs on a push, with no branch policy. It finds the branch's active pull request and scans it against the target branch, so only findings the pull request adds count. It keeps one Checkstead thread on the pull request and posts a `checkstead/score-policy` status.
+- [`integrations/azure-devops/pull-request.yml`](integrations/azure-devops/pull-request.yml) does the same as a Build validation branch policy.
+- Both record `--repository-url` and `--build-url`. When `CHECKSTEAD_SERVER` and the secret `CHECKSTEAD_UPLOAD_TOKEN` are set, both run `checkstead upload`. The server's **Repositories** page then lists each repository by organization, project, and branch.
+
+The full setup, with permissions, variables, security notes, and troubleshooting, is in [Checkstead with Azure DevOps](docs/azure-devops.md).
+
 Ubuntu and Windows steps for a local scan, the App Service timeline, and an Azure DevOps build are in [Azure on Ubuntu and Windows](docs/azure.md).
 
 ## Release
@@ -565,6 +576,9 @@ GitHub and Microsoft sign-in work only when the server variables are set. Leave 
 | `CHECKSTEAD_ENTRA_CLIENT_SECRET` | Microsoft Entra client secret |
 | `CHECKSTEAD_ENTRA_TENANT` | Optional. Defaults to `organizations`, which is any work or school directory; the server warns about that. Set your directory (tenant) id to allow only it. |
 | `CHECKSTEAD_ENTRA_ALLOWED_TENANTS` | Optional. With `organizations`, the directory ids that may sign in, comma separated. |
+| `CHECKSTEAD_ENTRA_ALLOWED_GROUPS` | Optional. Entra security group object ids whose members sign in without being added on Access. The app registration needs `groupMembershipClaims` set to `SecurityGroup`. |
+| `CHECKSTEAD_ENTRA_ADMIN_GROUPS` | Optional. Group object ids whose members sign in as administrators. Joining promotes; leaving does not demote. |
+| `CHECKSTEAD_MAX_UPLOAD_MB` | Optional. The largest report `POST /api/scans/upload` accepts. Default 64. |
 | `CHECKSTEAD_ALLOWED_HOSTS` | Optional. Host names the server answers to besides loopback and the `CHECKSTEAD_PUBLIC_BASE` host. Any other `Host` gets 421, which stops DNS rebinding. |
 
 The callback for a local GitHub OAuth app is `http://127.0.0.1:8765/api/sso/github/callback`. The Microsoft callback is `http://127.0.0.1:8765/api/sso/entra/callback`. On another host the same paths are `https://<host>/api/sso/github/callback` and `https://<host>/api/sso/entra/callback`. Set `CHECKSTEAD_PUBLIC_BASE` to that origin. A remote connection does not use the `Host` header as the origin. Copy [`.env.example`](.env.example) to `.env` when you set the variables. Set `CHECKSTEAD_COOKIE_SECURE=1` when the server is behind TLS.
@@ -595,7 +609,21 @@ Open http://127.0.0.1:8765/.
 
 The scan image can start the server too, with `docker run --rm -p 8765:8765 checkstead ui --host 0.0.0.0`. That image also contains the scanner. `Dockerfile.server` is only the server. A checkout of this repository, started with `python3 -m checkstead ui`, reads `ui/scans` instead. See [Timeline](#timeline).
 
-The first person to sign in becomes the administrator. After that, Administration is where that person adds logins and chooses who is a user and who is an administrator. Someone who has not been added cannot sign in. The last administrator cannot be removed.
+The first person to sign in becomes the administrator. After that, Administration is where that person adds logins and chooses who is a user and who is an administrator. Someone who has not been added cannot sign in, unless an Entra group in `CHECKSTEAD_ENTRA_ALLOWED_GROUPS` or `CHECKSTEAD_ENTRA_ADMIN_GROUPS` admits them. The last administrator cannot be removed.
+
+### Reports from pipelines
+
+A pipeline can send its report to the server instead of writing to a shared folder:
+
+```bash
+CHECKSTEAD_UPLOAD_TOKEN=cks_... checkstead upload --server https://checkstead.example --report checkstead-report
+```
+
+An administrator creates upload tokens on **Access > Upload tokens**. Each is shown once, stored as a hash, shows its last use, and can be revoked.
+
+`POST /api/scans/upload` checks the token before it reads the body. It accepts only the report files a scan writes, up to `CHECKSTEAD_MAX_UPLOAD_MB`.
+
+A report made with `--repository-url` and `--build-url` appears under **Repositories**, by organization, project, repository, and branch, with a link to the pipeline run. A report without them, such as a scan of a laptop checkout, appears only under **Scans**. See [Checkstead with Azure DevOps](docs/azure-devops.md).
 
 GitLab and other Git hosts are not connected. Adding one is a new identity provider beside GitHub and Azure DevOps. The server does not pretend they are available.
 

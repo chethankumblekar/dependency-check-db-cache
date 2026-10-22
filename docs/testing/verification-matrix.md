@@ -37,6 +37,30 @@ The unit tests serve fixtures on `127.0.0.1`. They do not call
 | Link-local and metadata hosts are refused; a private address is not | `tests/test_phase1.py` |
 | Server entrypoint skips `chown` when the uid is not root | `tests/test_supply_chain.py` |
 | Release candidate tags do not move floating tags or `:latest` | `tests/test_release.py`, `.github/workflows/release.yml`, `.github/workflows/ci.yml` |
+| Azure Repos thread: one closed thread, updated on later pushes, only a `Checkstead.Report` thread edited, deleted thread recreated | `tests/test_azure_devops_pr.py` |
+| Azure Repos pull request lookup for a push, the build validation shortcut, and the `checkstead/score-policy` status from the job status | same |
+| Azure DevOps examples use no `System.`/`Build.`/`Agent.` macro in a script body, record the origin, and send the report | `tests/test_azure_devops_pr.py`, `tests/test_upload.py` |
+| Upload tokens: shown once, stored hashed, last use recorded, revoked tokens refused; administrators only | `tests/test_upload.py` |
+| Upload endpoint: no token or a wrong one refused unread; over the limit refused unread; non-zip, traversal, nested, unknown files, no `checkstead.txt` refused | same |
+| Report header records `repository-url` without userinfo and `build-url` with `buildId` | same (`checkstead scan --dry-run`) |
+| Repositories lists pipeline-reported scans by organization, project, repository, branch; scans of checkouts stay off | `tests/test_upload.py`, `web/tests/flows.test.mjs` |
+| Optional service-principal sync, the inventory keeping the last good sync, and Entra group admission and promotion | `tests/test_sources.py` |
+
+## Azure DevOps, recorded on 22 October 2026
+
+These runs used real Azure DevOps on Microsoft-hosted `ubuntu-latest` agents, with a throwaway orphan branch, `checkstead-test/main`. The scanner image was built from this branch in each run.
+
+| Case | Result |
+| --- | --- |
+| Push before a pull request exists | Branch scanned alone; no comment |
+| Pull request adds axios 1.10.0 | Scan exit 3; one closed thread with `Checkstead.Report`; status `failed` linking the build |
+| Second push to the same pull request | The same thread updated |
+| A person's comment containing the report marker | Left alone; only Checkstead's thread updated |
+| Clean pull request | "Introduced findings: None"; status `succeeded` |
+| Branch named `checkstead-test/x$(touch${IFS}/tmp/checkstead-pwned)` | Accepted by Azure DevOps; the canary file was absent and the run succeeded. The local harness also checked that the name is recorded as written. |
+| Report copied to Azure Files with `az storage file upload-batch --auth-mode login` | Failed until `--enable-file-backup-request-intent` was added; then uploaded |
+
+A local server received `checkstead upload` from a container. It listed the report under Azure DevOps: Ascertra, Proarc-Products, the repository, and the branch, with the run link. A wrong token got HTTP 401.
 
 ## Non-root execution on 19 October 2026
 
