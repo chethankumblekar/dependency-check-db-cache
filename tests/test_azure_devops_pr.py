@@ -15,7 +15,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import TestCase
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -139,6 +139,108 @@ class AzureDevOpsPullRequestCommentTest(TestCase):
                 self.assertIn(name, completed.stderr)
         self.assertEqual(self.server.methods, [])
 
+    def _find(self, env: dict | None = None) -> subprocess.CompletedProcess:
+        env = dict(env or self.env)
+        env.pop("SYSTEM_PULLREQUEST_PULLREQUESTID", None)
+        env.setdefault("BUILD_SOURCEBRANCH", "refs/heads/feature/add-axios")
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--find"],
+            env=env, text=True, capture_output=True, check=False,
+        )
+
+    @staticmethod
+    def _variables(stdout: str) -> dict[str, str]:
+        found = re.findall(r"^##vso\[task\.setvariable variable=(\w+)\](.*)$", stdout, re.MULTILINE)
+        return dict(found)
+
+    def test_find_without_a_pull_request_sets_empty_variables(self) -> None:
+        completed = self._find()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(self._variables(completed.stdout), {"CHECKSTEAD_PR_ID": "", "CHECKSTEAD_PR_TARGET": ""})
+        self.assertIn("scanned alone", completed.stdout)
+        self.assertEqual(self.server.methods, ["GET"])
+        query = parse_qs(self.server.queries[0])
+        self.assertEqual(query["searchCriteria.sourceRefName"], ["refs/heads/feature/add-axios"])
+        self.assertEqual(query["searchCriteria.status"], ["active"])
+        self.assertEqual(query["api-version"], ["7.1"])
+        self.assertEqual(self.server.authorizations, ["Bearer pipeline-token"])
+
+    def test_find_picks_the_newest_active_pull_request_from_the_pushed_branch(self) -> None:
+        self.server.pull_requests.extend(
+            [
+                {"pullRequestId": 40, "status": "active", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/release"},
+                {"pullRequestId": 42, "status": "active", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/main"},
+                {"pullRequestId": 50, "status": "completed", "sourceRefName": "refs/heads/feature/add-axios", "targetRefName": "refs/heads/main"},
+                {"pullRequestId": 51, "status": "active", "sourceRefName": "refs/heads/other", "targetRefName": "refs/heads/main"},
+            ]
+        )
+        completed = self._find()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            self._variables(completed.stdout),
+            {"CHECKSTEAD_PR_ID": "42", "CHECKSTEAD_PR_TARGET": "refs/heads/main"},
+        )
+        self.assertIn("not #40", completed.stdout)
+
+    def test_find_under_a_build_validation_policy_uses_the_build_variables(self) -> None:
+        env = dict(self.env)
+        env["SYSTEM_PULLREQUEST_TARGETBRANCH"] = "refs/heads/main"
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT), "--find"], env=env, text=True, capture_output=True, check=False
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            self._variables(completed.stdout),
+            {"CHECKSTEAD_PR_ID": "42", "CHECKSTEAD_PR_TARGET": "refs/heads/main"},
+        )
+        self.assertEqual(self.server.methods, [])
+
+    def test_find_without_the_token_or_a_branch_looks_nothing_up(self) -> None:
+        for name, value in (("SYSTEM_ACCESSTOKEN", ""), ("BUILD_SOURCEBRANCH", "refs/tags/v1.0.0")):
+            with self.subTest(name=name):
+                env = dict(self.env)
+                env[name] = value
+                completed = self._find(env)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(self._variables(completed.stdout)["CHECKSTEAD_PR_ID"], "")
+        self.assertEqual(self.server.methods, [])
+
+    def test_a_failed_lookup_fails_the_step_without_the_token(self) -> None:
+        self.server.lookup_status = 403
+        completed = self._find()
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("HTTP 403", completed.stderr)
+        self.assertNotIn("##vso[task.setvariable", completed.stdout)
+        self.assertNotIn("pipeline-token", completed.stdout + completed.stderr)
+
+    def test_status_follows_the_job_status_and_links_the_build(self) -> None:
+        env = dict(self.env)
+        env["BUILD_BUILDID"] = "130055"
+        for job, state in (("Failed", "failed"), ("Succeeded", "succeeded"), ("SucceededWithIssues", "succeeded"), ("Canceled", "failed")):
+            with self.subTest(job=job):
+                completed = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--status", job], env=env, text=True, capture_output=True, check=False
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                status = self.server.statuses[-1]
+                self.assertEqual(status["state"], state)
+                self.assertEqual(status["context"], {"genre": "checkstead", "name": "score-policy"})
+                self.assertTrue(status["targetUrl"].endswith(f"/{PROJECT}/_build/results?buildId=130055"))
+        self.assertEqual(len(self.server.threads), 1)
+        self.assertTrue(all(path == f"{THREADS[: -len('/threads')]}/statuses" for path, method in zip(self.server.paths, self.server.methods) if method == "POST" and path.endswith("/statuses")))
+
+    def test_the_ci_example_finds_the_pull_request_without_macros(self) -> None:
+        example = (ROOT / "integrations" / "azure-devops" / "pr-ci.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            re.findall(r"\$\((?:System|Build|Agent)\.[A-Za-z.]+\)", example),
+            ["$(System.AccessToken)", "$(System.AccessToken)"],
+        )
+        self.assertIn("checkstead-ado-comment --find", example)
+        self.assertIn('checkstead-ado-comment --status "$AGENT_JOBSTATUS"', example)
+        self.assertIn("pr: none", example)
+        self.assertIn("ne(variables['CHECKSTEAD_PR_ID'], '')", example)
+        self.assertNotIn("NVD_API_KEY", example)
+
     def test_the_script_takes_the_token_only_from_the_pipeline(self) -> None:
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("SYSTEM_ACCESSTOKEN", script)
@@ -171,15 +273,34 @@ class _ThreadServer:
         self.queries: list[str] = []
         self.authorizations: list[str] = []
         self.patched: tuple[int, int] | None = None
+        self.pull_requests: list[dict] = []
+        self.statuses: list[dict] = []
+        self.lookup_status = 200
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 self._record("GET")
+                parsed = urlparse(self.path)
+                if parsed.path.endswith("/pullrequests"):
+                    if outer.lookup_status != 200:
+                        return self._json({"message": "TF401019"}, outer.lookup_status)
+                    query = parse_qs(parsed.query)
+                    source = query.get("searchCriteria.sourceRefName", [""])[0]
+                    state = query.get("searchCriteria.status", [""])[0]
+                    found = [
+                        item
+                        for item in outer.pull_requests
+                        if item["sourceRefName"] == source and item["status"] == state
+                    ]
+                    return self._json({"value": found, "count": len(found)})
                 self._json({"value": outer.threads, "count": len(outer.threads)})
 
             def do_POST(self):
                 self._record("POST")
                 payload = self._body()
+                if urlparse(self.path).path.endswith("/statuses"):
+                    outer.statuses.append(payload)
+                    return self._json({"id": len(outer.statuses), **payload})
                 thread = {
                     "id": 11,
                     "status": payload.get("status"),
@@ -215,9 +336,9 @@ class _ThreadServer:
                 length = int(self.headers.get("Content-Length", "0"))
                 return json.loads(self.rfile.read(length).decode("utf-8"))
 
-            def _json(self, payload) -> None:
+            def _json(self, payload, status: int = 200) -> None:
                 raw = json.dumps(payload).encode("utf-8")
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()

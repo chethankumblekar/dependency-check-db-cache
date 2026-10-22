@@ -14,6 +14,10 @@ Azure DevOps:
   `/usr/local/bin/checkstead-ado-comment`. It uses only `System.AccessToken`
   mapped into the step, and creates the thread closed so a comment resolution
   policy does not block completion. See [docs/azure.md](docs/azure.md).
+- `integrations/azure-devops/pr-ci.yml` does the same without a branch
+  policy. A push runs it, `checkstead-ado-comment --find` looks up the
+  branch's active pull request, and `--status` posts a
+  `checkstead/score-policy` pull request status.
 
 Web UI:
 

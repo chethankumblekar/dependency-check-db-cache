@@ -147,6 +147,18 @@ The comment step maps `System.AccessToken` into the step as `SYSTEM_ACCESSTOKEN`
 
 The comment script ships in the scanner image as `/usr/local/bin/checkstead-ado-comment`. An image built before it was added does not have it.
 
+### Without a branch policy
+
+Use [`integrations/azure-devops/pr-ci.yml`](../integrations/azure-devops/pr-ci.yml) when you cannot or do not want to add a Build validation policy. A push to a branch runs it on the CI trigger.
+
+- `checkstead-ado-comment --find` looks up the active pull request whose source is the pushed branch. It sets `CHECKSTEAD_PR_ID` and `CHECKSTEAD_PR_TARGET`.
+- With a pull request, the scan compares the push with that pull request's target branch. The comment step keeps the one thread and posts a `checkstead/score-policy` status. The status is `succeeded` or `failed` from `Agent.JobStatus` and links to the build.
+- With no active pull request, the branch is scanned alone. Nothing is posted.
+
+The status shows on the pull request but does not block completion. To make it required, add a **Status check** policy for `checkstead/score-policy`. A push made before the pull request was opened has no pull request to comment on. The next push does.
+
+The build service needs **Contribute to pull requests** on the repository, the same as the policy pipeline.
+
 ## Azure DevOps on Windows
 
 Use a Microsoft-hosted `windows-latest` agent and the PowerShell setup. That agent runs Windows containers, and the Checkstead scanner image is Linux, so this job does not call Docker.
