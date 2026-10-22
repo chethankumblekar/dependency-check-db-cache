@@ -115,6 +115,7 @@ steps:
         az storage file upload-batch \
           --account-name <storage-account> \
           --auth-mode login \
+          --enable-file-backup-request-intent \
           --source "$(Build.SourcesDirectory)/checkstead-report" \
           --destination checkstead \
           --destination-path "$(Build.BuildId)"
@@ -193,6 +194,7 @@ steps:
         az storage file upload-batch `
           --account-name <storage-account> `
           --auth-mode login `
+          --enable-file-backup-request-intent `
           --source "$(Build.SourcesDirectory)\checkstead-report" `
           --destination checkstead `
           --destination-path "$(Build.BuildId)"
