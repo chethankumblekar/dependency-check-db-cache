@@ -158,9 +158,13 @@ CI runs lists Checkstead workflow runs once the GitHub App is installed. Until t
 
 ![Access, with the add form and the signed-in administrator marked You.](docs/screenshots/access.png)
 
+Repositories groups the reports pipelines send by organization, project, repository, and branch, and shows each branch's newest result with a link to its pipeline run. This screenshot and the dark one below use two sample reports sent with `checkstead upload`, built from the repository's fixture scans: `main` with no findings, and a feature branch that adds commons-collections 3.2.1 (CVE-2015-7501 and CVE-2015-6420) under a threshold of 7.
+
+![Repositories: Azure DevOps organization contoso, project Payments, repository payments-api with two branches. main passes with no findings; feature/upgrade-logging fails the score policy.](docs/screenshots/repositories.png)
+
 The theme follows the system setting, and you can switch it with Auto, Light, or Dark. Below 900 pixels, the navigation moves to the top and tables drop secondary columns.
 
-![Overview in the dark theme.](docs/screenshots/overview-dark.png)
+![Overview in the dark theme: one critical finding in payments-api first, then the two fixture scans with 16-day-old data.](docs/screenshots/overview-dark.png)
 
 <img src="docs/screenshots/overview-mobile.png" alt="Overview on a 375 pixel wide phone screen." width="375">
 
