@@ -48,8 +48,9 @@ Sign in (gate)                      shown until a session exists; Azure DevOps f
    ├─ Scans               #/scans                  opens the newest scan
    │  └─ Scan             #/scans/<id>[/<tab>]     findings | changes | dependencies | evidence
    ├─ Evidence            #/evidence               the evidence chain for every newest scan
-   ├─ CI runs             #/builds                 GitHub App workflow runs, rerun
-   └─ Access              #/access                 administrators only: people and roles
+   ├─ Repositories        #/repositories           organization > project > repository > branch, newest scan each; Sync now for administrators
+   ├─ CI runs             #/builds                 GitHub App workflow runs (rerun) and synced Azure DevOps pipeline runs
+   └─ Access              #/access                 administrators only: people, roles, and upload tokens
 ```
 
 Routes are hash routes, so every view and tab has a link that survives a reload, and the server needs no route of its own. The server-rendered GitHub App pages under `/github` are unchanged.

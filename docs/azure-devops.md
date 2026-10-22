@@ -159,8 +159,8 @@ A repository appears after its first report, and a branch after its first scan. 
 Pipeline reports list the branches that were scanned. To list every repository and branch, including unscanned ones, and the Checkstead pipeline runs, the server can read the organization as its own Entra application. This needs an organization administrator.
 
 1. Add the application under **Organization settings > Users > Add users** with **Basic** access. Add it to each project to show as a **Reader**. Stakeholder access cannot read repositories.
-2. Set `CHECKSTEAD_AZURE_DEVOPS_ORG`, optionally `CHECKSTEAD_AZURE_DEVOPS_PROJECTS`, and a tenant id in `CHECKSTEAD_ENTRA_TENANT`.
-3. The server syncs on start and every `CHECKSTEAD_SYNC_MINUTES` (default 15). An administrator can press **Sync now**.
+2. Set `CHECKSTEAD_AZURE_DEVOPS_ORG`, optionally `CHECKSTEAD_AZURE_DEVOPS_PROJECTS`, and a tenant id in `CHECKSTEAD_ENTRA_TENANT`. To use a different Entra application from sign-in, set `CHECKSTEAD_AZURE_DEVOPS_CLIENT_ID`, `CHECKSTEAD_AZURE_DEVOPS_CLIENT_SECRET`, and `CHECKSTEAD_AZURE_DEVOPS_TENANT`; each falls back to its `CHECKSTEAD_ENTRA_*` value.
+3. The server syncs on start and every `CHECKSTEAD_SYNC_MINUTES` (default 15; `0` turns the automatic sync off). An administrator can press **Sync now**.
 
 A synced organization is shown once, from the sync, with reported scans matched to its branches. A failed sync keeps the last good list and shows why. Details are in [Azure on Ubuntu and Windows](azure.md#optional-list-every-branch-with-a-service-principal).
 

@@ -243,7 +243,8 @@ Pipeline reports list the branches that were scanned. To list every repository a
    - `CHECKSTEAD_AZURE_DEVOPS_ORG`: the organization name, as in `dev.azure.com/<org>`.
    - `CHECKSTEAD_ENTRA_TENANT`: a tenant id. `organizations` cannot issue the application's own token.
    - `CHECKSTEAD_AZURE_DEVOPS_PROJECTS` (optional): a comma-separated list of project names. Empty means every project the application can read.
-3. Restart the server. It prints `source Azure DevOps: <org>` and syncs once, then every `CHECKSTEAD_SYNC_MINUTES` (default 15). An administrator can press **Sync now**.
+   - `CHECKSTEAD_AZURE_DEVOPS_CLIENT_ID`, `CHECKSTEAD_AZURE_DEVOPS_CLIENT_SECRET`, and `CHECKSTEAD_AZURE_DEVOPS_TENANT` (optional): a separate Entra application for the sync. Each one falls back to its `CHECKSTEAD_ENTRA_*` value, so by default the sync uses the sign-in application. With `CHECKSTEAD_AZURE_DEVOPS_TENANT` set to a tenant id, `CHECKSTEAD_ENTRA_TENANT` can stay `organizations` for sign-in.
+3. Restart the server. It prints `source Azure DevOps: <org>` and syncs once, then every `CHECKSTEAD_SYNC_MINUTES` (default 15). An administrator can press **Sync now**. With `CHECKSTEAD_SYNC_MINUTES=0` the server does not sync on its own, not even at start; only **Sync now** does.
 
 A sync reads three things:
 
