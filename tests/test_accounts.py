@@ -157,13 +157,16 @@ class StoreHardeningTests(TestCase):
 
     def test_expired_sessions_are_deleted_on_the_next_sign_in(self) -> None:
         import sqlite3
+        from contextlib import closing
 
         store = AccountStore(self.data)
         store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
-        with sqlite3.connect(store.path) as conn:
+        # `with sqlite3.connect()` commits but does not close; a leftover
+        # connection later trips ConnectionLeakTests when GC collects it.
+        with closing(sqlite3.connect(store.path)) as conn, conn:
             conn.execute("UPDATE sessions SET created_at = '2000-01-01T00:00:00Z'")
         store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
-        with sqlite3.connect(store.path) as conn:
+        with closing(sqlite3.connect(store.path)) as conn:
             created = [row[0] for row in conn.execute("SELECT created_at FROM sessions")]
         self.assertEqual(len(created), 1)
         self.assertNotEqual(created[0], "2000-01-01T00:00:00Z")
@@ -287,8 +290,9 @@ class AvatarStoreTests(TestCase):
 
     def test_an_existing_database_gains_the_picture_table(self) -> None:
         import sqlite3
+        from contextlib import closing
 
-        with sqlite3.connect(self.store.path) as conn:
+        with closing(sqlite3.connect(self.store.path)) as conn, conn:
             conn.execute("DROP TABLE avatars")
         store = AccountStore(self.store.data_dir)
         _token, user = store.sign_in(Identity("github", "7", "octocat", "The Octocat"))
