@@ -85,10 +85,12 @@ environment.
 ## Signature
 
 `src/checkstead/snapshot_trust.json` is the trust root. It lists public keys
-and no private keys. Since 20 October 2026 it pins `checkstead-2026-10`, the
-public half of the `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret as supplied by the
-maintainer. A client with this file requires a signature by that key and
-refuses every unsigned snapshot, including `db-2026-10-18` and older.
+and no private keys. It pins `checkstead-2026-10b` (`current`, the public half
+of the `snapshot-signing` environment secret) and `checkstead-2026-10`
+(`retired`, `notAfter` 2026-10-20). A client with this file requires a
+signature by a pinned key and refuses every unsigned snapshot, including
+`db-2026-10-18` and older. Standby keys, a lost key, and compromise are in
+[production operations](production-operations.md#standby-key).
 
 **Merge order.** Merge the pin only after a snapshot signed by this key is
 published and checked:
@@ -111,10 +113,10 @@ replaces this file and must list at least one key.
 To sign, then pin:
 
 1. On a machine that is not CI, run `openssl genpkey -algorithm ED25519 -out snapshot-signing-key.pem` and `openssl pkey -in snapshot-signing-key.pem -pubout`. Do not commit the private PEM and do not print it.
-2. Store the private PEM in the GitHub secret `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id in the repository variable `CHECKSTEAD_SNAPSHOT_KEY_ID`. Only `update-snapshot.yml` receives them. Leave `snapshot_trust.json` empty.
+2. Store the private PEM as the `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` secret and the id as the `CHECKSTEAD_SNAPSHOT_KEY_ID` variable of the `snapshot-signing` environment (`gh secret set ... --env snapshot-signing`). Only `update-snapshot.yml` runs in that environment, and only from `main`.
 3. The next new `db-YYYY-MM-DD` release is signed. Clients with an empty trust file still accept it by checksum. `CHECKSTEAD_REQUIRE_SNAPSHOT_SIGNATURE=1` refuses that signature until the key is pinned.
 4. After that signed release exists, add the public PEM to `snapshot_trust.json` with that `id`, `"status": "current"`, and no `notAfter`. Clients that take the pin then verify the signature and refuse an unsigned manifest, including an older checksummed cache.
-5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A retired key still verifies snapshots on or before `notAfter`. It cannot sign a new manifest.
+5. To rotate, add the new key as `current` and set the old key to `"status": "retired"` with `notAfter` set to the last snapshot day it may cover. Publish the pin before signing with the new key. A retired key still verifies snapshots on or before `notAfter`. It cannot sign a new manifest. A stolen key is removed, not retired: the signer writes `snapshotTime`, so a retired entry accepts a backdated forgery.
 
 A valid signature means the manifest matches a key pinned in that client. It does not mean a second organization published the zip. Do not commit a private key.
 

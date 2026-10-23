@@ -115,8 +115,9 @@ gh secret delete NVD_API_KEY
 
 On 20 October 2026 the key was rotated this way: `checkstead-2026-10b` lives
 only in the environment secret, and `checkstead-2026-10` is retired with
-`notAfter` 2026-10-20. There is no offline copy; if the environment secret is
-lost, rotate again. Never copy a key out of a workflow. After the move, `validate_only` runs dispatched
+`notAfter` 2026-10-20. The online key has no offline copy, by design: it
+never leaves the environment. Recovery from losing it is the standby key
+below, not a backup of the online key. Never copy a key out of a workflow. After the move, `validate_only` runs dispatched
 from a branch run without the secrets: they test the update and the canary,
 not signing. Do not add required reviewers to the environment: the daily run
 would wait for an approval every night.
@@ -128,10 +129,12 @@ format does not need to change for that.
 
 ## Snapshot signing key management
 
-A signature means something only when clients pin the public key. Since
-20 October 2026, `src/checkstead/snapshot_trust.json` pins
-`checkstead-2026-10`, so clients refuse an unsigned snapshot, a signature
-that does not verify, and a key that is not pinned.
+A signature means something only when clients pin the public key.
+`src/checkstead/snapshot_trust.json` pins `checkstead-2026-10b` as `current`
+and `checkstead-2026-10` as `retired` (`notAfter` 2026-10-20), so clients
+refuse an unsigned snapshot, a signature that does not verify, and a key that
+is not pinned. Clients carry the trust file inside the release, so any change
+to it reaches clients only through a new release.
 
 The first release with that pin needs a snapshot signed by that key. Run the
 updater right after merging (`gh workflow run update-snapshot.yml`). Its seed
@@ -152,9 +155,13 @@ checkstead snapshot-key generate --id checkstead-2026-10 --out snapshot-signing.
 The command writes the private key with mode 0600 and prints the trust entry.
 Then:
 
-1. Store the file's contents as the repository secret
-   `CHECKSTEAD_SNAPSHOT_SIGNING_KEY` and the id as the repository variable
-   `CHECKSTEAD_SNAPSHOT_KEY_ID`. Keep an offline copy, then delete the file.
+1. Store the file's contents as the `snapshot-signing` environment secret
+   and the id as that environment's variable, then delete the file:
+
+   ```bash
+   gh secret set CHECKSTEAD_SNAPSHOT_SIGNING_KEY --env snapshot-signing < snapshot-signing.pem
+   gh variable set CHECKSTEAD_SNAPSHOT_KEY_ID --env snapshot-signing --body checkstead-2026-10
+   ```
 2. Run the updater once (`gh workflow run update-snapshot.yml`). Its job
    summary shows the same trust entry and says the key is not pinned yet.
 3. Add the entry to `keys` in `src/checkstead/snapshot_trust.json` in a
@@ -172,12 +179,61 @@ Rotate:
 2. Set `notAfter` on the old entry to the last day it signs, and change its
    status to `retired`. A retired key still verifies snapshots it signed up to
    `notAfter`, and the updater refuses to sign with it.
-3. Switch the secret and the variable to the new key.
+3. Switch the environment secret and variable to the new key.
 
-Compromise: set the old key's `notAfter` to the day before the earliest
-suspicious snapshot, release the client, and rotate as above. Delete the
-suspicious `db-*` releases. Clients with a cache of one keep it for the rest of
-that UTC day; tell teams to clear `~/.cache/checkstead/<day>`.
+### Standby key
+
+Pin a second `current` key whose private half never touches GitHub or CI.
+Every client release then already trusts it, so losing the online key does
+not need a client release (`tests/test_key_management.py`,
+`test_an_offline_standby_key_takes_over_without_a_client_release`). The
+nightly job summary says "No standby key is pinned" until one is.
+
+1. On a machine you trust, write the key straight to the offline medium (an
+   encrypted USB drive, or a password manager's file attachment):
+
+   ```bash
+   checkstead snapshot-key generate --id checkstead-standby-2026-10 --out /Volumes/<offline>/checkstead-standby-2026-10.pem
+   ```
+
+   The command prints only the public trust entry. Keep a second offline
+   copy in a different place; two people should know where both are.
+2. Add the printed entry to `keys` in `src/checkstead/snapshot_trust.json`
+   with `"status": "current"`, in a reviewed pull request, and release.
+3. Once a year, check that both offline copies still open and that
+   `checkstead snapshot-key public --key <file> --id <id>` prints the pinned
+   entry.
+
+### Lost online key
+
+The environment secret was deleted or overwritten, or GitHub lost it.
+
+1. Put the standby in the environment from its offline copy:
+   `gh secret set CHECKSTEAD_SNAPSHOT_SIGNING_KEY --env snapshot-signing < <file>`
+   and `gh variable set CHECKSTEAD_SNAPSHOT_KEY_ID --env snapshot-signing --body <standby id>`.
+2. Run `gh workflow run update-snapshot.yml` and check the release with
+   `scripts/verify-snapshot-pin.py`. Clients accept it with no upgrade.
+3. The standby is now the online key. Generate a new standby, pin it, and
+   release, then remove the lost key's entry in the same release.
+
+Without a standby, clients refuse snapshots signed by a new key until they
+upgrade; they keep scanning against their cached snapshot and report it as
+stale.
+
+### Compromise
+
+Retiring is not enough. `notAfter` is compared with `snapshotTime`, a field
+the signer writes, so whoever holds a stolen key can backdate a manifest that
+a `retired` entry still accepts (`test_a_compromised_key_is_removed_not_retired`).
+
+1. Remove the stolen key's entry from `snapshot_trust.json` and release.
+   Snapshots it signed, including good ones, stop verifying in that release.
+2. Sign with the standby (Lost online key, step 1), or rotate as above if the
+   standby could also be exposed. Run the updater with `full_rebuild` so no
+   seed signed by the stolen key is reused.
+3. Delete the suspicious `db-*` releases. Clients with a cache of one keep it
+   for the rest of that UTC day; tell teams to clear
+   `~/.cache/checkstead/<day>`.
 
 ## Snapshot updater
 
@@ -266,22 +322,43 @@ Report vulnerabilities in Checkstead as described in `SECURITY.md`.
 
 ## Backup and recovery
 
-Back up `CHECKSTEAD_DATA` (accounts, sessions, GitHub App files). Scan reports
-in `CHECKSTEAD_SCANS` can be pulled again from CI artifacts but are the
-timeline's history, so back them up too.
+Back up both volumes: `checkstead-data` (accounts, sessions, profile
+pictures, GitHub App files) and `checkstead-scans` (the timeline's history;
+reports can be pulled again from CI artifacts, but not their order). Run the
+scripts in the directory that holds `docker-compose.yml`. They find the
+volumes from compose, so the project name does not matter, and they use the
+server's own image, so nothing else is pulled.
 
 ```bash
-docker compose stop checkstead
-docker run --rm -v checkstead_checkstead-data:/data -v "$PWD":/backup alpine \
-  tar -C /data -czf /backup/checkstead-data-$(date -u +%Y%m%d).tgz .
-docker compose start checkstead
+bash scripts/backup-server.sh /secure/backups
 ```
 
-Restore into an empty volume with `tar -xzf` the same way, then
-`docker compose up -d`. The archive holds the GitHub App private key; store it
-encrypted, with the same access as the secret itself. Losing `CHECKSTEAD_DATA`
-loses accounts and the app key, not scan data: the first person to sign in
-becomes the administrator again, so restore before you expose the server.
+It stops the server for the few seconds the archives take, writes
+`checkstead-checkstead-data-<time>.tgz` and `checkstead-checkstead-scans-<time>.tgz`
+with mode 0600, and starts the server again. The data archive holds the
+GitHub App private key and live session hashes; store it encrypted, with the
+same access as the key itself.
+
+Restore on a new host, or after losing the volumes, before anyone can reach
+the server (with an empty data volume, the first person to sign in becomes
+the administrator):
+
+```bash
+bash scripts/restore-server.sh /secure/backups/checkstead-*-<time>.tgz
+```
+
+It refuses a volume that already holds files, so it never mixes two
+servers' accounts; a server that has already started once has written an
+empty account database, so use `--force` there. Owners (uid 999) and modes
+(0600 for `accounts.sqlite`) come back as they were, sessions stay valid, and
+it waits until the server is healthy.
+
+`scripts/deploy-recovery-test.sh <image>` runs this whole cycle in a clean
+directory with the shipped `docker-compose.yml`: deploy, sign in, add a user
+and a scan, back up, `docker compose down -v`, restore, and check that the
+session, the user, the scan, and the file modes survived and that a second
+restore is refused. CI runs it on every pull request against the image it
+built.
 
 ## Release
 

@@ -121,6 +121,43 @@ class KeyCommandTests(TestCase):
         new_signed = sign_manifest(self.manifest(), new_private.read_text(encoding="utf-8"), "2027-01", rotated)
         self.assertEqual(verify_manifest(parse_manifest(json.dumps(new_signed)), rotated).status, "signed")
 
+    def test_an_offline_standby_key_takes_over_without_a_client_release(self) -> None:
+        online_private, online_entry = self.generate("2026-10b")
+        standby_private, standby_entry = self.generate("standby-2026-10")
+        # Both are pinned as current in the release clients already have.
+        shipped = load_trust({"format": 1, "keys": [online_entry, standby_entry]})
+        before = sign_manifest(self.manifest("2026-11-01T01:00:00Z"), online_private.read_text(encoding="utf-8"), "2026-10b", shipped)
+        self.assertEqual(verify_manifest(parse_manifest(json.dumps(before)), shipped).key_id, "2026-10b")
+        # The online key is lost: the updater signs with the standby, and the
+        # same client verifies it.
+        after = sign_manifest(self.manifest("2026-11-02T01:00:00Z"), standby_private.read_text(encoding="utf-8"), "standby-2026-10", shipped)
+        self.assertEqual(verify_manifest(parse_manifest(json.dumps(after)), shipped).key_id, "standby-2026-10")
+
+    def test_a_compromised_key_is_removed_not_retired(self) -> None:
+        stolen_private, stolen_entry = self.generate("2026-10", not_after="2026-10-31")
+        _new_private, new_entry = self.generate("2026-11")
+        retired = load_trust({"format": 1, "keys": [dict(stolen_entry, status="retired"), new_entry]})
+        # notAfter compares the manifest's own date, which the signer writes.
+        # Whoever holds a stolen key can backdate a manifest, and a retired
+        # entry still accepts it. Retiring is for rotation, not compromise.
+        backdated = sign_manifest(
+            self.manifest("2026-10-15T01:00:00Z"),
+            stolen_private.read_text(encoding="utf-8"),
+            "2026-10",
+            load_trust({"format": 1, "keys": [stolen_entry]}),
+        )
+        self.assertEqual(verify_manifest(parse_manifest(json.dumps(backdated)), retired).status, "signed")
+        removed = load_trust({"format": 1, "keys": [new_entry]})
+        with self.assertRaises(SnapshotRefused):
+            verify_manifest(parse_manifest(json.dumps(backdated)), removed)
+
+    def test_the_shipped_trust_root_pins_only_public_keys(self) -> None:
+        shipped = json.loads((ROOT / "src" / "checkstead" / "snapshot_trust.json").read_text(encoding="utf-8"))
+        text = json.dumps(shipped)
+        self.assertNotIn("PRIVATE KEY", text)
+        trust = load_trust(ROOT / "src" / "checkstead" / "snapshot_trust.json")
+        self.assertTrue(any(key.status == "current" for key in trust.keys.values()))
+
 
 class SeedTests(TestCase):
     def setUp(self) -> None:
@@ -179,6 +216,11 @@ class SeedTests(TestCase):
         workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")
         self.assertIn("validate_only", workflow)
         self.assertIn("CHECKSTEAD_VALIDATE_ONLY", workflow)
+
+    def test_the_job_summary_says_when_no_standby_key_is_pinned(self) -> None:
+        script = (ROOT / "scripts" / "update-snapshot.sh").read_text(encoding="utf-8")
+        self.assertIn("No standby key is pinned", script)
+        self.assertIn('k.status == "current" and i != os.environ["CHECKSTEAD_SNAPSHOT_KEY_ID"]', script)
 
     def test_the_signing_job_runs_in_a_protected_environment(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "update-snapshot.yml").read_text(encoding="utf-8")

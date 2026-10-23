@@ -367,8 +367,9 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
   .chain { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .link:nth-child(3) { border-left: 0; }
   .link:nth-child(n+3) { border-top: 1px solid var(--rule); }
-  .split, .grid-2 { grid-template-columns: 1fr; }
-  .scan-list { position: static; max-height: none; }
+  .split, .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .scan-list { position: static; max-height: none; min-width: 0; }
+  .scan-list a { min-width: 0; overflow-wrap: anywhere; }
 }
 @media (max-width: 520px) {
   .chain { grid-template-columns: 1fr; }

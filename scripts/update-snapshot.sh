@@ -221,6 +221,12 @@ PY
       echo "Key id \`${CHECKSTEAD_SNAPSHOT_KEY_ID}\` signed this snapshot."
       if python3 -c 'import os, sys; from checkstead.snapshot_auth import load_trust; sys.exit(0 if os.environ["CHECKSTEAD_SNAPSHOT_KEY_ID"] in load_trust().keys else 1)'; then
         echo "It is pinned in \`src/checkstead/snapshot_trust.json\`. Clients verify it."
+        # Recovery from a lost key without a client release needs a second
+        # current key whose private half is kept offline.
+        if ! python3 -c 'import os, sys; from checkstead.snapshot_auth import load_trust; keys = load_trust().keys; sys.exit(0 if any(k.status == "current" and i != os.environ["CHECKSTEAD_SNAPSHOT_KEY_ID"] for i, k in keys.items()) else 1)'; then
+          echo
+          echo "**No standby key is pinned.** If this key is lost, clients need a new release before they accept another key. See \"Standby key\" in docs/operations/production-operations.md."
+        fi
       else
         echo "It is **not pinned**. Clients record this snapshot as unsigned until this entry is added to \`src/checkstead/snapshot_trust.json\`:"
         echo
