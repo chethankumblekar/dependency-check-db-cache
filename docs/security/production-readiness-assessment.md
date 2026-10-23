@@ -19,11 +19,11 @@ could be closed without a person and lists what cannot.
   `checkstead snapshot-key generate --id checkstead-standby-2026-10 --out <offline media>`,
   then pin the printed public entry as `current` and release. Until then the
   updater's summary says no standby key is pinned.
-- **Identity providers on current `main`.** GitHub and Entra passed on
-  21 October and Azure DevOps after PR 32, but avatars (Entra `User.Read`)
-  and the Azure DevOps sign-in form have not been re-run against the real
-  providers since they merged. That needs the maintainer's sign-ins, consent,
-  and PAT. Cases 2, 3, 6, 11, and 12 in
+- **Identity providers on current `main`.** On 23 October 2026 the
+  maintainer signed in with Azure DevOps (the new sign-in form) and with
+  Entra against the real providers, and both worked. That is the
+  maintainer's report, not an automated check. GitHub passed on 21 October
+  and has not been re-run since avatars merged. Cases 2, 3, 6, 11, and 12 in
   [Identity provider testing](../operations/identity-provider-testing.md)
   need a second account or directory.
 
