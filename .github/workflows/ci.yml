@@ -58,10 +58,12 @@ jobs:
   web:
     name: Web UI
     # Type-checks the browser modules and runs their component, flow, and
-    # axe accessibility tests in jsdom. Node is a development tool only;
-    # nothing it installs ships in the Python package.
+    # axe accessibility tests in jsdom, then every page in headless Chromium
+    # for contrast, 320 px reflow, and the skip link, which jsdom cannot
+    # check. Node is a development tool only; nothing it installs ships in
+    # the Python package.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
@@ -86,6 +88,20 @@ jobs:
 
       - name: Vendored fonts match the pinned packages
         run: node scripts/vendor-fonts.mjs --check
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the server for the browser test
+        run: python3 -m pip install --disable-pip-version-check ..
+
+      - name: Install Chromium for the pinned Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Accessibility and reflow in a real browser
+        run: npm run test:browser
 
   windows:
     name: Windows
@@ -221,6 +237,10 @@ jobs:
 
       - name: Smoke test the image
         run: bash ./scripts/smoke-image.sh "${{ matrix.kind }}" "${{ matrix.image }}:ci"
+
+      - name: Deploy, back up, destroy, and restore
+        if: matrix.kind == 'server'
+        run: bash ./scripts/deploy-recovery-test.sh "${{ matrix.image }}:ci"
 
       - name: Upload the image reports
         if: always()

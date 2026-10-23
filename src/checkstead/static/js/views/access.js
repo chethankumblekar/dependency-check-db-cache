@@ -216,7 +216,9 @@ function users(ctx, list) {
 function roleControl(ctx, user) {
   const next = user.role === "admin" ? "user" : "admin";
   const self = ctx.state.user && ctx.state.user.id === user.id;
-  const button = h("button", { type: "button", class: "btn", "aria-label": `${next === "admin" ? "Make administrator" : "Make member"}: ${user.login}` }, user.role === "admin" ? "Administrator" : "Member");
+  // The accessible name starts with the visible text (WCAG 2.5.3).
+  const current = user.role === "admin" ? "Administrator" : "Member";
+  const button = h("button", { type: "button", class: "btn", "aria-label": `${current}: make ${user.login} ${next === "admin" ? "an administrator" : "a member"}` }, current);
   button.addEventListener("click", async () => {
     try {
       await ctx.api.setRole(user.id, next);

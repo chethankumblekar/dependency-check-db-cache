@@ -31,7 +31,7 @@ All tokens are CSS custom properties in [app.css](../src/checkstead/static/app.c
 
 The dark theme is a true dark: black page, neutral near-black surfaces (`--surface-sunk` `#141414`), and neutral greys for rules and secondary text. Only status and severity colours carry hue.
 
-Contrast was computed with the WCAG 2.x formula. Every text token is at least 4.5:1 against `--paper`, `--surface`, and `--surface-sunk` in both themes. The lowest is a severity colour on `--surface-sunk` in the light theme, at 4.93:1. In the dark theme the lowest is `--sev-none` on `--surface-sunk`, at 5.70:1. axe-core's contrast rule needs layout, which jsdom lacks, so the tests turn it off and these ratios are the check.
+Contrast was computed with the WCAG 2.x formula. Every text token is at least 4.5:1 against `--paper`, `--surface`, and `--surface-sunk` in both themes. The lowest is a severity colour on `--surface-sunk` in the light theme, at 4.93:1. In the dark theme the lowest is `--sev-none` on `--surface-sunk`, at 5.70:1. axe-core's contrast rule needs layout, which jsdom lacks, so the jsdom tests turn it off. The browser test below measures contrast on every page in both themes.
 
 **Type.** Atkinson Hyperlegible Next for the interface: it was designed for low-vision readers and keeps 0/O and 1/l/I distinct. JetBrains Mono for identifiers only: CVE and GHSA ids, package coordinates, digests, revisions. Both are vendored as Latin `woff2` subsets under the SIL Open Font License, with SHA-256 sums in `static/fonts/SHA256SUMS`. CI fails if they differ from the pinned npm packages. The scale runs 13, 14, 15, 18, 21.6, and 26 px, and line length stays under 80 characters.
 
@@ -89,6 +89,9 @@ Every load is idle, loading, ready, or error. Views render each state explicitly
 - Tabs follow the ARIA tabs pattern with arrow keys. Filters are labelled segmented buttons with `aria-pressed`.
 - Focus rings are visible in both themes, and `prefers-reduced-motion` turns off transitions.
 - axe-core runs against every view in the tests and must report no violations.
+- `npm run test:browser` (CI job `Web UI`) opens every page in headless Chromium, in both themes, at 1280, 375, and 320 CSS pixels. axe-core runs with every rule on, including contrast; the page must not scroll sideways (WCAG 1.4.10, reflow); and the skip link must be the first Tab stop and move focus into `main`.
+- The skip link moves focus itself. Following its `#main` would be read as a route and open "Page not found".
+- A table wrapper that scrolls sideways on a narrow screen is a named, focusable region, so keyboard users can scroll it.
 
 ## Security
 
@@ -108,11 +111,11 @@ Every load is idle, loading, ready, or error. Views render each state explicitly
 | `src/checkstead/static/js/components.js` | Severity mark, evidence chain, tables, tabs, states |
 | `src/checkstead/static/js/app.js` | State, loading, the shell, routing, focus, theme |
 | `src/checkstead/static/js/views/` | One module per page |
-| `web/` | Development tooling only: TypeScript, jsdom, axe-core, and the font packages, all at exact versions |
+| `web/` | Development tooling only: TypeScript, jsdom, axe-core, Playwright, and the font packages, all at exact versions |
 
 ## Known gaps
 
-- Contrast is computed from tokens, not measured in a browser with axe. A browser-based axe run (Playwright) would cover it, but it is not set up.
+- The browser test uses Chromium only. Firefox, Safari, and screen readers are not tested automatically.
 - The Overview loads every scan's summary at once. That is fine for hundreds of scans. Thousands would need server-side paging.
 - Dependency tables are capped at 500 rows per group, with the total shown. There is no paging or export yet.
 - There is no in-app way to suppress a finding. The "What to do" text points to the suppression file.

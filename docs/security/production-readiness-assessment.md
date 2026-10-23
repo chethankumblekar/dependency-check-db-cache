@@ -1,5 +1,32 @@
 # Production-readiness assessment
 
+## 23 October 2026, remaining gaps
+
+Branch `fix/production-gaps` on `main` at `47dec8d`. This pass closed what
+could be closed without a person and lists what cannot.
+
+| Gap | Evidence before | Change | Evidence now |
+| --- | --- | --- | --- |
+| Signing key recovery | One `current` key, no offline copy. Losing it meant a client release before any new snapshot verified. | Documented a standby key: a second `current` key whose private half stays offline, so it can take over without a release. The updater's job summary warns while none is pinned. | `tests/test_key_management.py`: a standby key verifies with the shipped trust. |
+| Compromise procedure | The runbook said to retire a stolen key. `notAfter` is compared with the manifest's own `snapshotTime`, which the thief writes, so a backdated manifest still verified. | The runbook now removes the key's entry. | `test_a_compromised_key_is_removed_not_retired` reproduces the backdated forgery and its refusal. |
+| Key runbook | Told operators to set repository secrets, which were deleted on 20 October. | Uses the `snapshot-signing` environment. | Docs. |
+| Backup and restore | Documented commands named one volume by a hard-coded name and skipped the scans volume. Never run. | `scripts/backup-server.sh` and `scripts/restore-server.sh`: both volumes, names from `docker compose config`, archives mode 0600, a restore refuses a volume that holds data unless `--force`. | `scripts/deploy-recovery-test.sh` deploys the shipped compose file into an empty directory, adds a user and a scan, backs up, runs `down -v`, restores, and checks the session, user, scan, owner, and mode. It runs on every pull request in the `images` job. Passed locally on this branch. |
+| Browser accessibility | axe ran only in jsdom, with the contrast rule off. No layout was ever checked. | `web/browser/a11y.test.mjs` (Playwright, Chromium) in the `Web UI` job. | It found four defects, all fixed: the skip link opened "Page not found"; the Access role button's name did not contain its visible text; scan pages scrolled sideways at 375 and 320 px; a scrolling table could not be reached by keyboard. 13 of 13 now pass. |
+
+### Still needs a person
+
+- **Standby key.** Generating it is a key-custody act on offline media:
+  `checkstead snapshot-key generate --id checkstead-standby-2026-10 --out <offline media>`,
+  then pin the printed public entry as `current` and release. Until then the
+  updater's summary says no standby key is pinned.
+- **Identity providers on current `main`.** GitHub and Entra passed on
+  21 October and Azure DevOps after PR 32, but avatars (Entra `User.Read`)
+  and the Azure DevOps sign-in form have not been re-run against the real
+  providers since they merged. That needs the maintainer's sign-ins, consent,
+  and PAT. Cases 2, 3, 6, 11, and 12 in
+  [Identity provider testing](../operations/identity-provider-testing.md)
+  need a second account or directory.
+
 ## 20 October 2026, verification pass
 
 Branch `production-verification`, pull request 25, on top of `main` at
@@ -242,7 +269,7 @@ production-ready until each has evidence.
 | Reliability | Updater finishes inside its time limit | **Open (first scheduled run)** |
 | Cross-platform | Linux and macOS | Tested |
 | Cross-platform | Windows | **Open (not executed)** |
-| Operations | Deployment, secrets, key management, monitoring, incident response, backup, release, rollback | Written: [Production operations](../operations/production-operations.md) |
+| Operations | Deployment, secrets, key management, monitoring, incident response, backup, release, rollback | Written: [Production operations](../operations/production-operations.md). Backup and restore tested in CI since 23 October 2026 |
 
 ## 19 October 2026 audit
 

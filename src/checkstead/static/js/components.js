@@ -241,7 +241,8 @@ export function dataTable(options) {
       body.append(tr);
     }
   }
-  return h("div", { class: `table-wrap${tall ? " tall" : ""}` }, h("table", null, h("caption", { class: "visually-hidden" }, caption), h("thead", null, head), body));
+  // The wrapper scrolls on narrow screens, so keyboards must reach it.
+  return h("div", { class: `table-wrap${tall ? " tall" : ""}`, tabindex: "0", role: "region", "aria-label": `${caption}, table` }, h("table", null, h("caption", { class: "visually-hidden" }, caption), h("thead", null, head), body));
 }
 
 /** @param {string} text */

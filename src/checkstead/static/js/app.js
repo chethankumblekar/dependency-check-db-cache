@@ -342,6 +342,15 @@ export function createApp({ root, api, now = () => new Date(), storage = safeSto
 
   function start() {
     applyTheme(readTheme());
+    // The skip link's "#main" would be read as a route and open "Page not
+    // found". Move focus to the content instead of following the link.
+    document.querySelector("a.skip")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      const main = document.getElementById("main");
+      if (!main) return;
+      main.setAttribute("tabindex", "-1");
+      main.focus();
+    });
     window.addEventListener("hashchange", render);
     window.addEventListener("online", () => {
       state.online = true;

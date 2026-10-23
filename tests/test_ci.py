@@ -138,6 +138,8 @@ class CiTests(TestCase):
         self.assertIn("npm ci --ignore-scripts", web)
         self.assertIn("npm run check", web)
         self.assertIn("vendor-fonts.mjs --check", web)
+        self.assertIn("npx playwright install --with-deps chromium", web)
+        self.assertIn("npm run test:browser", web)
         windows = ci[ci.index("  windows:\n") : ci.index("  images:\n")]
         self.assertIn("runs-on: windows-latest", windows)
         self.assertIn("./scripts/setup.ps1", windows)
@@ -210,3 +212,25 @@ class CiTests(TestCase):
         self.assertEqual(pins[0], pins[1])
         self.assertNotIn("docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", ci)
         self.assertIn("workflow file is the pin", record)
+
+
+class RecoveryTests(TestCase):
+    def test_pull_requests_deploy_back_up_destroy_and_restore_the_server(self) -> None:
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn('bash ./scripts/deploy-recovery-test.sh "${{ matrix.image }}:ci"', ci)
+        test = (ROOT / "scripts" / "deploy-recovery-test.sh").read_text(encoding="utf-8")
+        # The shipped compose file, not a copy that can drift from it.
+        self.assertIn('"$root/docker-compose.yml"', test)
+        for step in ("backup-server.sh", "docker compose down -v", "restore-server.sh", "already holds files"):
+            self.assertIn(step, test)
+
+    def test_backups_are_private_and_restores_refuse_live_data(self) -> None:
+        backup = (ROOT / "scripts" / "backup-server.sh").read_text(encoding="utf-8")
+        restore = (ROOT / "scripts" / "restore-server.sh").read_text(encoding="utf-8")
+        self.assertIn("umask 077", backup)
+        self.assertIn("docker compose config --format json", backup)
+        self.assertIn("--network none", backup)
+        self.assertNotIn("alpine", backup + restore)
+        self.assertIn("already holds files", restore)
+        # The refusal comes before the server is stopped.
+        self.assertLess(restore.index("already holds files"), restore.index('docker compose stop "$service"'))
